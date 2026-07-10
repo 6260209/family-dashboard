@@ -1,0 +1,25 @@
+{
+  "name": "家庭全球资产配置仪表盘",
+  "short_name": "资产配置",
+  "description": "家庭多账户全球资产配置整合仪表盘（A股/港股/美股ETF/海外理财）",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1f6",
+  "theme_color": "#0ea5e9",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
