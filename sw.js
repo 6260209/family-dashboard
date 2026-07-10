@@ -1,6 +1,6 @@
 /* 家庭资产配置仪表盘 Service Worker：缓存静态资源，离线可看内置快照 */
 const CACHE = 'pf-cache-v1';
-const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const ASSETS = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(ASSETS); }).then(function(){ return self.skipWaiting(); }));
@@ -31,7 +31,7 @@ self.addEventListener('fetch', function(e){
         return res;
       }).catch(function(){
         // 离线兜底：返回已缓存的页面（页面内有内置 data-store 快照，可照常渲染）
-        return caches.match('./index.html');
+        return caches.match('/index.html');
       });
     })
   );
