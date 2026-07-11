@@ -187,9 +187,19 @@ tbody tr:hover{background:#f8fafc}
   <div class="ntab active" onclick="switchTab('overview')"><span class="ic">📊</span>总览</div>
   <div class="ntab" onclick="switchTab('accounts')"><span class="ic">🏦</span>账户</div>
   <div class="ntab" onclick="switchTab('record')"><span class="ic">➕</span>录入</div>
-  <div class="ntab" onclick="switchTab('backtest')"><span class="ic">📈</span>回测</div>
-  <div class="ntab" onclick="switchTab('report')"><span class="ic">📝</span>报告</div>
+  <div class="ntab" onclick="switchTab('analysis')"><span class="ic">📈</span>分析</div>
 </nav>
+
+<!-- 子页签样式（分析区内页签） -->
+<style>
+.sub-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;border-bottom:2px solid var(--border);padding-bottom:0}
+.sub-tab{padding:8px 16px;font-size:13px;font-weight:600;color:var(--dim);cursor:pointer;border:none;background:none;position:relative;bottom:-2px;transition:.15s}
+.sub-tab:hover{color:var(--accent)}
+.sub-tab.active{color:var(--accent);border-bottom:2px solid var(--accent);font-weight:700}
+.sub-panel{display:none}.sub-panel.active{display:block}
+.cat-mgr-btn{font-size:12px;color:var(--accent);cursor:pointer;font-weight:600;border:none;background:none;padding:4px 8px;border-radius:6px;transition:.15s}
+.cat-mgr-btn:hover{background:#f0fdfa}
+</style>
 
 <!-- 总览视图 -->
 <div class="view active" id="view-overview">
@@ -236,18 +246,7 @@ tbody tr:hover{background:#f8fafc}
   <div class="note" id="dim-note"></div>
 </div>
 
-<!-- 主题敞口 -->
-<div class="card">
-  <div class="ct">🎯 主题敞口聚合（回答"纳指100总共多少"）</div>
-  <div class="split">
-    <div><div id="chartTheme" class="chart" style="height:380px"></div></div>
-    <div class="tablewrap">
-      <table><thead><tr><th>主题 / 敞口</th><th>市值(CNY)</th><th>占比</th></tr></thead><tbody id="theme-body"></tbody></table>
-    </div>
-  </div>
-  <div class="note">主题聚合将同名/同策略标的合并（如 <b>纳斯达克100</b> = QQQI + 南方/招商/摩根纳斯达克100基金）；地域与主题统计不含现金缓冲</div>
-</div>
-
+<!-- 主题敞口 → 已移至 分析→排行 -->
 <!-- 分类明细 -->
 <div class="card">
   <div class="ct">🗂️ 资产分类明细（按人民币市值）</div>
@@ -315,21 +314,67 @@ tbody tr:hover{background:#f8fafc}
   </div>
 </div>
 
-<!-- 回测视图 -->
-<div class="view" id="view-backtest">
+<!-- 分析视图（合并原回测+报告+日志+排行） -->
+<div class="view" id="view-analysis">
   <div class="card">
-    <div class="ct">📈 组合回测 · 年化18%情景测算</div>
-    <div style="font-size:12px;color:var(--dim);margin-bottom:10px">以下为历史回顾与情景假设测算，非未来收益预测，绝不构成投资建议</div>
-    <div id="backtest-content"></div>
-  </div>
-</div>
+    <div class="sub-tabs" id="analysis-tabs">
+      <div class="sub-tab active" onclick="switchAnalysisTab('forecast')">📈 预测</div>
+      <div class="sub-tab" onclick="switchAnalysisTab('diagnosis')">📋 诊断</div>
+      <div class="sub-tab" onclick="switchAnalysisTab('log')">📝 日志</div>
+      <div class="sub-tab" onclick="switchAnalysisTab('ranking')">🏆 排行</div>
+    </div>
 
-<!-- 报告视图 -->
-<div class="view" id="view-report">
-  <div class="card">
-    <div class="ct">📋 组合诊断分析报告</div>
-    <div style="font-size:12px;color:var(--dim);margin-bottom:10px">完整诊断报告：持仓结构 / 盈亏结构 / 风险标记 / 行动建议（分层 P0–P2）</div>
-    <div id="report-content" class="tablewrap" style="max-height:70vh"></div>
+    <!-- 预测子面板 -->
+    <div class="sub-panel active" id="analysis-forecast">
+      <div class="ct">📈 组合预测 · 年化18%情景测算</div>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:10px">以下为历史回顾与情景假设测算，非未来收益预测，绝不构成投资建议</div>
+      <div id="backtest-content"></div>
+    </div>
+
+    <!-- 诊断子面板 -->
+    <div class="sub-panel" id="analysis-diagnosis">
+      <div class="ct">📋 组合诊断分析报告</div>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:10px">完整诊断报告：持仓结构 / 盈亏结构 / 风险标记 / 行动建议（分层 P0–P2）</div>
+      <div id="report-content" class="tablewrap" style="max-height:70vh"></div>
+    </div>
+
+    <!-- 日志子面板 -->
+    <div class="sub-panel" id="analysis-log">
+      <div class="ct">📝 操作日志</div>
+      <div class="tablewrap" style="max-height:60vh"><div id="log"></div></div>
+    </div>
+
+    <!-- 排行子面板 -->
+    <div class="sub-panel" id="analysis-ranking">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="ct" style="margin-bottom:0">🏆 分类排行</div>
+        <button class="cat-mgr-btn" onclick="showCatManager()">⚙️ 管理分类</button>
+      </div>
+      <div class="sub-tabs" id="ranking-tabs" style="border:none;margin-bottom:10px">
+        <div class="sub-tab active" onclick="switchRankingTab('theme',this)">主题排名</div>
+        <div class="sub-tab" onclick="switchRankingTab('region',this)">地域排名</div>
+        <div class="sub-tab" onclick="switchRankingTab('holder',this)">持有人排名</div>
+        <div class="sub-tab" onclick="switchRankingTab('type',this)">类型排名</div>
+      </div>
+      <div id="ranking-theme" class="sub-panel active">
+        <div class="split">
+          <div><div id="chartTheme" class="chart" style="height:380px"></div></div>
+          <div class="tablewrap"><table><thead><tr><th>主题 / 敞口</th><th>市值(CNY)</th><th>占比</th></tr></thead><tbody id="theme-body"></tbody></table></div>
+        </div>
+        <div class="note">主题聚合将同名/同策略标的合并（如 <b>纳斯达克100</b> = QQQI + 南方/招商/摩根纳斯达克100基金）</div>
+      </div>
+      <div id="ranking-region" class="sub-panel">
+        <div id="chartRegion" class="chart" style="height:380px"></div>
+        <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>地域</th><th>市值(CNY)</th><th>占比</th></tr></thead><tbody id="region-rank-body"></tbody></table></div>
+      </div>
+      <div id="ranking-holder" class="sub-panel">
+        <div id="chartHolder" class="chart" style="height:380px"></div>
+        <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>持有人</th><th>市值(CNY)</th><th>占比</th></tr></thead><tbody id="holder-rank-body"></tbody></table></div>
+      </div>
+      <div id="ranking-type" class="sub-panel">
+        <div class="tablewrap"><table><thead><tr><th>资产类型</th><th>市值(CNY)</th><th>占比</th></tr></thead><tbody id="type-rank-body"></tbody></table></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -355,7 +400,7 @@ tbody tr:hover{background:#f8fafc}
   <div class="subtotal" id="inc-subtotal"></div>
   <div class="tablewrap" style="margin-top:8px">
     <table>
-      <thead><tr><th>日期</th><th>类型</th><th>账户</th><th>标的</th><th>金额</th><th>币种</th><th>状态</th><th></th></tr></thead>
+      <thead><tr><th>日期</th><th>类型</th><th>项目</th><th>账户</th><th>标的</th><th>金额</th><th>币种</th><th>状态</th><th></th></tr></thead>
       <tbody id="inc-body"></tbody>
     </table>
   </div>
@@ -384,11 +429,6 @@ tbody tr:hover{background:#f8fafc}
     <span>日视图：点击有标记日期查看当日明细</span>
     <span>资产日收益历史未追踪，日历仅展示已记录收入</span>
   </div>
-</div>
-
-<div class="card">
-  <div class="ct">📝 日志</div>
-  <div class="tablewrap" style="max-height:360px"><div id="log"></div></div>
 </div>
 
 <div class="footer">
@@ -429,13 +469,16 @@ function initMeta(){
   document.getElementById('total-sub').innerHTML=
     `≈ HK$ ${fmt(DATA.total.hkd)} &nbsp;|&nbsp; ≈ $ ${fmt(DATA.total.usd)}`;
   const mt=DATA.metrics;
+  const now=new Date();
+  const yr=now.getFullYear();
+  const ytdPnl=mt.ytd_pnl_cny||mt.holding_pnl_cny;
   const mcards=[
-    {k:'整体收益',v:(mt.holding_pnl_cny>=0?'+':'')+fmtCny(mt.holding_pnl_cny),c:mt.holding_pnl_cny>=0?'pos':'neg'},
+    {k:'今年收益',v:(ytdPnl>=0?'+':'')+fmtCny(ytdPnl),c:ytdPnl>=0?'pos':'neg'},
     {k:'持仓收益率',v:(mt.return_pct>=0?'+':'')+mt.return_pct+'%',c:mt.return_pct>=0?'pos':'neg'},
     {k:'今日盈亏',v:(mt.today_pnl_cny>=0?'+':'')+fmtCny(mt.today_pnl_cny),c:mt.today_pnl_cny>=0?'pos':'neg'},
     {k:'年化收益',v:mt.annualized,c:''},
     {k:'股息收入',v:mt.dividend,c:''},
-    {k:'现金/稳定币',v:fmtCny(mt.cash_cny),c:''},
+    {k:'现金/稳定币/债券',v:fmtCny((mt.cash_cny||0)+(mt.bond_cny||0)),c:''},
   ];
   document.getElementById('metrics').innerHTML=mcards.map(x=>
     `<div class="metric"><div class="k">${x.k}</div><div class="v ${x.c}">${x.v}</div></div>`).join('');
@@ -494,8 +537,10 @@ function renderDims(){
 }
 
 function renderTheme(){
-  const ct=echarts.init(document.getElementById('chartTheme')); charts.push(ct);
-  const ts=DATA.theme_summary;
+  var el=document.getElementById('chartTheme');
+  if(!el)return;
+  const ct=echarts.init(el); charts.push(ct);
+  const ts=(DATA.theme_summary||[]).slice().sort((a,b)=>b.value-a.value);
   ct.setOption({
     tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:'{b}: ¥{c}'},
     grid:{left:90,right:55,top:10,bottom:20},
@@ -508,8 +553,74 @@ function renderTheme(){
       label:{show:true,position:'right',fontSize:11,color:'#6b7280',formatter:function(p){return '¥'+fmt(p.value)}}
     }]
   });
-  document.getElementById('theme-body').innerHTML=ts.map(d=>
+  const tbody=document.getElementById('theme-body');
+  if(tbody)tbody.innerHTML=ts.map(d=>
     `<tr><td><b>${d.name}</b></td><td>${fmtCny(d.value)}</td><td>${d.pct}%</td></tr>`).join('');
+}
+function initRankingData(){
+  const rBody=document.getElementById('region-rank-body');
+  if(rBody&&DATA.region_summary){
+    const rs=(DATA.region_summary||[]).sort((a,b)=>b.value-a.value);
+    const total=rs.reduce((s,x)=>s+x.value,0)||1;
+    rBody.innerHTML=rs.map(r=>`<tr><td>${r.name}</td><td>${fmtCny(r.value)}</td><td>${(r.value/total*100).toFixed(1)}%</td></tr>`).join('');
+  }
+  const hBody=document.getElementById('holder-rank-body');
+  if(hBody&&DATA.holder_summary){
+    const hs=(DATA.holder_summary||[]).sort((a,b)=>b.value-a.value);
+    const total2=hs.reduce((s,x)=>s+x.value,0)||1;
+    hBody.innerHTML=hs.map(h=>`<tr><td>${h.name}</td><td>${fmtCny(h.value)}</td><td>${(h.value/total2*100).toFixed(1)}%</td></tr>`).join('');
+  }
+  const tBody=document.getElementById('type-rank-body');
+  if(tBody){
+    const typeMap={};
+    (DATA.flat||[]).forEach(r=>{
+      const k=r.cat||r.type||'其他';
+      typeMap[k]=(typeMap[k]||0)+(r.mv||0);
+    });
+    const types=Object.entries(typeMap).map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value);
+    const total3=types.reduce((s,x)=>s+x.value,0)||1;
+    tBody.innerHTML=types.map(t=>`<tr><td>${t.name}</td><td>${fmtCny(t.value)}</td><td>${(t.value/total3*100).toFixed(1)}%</td></tr>`).join('');
+  }
+}
+
+/* ============ 分类管理 ============ */
+const CUSTOM_CATS_KEY='famdash_custom_cats';
+function getCustomCats(){ try{ return JSON.parse(localStorage.getItem(CUSTOM_CATS_KEY))||[]; }catch(e){return[]} }
+function saveCustomCats(c){ try{localStorage.setItem(CUSTOM_CATS_KEY,JSON.stringify(c));}catch(e){} }
+function showCatManager(){
+  const cats=getCustomCats();
+  const defaultCats=['A股证券','港股','美股','QDII','A股基金','债基','保险','结构性产品','加密货币','流动现金'];
+  const allCats=[...new Set([...defaultCats,...cats])];
+  const modal=document.createElement('div');
+  modal.className='modal open';modal.id='cat-mgr-modal';
+  modal.innerHTML=`<div class="box" style="max-width:520px">
+    <div class="mhead"><h3>⚙️ 分类管理</h3><button class="x" onclick="this.closest('.modal').remove()">×</button></div>
+    <div class="mbody">
+      <p style="font-size:12px;color:var(--dim);margin-bottom:10px">添加或删除资产分类。默认分类不可删除，自定义分类可删。</p>
+      <div id="cat-mgr-list" style="max-height:300px;overflow:auto"></div>
+      <div class="form-row" style="margin-top:12px">
+        <input id="new-cat-name" placeholder="输入新分类名称" style="flex:1;min-width:120px">
+        <button class="btn sm" onclick="addCustomCat()">＋ 添加</button>
+      </div>
+    </div></div>`;
+  document.body.appendChild(modal);renderCatMgrList(allCats,defaultCats);
+}
+function renderCatMgrList(allCats,defaultCats){
+  const el=document.getElementById('cat-mgr-list');if(!el)return;
+  el.innerHTML=allCats.map(c=>{const isDef=defaultCats.includes(c);
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span>${isDef?'📁':'🏷️'} ${c}${isDef?' <small style="color:var(--dim)">(默认)</small>':''}</span>
+      ${!isDef?`<button class="btn danger sm" onclick="removeCustomCat('${c}')">删除</button>`:'<span style="color:var(--dim);font-size:11px">保留</span>'}
+    </div>`}).join('');
+}
+function addCustomCat(){
+  const name=(document.getElementById('new-cat-name').value||'').trim();
+  if(!name){toast('请输入分类名称');return;}
+  let cats=getCustomCats();if(cats.includes(name)){toast('该分类已存在');return;}
+  cats.push(name);saveCustomCats(cats);showCatManager();toast('已添加：'+name);
+}
+function removeCustomCat(name){
+  let cats=getCustomCats().filter(c=>c!==name);saveCustomCats(cats);showCatManager();toast('已删除：'+name);
 }
 
 // 分类明细（细分类别 + 持有人双维筛选）
@@ -857,8 +968,8 @@ function renderInc(){
   const cards=[{k:'本月已收',v:fmtCny(inc.mtd_cny||0)},{k:'预计本月',v:fmtCny(inc.projected_month_cny||0)},{k:'预期年化股息率',v:inc.annual_yield_pct+'%'}];
   document.getElementById('inc-cards').innerHTML=cards.map(c=>`<div class="inc-card"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
   document.getElementById('inc-subtotal').innerHTML='收入记录 '+inc.records.length+' 条 · '+inc.fx_note;
-  const rows=inc.records.slice().sort((a,b)=>a.date<b.date?1:-1).map(r=>`<tr><td>${r.date}</td><td>${r.type_label||r.type}</td><td>${r.account||''}</td><td>${r.name||''}</td><td class="gn">+${fmtCny(r.cny)}</td><td>${r.currency||'CNY'}</td><td>${({received:'已到账',announced:'已宣布',projected:'预计'})[r.status]||r.status}</td><td><button class="del" onclick="delInc('${r.id}')">×</button></td></tr>`).join('');
-  document.getElementById('inc-body').innerHTML=rows||'<tr><td colspan="8" style="color:#94a3b8">暂无记录</td></tr>';
+  const rows=inc.records.slice().sort((a,b)=>a.date<b.date?1:-1).map(r=>`<tr><td>${r.date}</td><td>${r.type_label||r.type}</td><td>${r.project||'—'}</td><td>${r.account||''}</td><td>${r.name||''}</td><td class="gn">+${fmtCny(r.cny)}</td><td>${r.currency||'CNY'}</td><td>${({received:'已到账',announced:'已宣布',projected:'预计'})[r.status]||r.status}</td><td><button class="del" onclick="delInc('${r.id}')">×</button></td></tr>`).join('');
+  document.getElementById('inc-body').innerHTML=rows||'<tr><td colspan="9" style="color:#94a3b8">暂无记录</td></tr>';
   try{initIncomeChart();}catch(e){console.error(e)}
   try{initGrowthChart();}catch(e){console.error(e)}
 }
@@ -927,10 +1038,29 @@ function switchTab(name){
   if(name==='overview'){ document.getElementById('view-overview').classList.add('active'); document.getElementById('view-overview2').classList.add('active'); }
   else { const v=document.getElementById('view-'+name); if(v) v.classList.add('active'); }
   if(name==='record'){ renderTxTabs(); renderTx(); }
-  if(name==='backtest'){ renderBacktest(); }
-  if(name==='report'){ renderReport(); }
+  if(name==='analysis'){ renderBacktest(); renderReport(); renderLog(); initRankingData(); }
   if(name==='accounts'){ try{renderAccts();}catch(e){} }
   window.scrollTo(0,0);
+}
+let curAnalysisTab='forecast';
+function switchAnalysisTab(tab){
+  curAnalysisTab=tab;
+  document.querySelectorAll('#analysis-tabs .sub-tab').forEach(t=>t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('#analysis-forecast,#analysis-diagnosis,#analysis-log,#analysis-ranking').forEach(p=>p.classList.remove('active'));
+  document.getElementById('analysis-'+tab).classList.add('active');
+  if(tab==='forecast')renderBacktest();
+  if(tab==='diagnosis')renderReport();
+  if(tab==='log')renderLog();
+  if(tab==='ranking'){renderTheme();initRankingData();}
+}
+let curRankingTab='theme';
+function switchRankingTab(tab,el){
+  curRankingTab=tab;
+  document.querySelectorAll('#ranking-tabs .sub-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('#ranking-theme,#ranking-region,#ranking-holder,#ranking-type').forEach(p=>p.classList.remove('active'));
+  document.getElementById('ranking-'+tab).classList.add('active');
 }
 
 const TX_TYPES=[{k:'income',label:'收入',ic:'💰'},{k:'transfer',label:'转账',ic:'🔁'},{k:'buy',label:'买入',ic:'🟢'},{k:'sell',label:'卖出',ic:'🔴'}];
@@ -948,14 +1078,28 @@ function showTxForm(type){ txCur=type;
   let f='';
   if(type==='income'){
     f=`<div class="tx-form"><div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
-      <div class="row"><label>账户</label><select id="tx-account">${acctOptions('')}</select></div>
-      <div class="row"><label>类型</label><select id="tx-itype"><option value="dividend">股票股息</option><option value="fcn_coupon">FCN票息</option><option value="fund_div">基金分红</option><option value="interest">利息</option><option value="other">其他收入</option></select></div>
-      <div class="row"><label>来源/标的</label><input id="tx-name" placeholder="如 NVDA 股息" style="min-width:160px"></div>
+      <div class="row"><label>所属账户</label><select id="tx-account">${acctOptions('')}</select></div>
+      <div class="row"><label>资产类型</label><select id="tx-itype"><option value="dividend">股票股息</option><option value="fcn_coupon">FCN票息</option><option value="fund_div">基金分红</option><option value="interest">利息</option><option value="bond_interest">债券利息</option><option value="crypto_income">加密货币收益</option><option value="other">其他收入</option></select></div>
+      <div class="row"><label>投资项目</label><select id="tx-project">
+        <option value="">— 选择项目（可选）—</option>
+        <option value="纳斯达克100">纳斯达克100（QQQ/QQQM/QDII纳指）</option>
+        <option value="标普500">标普500（SPY/VOO/标普QDII）</option>
+        <option value="债券">债券产品（全部归入债券类）</option>
+        <option value="结构性产品">结构性产品(FCN)</option>
+        <option value="港股">港股持仓</option>
+        <option value="A股">A股持仓</option>
+        <option value="加密货币">加密货币</option>
+        <option value="现金/稳定币">现金/稳定币</option>
+        <option value="_custom">自定义...</option>
+      </select></div>
+      <div class="row" id="custom-proj-row" style="display:none"><label>自定义项目</label><input id="tx-custom-proj" placeholder="输入项目名称" style="min-width:160px"></div>
+      <div class="row"><label>来源/标的</label><input id="tx-name" placeholder="如 NVDA 股息 / XX基金分红" style="min-width:160px"></div>
       <div class="row"><label>金额</label><input id="tx-amount" type="number" placeholder="金额"></div>
       <div class="row"><label>币种</label><select id="tx-ccy"><option>CNY</option><option>USD</option><option>HKD</option></select></div>
       <div class="row"><label>状态</label><select id="tx-status"><option value="received">已到账</option><option value="announced">已宣布</option><option value="projected">预计</option></select></div>
       <div class="row"><label>备注</label><input id="tx-note" placeholder="可选" style="min-width:160px"></div>
       <button class="btn sm" onclick="addTx()">保存</button></div>`;
+    setTimeout(()=>{const sel=document.getElementById('tx-project');if(sel)sel.onchange=function(){document.getElementById('custom-proj-row').style.display=this.value==='_custom'?'flex':'none';};},0);
   } else if(type==='transfer'){
     f=`<div class="tx-form"><div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
       <div class="row"><label>转出账户</label><select id="tx-from">${acctOptions('')}</select></div>
@@ -988,6 +1132,8 @@ function addTx(){
   if(type==='income'){
     tx.account=document.getElementById('tx-account').value;
     tx.income_type=document.getElementById('tx-itype').value;
+    tx.project=(document.getElementById('tx-project')||{value:''}).value;
+    if(tx.project==='_custom') tx.project=(document.getElementById('tx-custom-proj')||{value:''}).value||'自定义';
     tx.name=document.getElementById('tx-name').value;
     tx.amount=Number(document.getElementById('tx-amount').value)||0;
     tx.currency=document.getElementById('tx-ccy').value;
@@ -1016,7 +1162,7 @@ function addTx(){
   }
   DATA.transactions.push(tx);
   if(type==='income'){
-    const inc={id:tx.id,date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,currency:tx.currency,status:tx.status,note:tx.note};
+    const inc={id:tx.id,date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
     inc.cny=toCny(tx.amount,tx.currency);
     DATA.income.records.push(inc); computeIncomeAgg();
   }
