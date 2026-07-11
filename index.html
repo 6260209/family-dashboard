@@ -1391,8 +1391,7 @@ function addSubAccount(aid,typeKey,label){
   document.getElementById('subacct-picker')?.remove();
   const secMap={'cash':'cash_holdings','hk_stock':'securities','us_stock':'securities','fund':'fund_holdings','crypto':'holdings'};
   const sec=secMap[typeKey];
-  if(sec){showAddForm(aid,sec);}
-  logActivity('添加子账户',`账户 ${acctName(aid)} 添加了 ${labelClean}`);
+  if(sec){showAddForm(aid,sec);}  // 真实添加由 addHolding 在保存成功后记录日志，避免“日志有、实际没加上”
 }
 function confirmDialog(title,msg,onYes){
   const id='confirm-modal';const old=document.getElementById(id);if(old)old.remove();
