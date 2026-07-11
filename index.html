@@ -339,7 +339,7 @@ tbody tr:hover{background:#f8fafc}
 
 <!-- 收入仪表盘 -->
 <div class="card">
-  <div class="ct">💰 股息与被动收入（睡后收入）</div>
+  <div class="ct">💰 本月收入</div>
   <div class="inc-grid" id="inc-cards"></div>
   <div class="split">
     <div>
@@ -844,14 +844,17 @@ function computeIncomeAgg(){
     months.push({month:m,received:rs.filter(r=>r.status==='received').reduce((s,r)=>s+r.cny,0),announced:rs.filter(r=>r.status==='announced').reduce((s,r)=>s+r.cny,0),projected:rs.filter(r=>r.status==='projected').reduce((s,r)=>s+r.cny,0)});}
   const ytd=recs.filter(r=>r.status==='received'&&(r.date||'').indexOf(yr)===0).reduce((s,r)=>s+r.cny,0);
   const projYr=recs.filter(r=>(r.date||'').indexOf(yr)===0).reduce((s,r)=>s+r.cny,0);
+  const mo=String(now.getMonth()+1).padStart(2,'0');
+  const mtd=recs.filter(r=>r.status==='received'&&((r.date||'').indexOf(yr+'-'+mo)===0)).reduce((s,r)=>s+r.cny,0);
+  const projMo=recs.filter(r=>(r.date||'').indexOf(yr+'-'+mo)===0).reduce((s,r)=>s+r.cny,0);
   DATA.income.calendar={daily,monthly,yearly};DATA.income.monthly=months;
+  DATA.income.mtd_cny=Math.round(mtd);DATA.income.projected_month_cny=Math.round(projMo);
   DATA.income.ytd_cny=Math.round(ytd);DATA.income.projected_year_cny=Math.round(projYr);
   DATA.income.annual_yield_pct=DATA.total.cny?Math.round(projYr/DATA.total.cny*100*100)/100:0;
-  DATA.income.total_cny=Math.round(recs.filter(r=>r.status==='received').reduce((s,r)=>s+r.cny,0));
 }
 function renderInc(){
   const inc=DATA.income;
-  const cards=[{k:'今年已收',v:fmtCny(inc.ytd_cny)},{k:'预计今年',v:fmtCny(inc.projected_year_cny)},{k:'累计已收',v:fmtCny(inc.total_cny)},{k:'预期年化股息率',v:inc.annual_yield_pct+'%'}];
+  const cards=[{k:'本月已收',v:fmtCny(inc.mtd_cny||0)},{k:'预计本月',v:fmtCny(inc.projected_month_cny||0)},{k:'预期年化股息率',v:inc.annual_yield_pct+'%'}];
   document.getElementById('inc-cards').innerHTML=cards.map(c=>`<div class="inc-card"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
   document.getElementById('inc-subtotal').innerHTML='收入记录 '+inc.records.length+' 条 · '+inc.fx_note;
   const rows=inc.records.slice().sort((a,b)=>a.date<b.date?1:-1).map(r=>`<tr><td>${r.date}</td><td>${r.type_label||r.type}</td><td>${r.account||''}</td><td>${r.name||''}</td><td class="gn">+${fmtCny(r.cny)}</td><td>${r.currency||'CNY'}</td><td>${({received:'已到账',announced:'已宣布',projected:'预计'})[r.status]||r.status}</td><td><button class="del" onclick="delInc('${r.id}')">×</button></td></tr>`).join('');
