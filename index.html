@@ -281,7 +281,10 @@ tbody tr:hover{background:#f8fafc}
 <!-- 账户视图 -->
 <div class="view" id="view-accounts">
   <div class="card">
-    <div class="ct">🏦 各账户持仓快照（点击卡片查看明细）</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="ct" style="margin-bottom:0">🏦 各账户持仓快照（点击卡片查看明细）</div>
+      <button class="btn" onclick="showNewAccountForm()" style="white-space:nowrap">＋ 新建账户</button>
+    </div>
     <div class="subtotal" id="acct-subtotal"></div>
     <div class="acct-grid" id="acct-grid"></div>
   </div>
@@ -315,17 +318,18 @@ tbody tr:hover{background:#f8fafc}
 <!-- 回测视图 -->
 <div class="view" id="view-backtest">
   <div class="card">
-    <div class="ct">📈 情景回测</div>
-    <div class="note">回测模块规划中（对比不同标的长期收益、回撤情景）。当前可参考「总览 → 底层标的透视表」与「股息与被动收入 → 10年复投预测」。</div>
+    <div class="ct">📈 组合回测 · 年化18%情景测算</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:10px">以下为历史回顾与情景假设测算，非未来收益预测，绝不构成投资建议</div>
+    <div id="backtest-content"></div>
   </div>
 </div>
 
 <!-- 报告视图 -->
 <div class="view" id="view-report">
   <div class="card">
-    <div class="ct">📝 报告</div>
-    <div class="note">报告模块规划中（组合诊断、再平衡建议）。下方为最近更新日志。</div>
-    <div id="report-log"></div>
+    <div class="ct">📋 组合诊断分析报告</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:10px">完整诊断报告：持仓结构 / 盈亏结构 / 风险标记 / 行动建议（分层 P0–P2）</div>
+    <div id="report-content" class="tablewrap" style="max-height:70vh"></div>
   </div>
 </div>
 
@@ -382,14 +386,9 @@ tbody tr:hover{background:#f8fafc}
   </div>
 </div>
 
-<!-- 风险 & 日志 -->
 <div class="card">
-  <div class="ct">⚠️ 风险与合规提示</div>
-  <div id="risk-box"></div>
-</div>
-<div class="card">
-  <div class="ct">📝 更新日志</div>
-  <div id="log"></div>
+  <div class="ct">📝 日志</div>
+  <div class="tablewrap" style="max-height:360px"><div id="log"></div></div>
 </div>
 
 <div class="footer">
@@ -668,32 +667,147 @@ function openAcct(aid){
   const dc=txCashDelta(a.id);
   const dch=baseCashCny(a)+dc;
   h='<div class="mkv">账户总资产 <b>'+tot+'</b> · 风险等级 <b>'+risk+'</b> · 信号 <b>'+(a.signal||'—')+'</b></div>'+
-    '<div class="mkv" style="background:#ecfeff;color:#0e7490">可用现金（含流水） <b>'+fmtCny(dch)+'</b>'+(dc?(' <span style="font-size:11px">('+(dc>=0?'+':'')+fmtCny(dc)+' 流水)</span>'):'')+'</div>'+h;
+    '<div class="mkv" style="background:#ecfeff;color:#0e7490">可用现金（含流水） <b>'+fmtCny(dch)+'</b>'+(dc?(' <span style="font-size:11px">('+(dc>=0?'+':'')+fmtCny(dc)+' 流水)</span>'):'')+'</div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"><button class="btn danger sm" onclick="deleteAccount(\''+aid+'\')" style="white-space:nowrap">🗑 删除账户</button> '+renderSubAccountBtn(aid)+'</div>'+h;
   document.getElementById('modal-body').innerHTML=h;
   document.getElementById('acct-modal').classList.add('open');
 }
 function closeAcct(){document.getElementById('acct-modal').classList.remove('open');}
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeAcct();});
 
-// 风险
-function renderRisk(){
-  let boxes=[];
-  const cross=DATA.pivot.rows.filter(p=>p.count>1);
-  if(cross.length) boxes.push({lv:'mid',t:`跨平台重复持仓 ${cross.length} 项（${cross.map(p=>p.name).join('、')}），注意整体集中度与汇率/税务重复申报`});
-  if(DATA.qqqi&&DATA.qqqi.total_shares) boxes.push({lv:'mid',t:`QQQI 跨 ${DATA.qqqi.accounts.length} 平台共 ${DATA.qqqi.total_shares} 股，美股ETF分红涉及预扣税与CRS申报`});
-  boxes.push({lv:'mid',t:'富途结构性产品(13只)中多只挂钩英伟达(NVDA)，单一科技股下行将放大回撤'});
-  boxes.push({lv:'info',t:'跨境投资提示：港股/美股/新加坡账户涉及外汇管制(每年5万美元额度)、CRS金融账户信息交换、境外资本利得税，请保留完税凭证'});
-  boxes.push({lv:'low',t:'支付宝基金账户占总资产约30%，为最大单一来源，建议适度分散以降低平台与流动性风险'});
-  const ic={high:'🔴',mid:'⚠️',low:'✅',info:'ℹ️'};
-  document.getElementById('risk-box').innerHTML=boxes.map(b=>
-    `<div class="risk ${b.lv}"><b>${ic[b.lv]}</b> ${b.t}</div>`).join('');
-}
+// 风险模块已移除
 
 function renderLog(){
-  document.getElementById('log').innerHTML=DATA.meta.update_log.slice().reverse().map(l=>
-    `<div class="log-item"><div class="ld">${l.date}</div><div class="lt"><b>${l.action}</b> — ${l.detail}</div></div>`).join('');
+  // 合并原始更新日志 + 本地操作记录
+  const logs=(DATA.meta.update_log||[]).slice();
+  // 添加本地操作记录（从 localStorage 的操作日志合并）
+  const actLogs=JSON.parse(localStorage.getItem('famdash_activity_log')||'[]');
+  const all=[...logs,...actLogs].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  document.getElementById('log').innerHTML=all.map(l=>
+    `<div class="log-item"><div class="ld">${l.date}</div><div class="lt"><b>${l.action||l.type||''}</b> — ${l.detail||l.desc||''}</div></div>`).join('')||
+    '<div style="color:var(--dim);padding:20px;text-align:center">暂无日志</div>';
+}
+// 记录操作到日志（添加/修改持仓、新建账户等）
+function logActivity(type,desc){
+  const now=new Date();
+  const date=nowtoISOStringLocal(now);
+  const log={date,action:type,detail:desc};
+  const logs=JSON.parse(localStorage.getItem('famdash_activity_log')||'[]');
+  logs.unshift(log);
+  if(logs.length>200)logs.length=200; // 最多保留200条
+  localStorage.setItem('famdash_activity_log',JSON.stringify(logs));
+  renderLog();
+}
+function toISOStringLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+
+/* ============ 新建账户 / 子账户功能 ============ */
+const ASSET_TYPES=[
+  {k:'cash',label:'💰 现金账户',desc:'银行存款、货币基金等现金类资产'},
+  {k:'hk_stock',label:'🇭🇰 港股账户',desc:'富途、老虎、盈立等港股券商'},
+  {k:'us_stock',label:'🇺🇸 美股账户',desc:'盈立、IB等美股/ETF券商'},
+  {k:'fund',label:'📊 基金账户',desc:'支付宝、京东金融、南方基金等'},
+  {k:'crypto',label:'₿ 加密货币账户',desc:'币安、OKX等加密资产'},
+  {k:'custom',label:'✏️ 自定义',desc:'自定义资产类型（请输入名称）'}
+];
+function showNewAccountForm(){
+  const types=ASSET_TYPES.map(t=>`<option value="${t.k}">${t.label}</option>`).join('');
+  const html=`<div class="modal open" id="new-acct-modal" style="display:flex">
+    <div class="box" style="max-width:520px">
+      <div class="mhead"><h3>➕ 新建账户</h3><button class="x" onclick="document.getElementById('new-acct-modal').remove()" aria-label="关闭">×</button></div>
+      <div class="mbody">
+        <div class="tx-form">
+          <div class="row"><label>持有人</label><input id="na-holder" placeholder="如 谢俊辰"></div>
+          <div class="row"><label>平台名称</label><input id="na-platform" placeholder="如 某证券"></div>
+          <div class="row"><label>资产类型</label><select id="na-type">${types}</select></div>
+          <div class="row" id="na-custom-row" style="display:none"><label>自定义类型名</label><input id="na-custom-type" placeholder="如 保险账户"></div>
+          <div class="row"><label>初始金额(CNY)</label><input id="na-amount" type="number" placeholder="0"></div>
+          <button class="btn" onclick="commitNewAccount()">确认创建</button>
+          <button class="btn ghost" onclick="document.getElementById('new-acct-modal').remove()">取消</button>
+        </div>
+      </div>
+    </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  // 监听类型选择变化
+  document.getElementById('na-type').addEventListener('change',function(){
+    document.getElementById('na-custom-row').style.display=this.value==='custom'?'':'none';
+  });
+}
+function commitNewAccount(){
+  const holder=document.getElementById('na-holder').value.trim();
+  const platform=document.getElementById('na-platform').value.trim();
+  let type=document.getElementById('na-type').value;
+  if(type==='custom'){type=document.getElementById('na-custom-type').value.trim()||'自定义';}
+  const amount=Number(document.getElementById('na-amount').value)||0;
+  if(!holder||!platform){toast('请填写持有人和平台名称');return;}
+  const aid='manual_'+Date.now();
+  const newAcct={
+    id:aid,
+    platform:platform+' · '+holder,
+    holder:holder,
+    account_type:type==='custom'?type:ASSET_TYPES.find(t=>t.k===type)?.label.split(' ')[1]||type,
+    score:100,
+    signal:'HOLD',
+    summary_cny:{total_asset_cny:amount},
+    securities:[],fund_holdings:[],holdings:[],cash_holdings:[],risk_flags:[]
+  };
+  DATA.accounts.push(newAcct);
+  DATA.meta.total_accounts=(DATA.meta.total_accounts||0)+1;
+  saveEditsLocal();
+  logActivity('新建账户',`${platform}（${holder}）·${type}，初始金额 ¥${fmt(amount)}`);
+  document.getElementById('new-acct-modal').remove();
+  renderAccts();
+  toast(`已创建账户：${platform}（${holder}）`);
 }
 
+// 子账户按钮：在账户弹窗内显示
+function renderSubAccountBtn(aid){
+  return `<span class="addsec" style="font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;background:linear-gradient(135deg,#0ea5e9,#14b8a6);color:#fff;padding:5px 12px;border-radius:8px;font-weight:700;border:none;white-space:nowrap" onclick="showSubAccountPicker('${aid}')">＋ 账户</span>`;
+}
+function showSubAccountPicker(aid){
+  const a=acct(aid); if(!a)return;
+  // 先关闭已有的picker
+  const old=document.getElementById('subacct-picker'); if(old)old.remove();
+  const btns=ASSET_TYPES.map(t=>{
+    const safeLabel=t.label.replace(/'/g,'&#39;');
+    return `<button class="btn sm" onclick="addSubAccount('${aid}','${t.k}','${safeLabel}')"
+      style="margin:3px;font-size:11.5px;padding:6px 10px;min-width:110px;text-align:left">${t.label}<br><small style="opacity:.7;font-weight:400">${t.desc}</small></button>`;
+  }).join('');
+  const picker=`<div id="subacct-picker" style="background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">选择要添加的资产类别：</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${btns}</div>
+    <button class="btn ghost sm" onclick="document.getElementById('subacct-picker').remove()" style="margin-top:6px">取消</button>
+  </div>`;
+  document.getElementById('modal-body').insertAdjacentHTML('beforeend',picker);
+}
+function addSubAccount(aid,typeKey,label){
+  const a=acct(aid); if(!a)return;
+  const labelClean=label.replace(/<br>.*/,'');
+  // 根据类型初始化对应数组
+  switch(typeKey){
+    case 'cash': if(!a.cash_holdings)a.cash_holdings=[]; break;
+    case 'hk_stock': case 'us_stock': if(!a.securities)a.securities=[]; break;
+    case 'fund': if(!a.fund_holdings)a.fund_holdings=[]; break;
+    case 'crypto': if(!a.holdings)a.holdings=[]; break;
+    default: toast('已选择：'+labelClean);
+  }
+  // 移除picker，然后自动打开对应类型的添加表单
+  document.getElementById('subacct-picker')?.remove();
+  const secMap={'cash':'cash_holdings','hk_stock':'securities','us_stock':'securities','fund':'fund_holdings','crypto':'holdings'};
+  const sec=secMap[typeKey];
+  if(sec){showAddForm(aid,sec);}
+  logActivity('添加子账户',`账户 ${acctName(aid)} 添加了 ${labelClean}`);
+}
+function deleteAccount(aid){
+  const a=acct(aid); if(!a)return;
+  if(!confirm(`确定删除账户「${a.platform}」？此操作不可恢复。`))return;
+  DATA.accounts=DATA.accounts.filter(x=>x.id!==aid);
+  DATA.meta.total_accounts=Math.max(0,(DATA.meta.total_accounts||1)-1);
+  saveEditsLocal();
+  logActivity('删除账户',`已删除 ${a.platform}`);
+  closeAcct();
+  renderAccts();
+  toast('已删除账户：'+a.platform);
+}
 /* ============ 编辑 / 收入 / 日历 模块 ============ */
 const SEC_SCHEMA={
   securities:{label:'证券持仓',fields:[{k:'asset_name',l:'标的',t:'text'},{k:'code',l:'代码',t:'text'},{k:'market',l:'市场',t:'text',ph:'HK/US/CN'},{k:'quantity',l:'数量',t:'number'},{k:'mv',l:'市值(CNY)',t:'number'}]},
@@ -706,7 +820,7 @@ const acct=aid=>DATA.accounts.find(x=>x.id===aid);
 function toast(msg){const t=document.getElementById('toast');if(!t)return;t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
 function saveEditsLocal(){try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions}));}catch(e){}}
 function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts)DATA.accounts=o.accounts;if(o.income){DATA.income.records=o.income;computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;}catch(e){}}
-function afterEdit(aid){saveEditsLocal();openAcct(aid);toast('已更新 · 点"导出数据"可保存到文件');}
+function afterEdit(aid){saveEditsLocal();logActivity('修改持仓',`账户 ${acctName(aid)} 持仓已更新`);openAcct(aid);toast('已更新 · 点"导出数据"可保存到文件');}
 function delHolding(aid,sec,idx){const a=acct(aid);if(a[sec])a[sec].splice(idx,1);afterEdit(aid);}
 function delStruct(aid,k,i){const a=acct(aid);if(a.structured_products&&a.structured_products[k]){a.structured_products[k].items.splice(i,1);if(!a.structured_products[k].items.length)delete a.structured_products[k];}afterEdit(aid);}
 function showAddForm(aid,sec){const sc=SEC_SCHEMA[sec];if(!sc)return;const flds=sc.fields.map(f=>`<input id="af-${sec}-${f.k}" type="${f.t}" placeholder="${f.l}" style="min-width:84px">`).join('');const html=`<div class="form-row" id="af-${sec}"><b style="font-size:12px">添加${sc.label}：</b>${flds}<button class="btn sm" onclick="commitAdd('${aid}','${sec}')">保存</button><button class="btn ghost sm" onclick="closeAdd('${sec}')">取消</button></div>`;document.getElementById('modal-body').insertAdjacentHTML('beforeend',html);}
@@ -810,7 +924,8 @@ function switchTab(name){
   if(name==='overview'){ document.getElementById('view-overview').classList.add('active'); document.getElementById('view-overview2').classList.add('active'); }
   else { const v=document.getElementById('view-'+name); if(v) v.classList.add('active'); }
   if(name==='record'){ renderTxTabs(); renderTx(); }
-  if(name==='report'){ renderReportLog(); }
+  if(name==='backtest'){ renderBacktest(); }
+  if(name==='report'){ renderReport(); }
   if(name==='accounts'){ try{renderAccts();}catch(e){} }
   window.scrollTo(0,0);
 }
@@ -960,10 +1075,97 @@ function renderTx(){
   document.getElementById('tx-cash').innerHTML=
     `流水净现金流（收入+卖出−买入）：<b>${fmtCny(inc+sell-buy)}</b>`;
 }
-function renderReportLog(){
-  const el=document.getElementById('report-log'); if(!el)return;
-  el.innerHTML=(DATA.meta.update_log||[]).slice().reverse().map(l=>
-    `<div class="log-item"><div class="ld">${l.date}</div><div class="lt"><b>${l.action}</b> — ${l.detail}</div></div>`).join('');
+function renderBacktest(){
+  const el=document.getElementById('backtest-content'); if(!el)return;
+  const upd='2026-07-08 06:17 HKT';
+  el.innerHTML=`
+    <div style="font-size:13px;font-weight:700;margin-bottom:12px">家庭组合持仓诊断 + 年化18%情景回测报告</div>
+    <div class="mkv" style="margin-bottom:14px">
+      📅 数据快照时间：<b>${upd}</b> ｜ 数据基准：<b>${DATA.meta.total_accounts} 个账户</b>，总资产 <b>¥${fmt(DATA.total.cny)}</b>
+    </div>
+    <h4 style="margin:16px 0 8px;color:var(--text)">一、执行摘要（核心结论）</h4>
+    <table class="mtab"><thead><tr><th>结论项</th><th>结果</th></tr></thead><tbody>
+      <tr><td>组合真实配置</td><td>A股权益 35.6%｜现金/稳定币 23.5%｜加密货币 15.4%｜结构性产品 11.1%｜美股科技 10.5%</td></tr>
+      <tr><td>资产类别集中度 HHI</td><td><b>0.2306</b>（中度集中）</td></tr>
+      <tr><td>中性情景组合净年化</td><td><b style="color:var(--green)">8.50%</b>（含 0.6% 摩擦成本）</td></tr>
+      <tr><td>乐观情景组合净年化</td><td style="color:var(--green)"><b>12.07%</b></td></tr>
+      <tr><td>悲观情景组合净年化</td><td style="color:var(--red)"><b>−5.47%</b></td></tr>
+      <tr><td>年化18%目标检验</td><td><span style="color:var(--red)">❌ 三情景全部未达标</span>（仅"全仓加密"极端假设达19.4%，但伴随~−70%回撤）</td></tr>
+    </tbody></table>
+
+    <h4 style="margin:18px 0 8px;color:var(--text)">二、三情景回测（含摩擦成本）</h4>
+    <table class="mtab"><thead><tr><th>情景</th><th>毛年化</th><th>净年化(扣0.6%)</th><th>5年后(¥)</th><th>10年后(¥)</th></tr></thead><tbody>
+      <tr><td>乐观（成长资产上修）</td><td>12.67%</td><td><b style="color:var(--green)">12.07%</b></td><td>2,277,536</td><td>4,027,237</td></tr>
+      <tr><td>中性（锚定历史中枢）</td><td>9.10%</td><td><b style="color:var(--green)">8.50%</b></td><td>1,936,838</td><td>2,912,482</td></tr>
+      <tr><td>悲观（成长转负/加密崩）</td><td>−4.87%</td><td><b style="color:var(--red)">−5.47%</b></td><td>972,064</td><td>733,612</td></tr>
+    </tbody></table>
+
+    <h4 style="margin:18px 0 8px;color:var(--text)">三、年化18%目标检验</h4>
+    <table class="mtab"><thead><tr><th>路径</th><th>净年化</th><th>是否达标 18%</th></tr></thead><tbody>
+      <tr><td>当前配置·乐观</td><td>12.07%</td><td><span style="color:var(--red)">❌ 未达标</span></td></tr>
+      <tr><td>当前配置·中性</td><td>8.50%</td><td><span style="color:var(--red)">❌ 未达标</span></td></tr>
+      <tr><td>当前配置·悲观</td><td>−5.47%</td><td><span style="color:var(--red)">❌ 未达标</span></td></tr>
+      <tr><td>现金全转美股科技</td><td>10.85%</td><td><span style="color:var(--red)">❌ 未达标</span></td></tr>
+      <tr><td>极端：全部押注加密</td><td><b>19.40%</b></td><td>✅ 达标（但最大回撤 ~−70%）</td></tr>
+    </tbody></table>
+
+    <div class="note" style="margin-top:14px">
+      <b>一句话结论：</b>在当前分散化配置下，组合长期净年化合理区间为 <b>8%–12%</b>。年化18%仅在全仓加密的极端假设下勉强触及，与回撤管控冲突。<br>
+      建议将收益预期重新锚定在 <b>10%–12%</b>，并把闲置现金转化为生息资产。
+    </div>`;
+}
+function renderReport(){
+  const el=document.getElementById('report-content'); if(!el)return;
+  const upd='2026-07-08';
+  el.innerHTML=`
+    <div style="font-size:15px;font-weight:800;margin-bottom:10px">📋 谢俊辰富途牛牛持仓分析报告</div>
+    <div class="mkv" style="margin-bottom:14px">
+      📅 数据快照时间：<b>2026-07-06 23:19-23:20 HKT</b> ｜
+      账户：<b>保证金综合账户(3697)</b> ｜ 平台：<b>富途牛牛</b> ｜
+      报告更新：<b>${upd}</b>
+    </div>
+
+    <h4 style="margin:14px 0 8px">一、资产总览</h4>
+    <table class="mtab"><thead><tr><th>核心指标</th><th>数值</th><th>说明</th></tr></thead><tbody>
+      <tr><td>总资产</td><td><b>239,132 HKD</b></td><td>(~$30,653 USD)</td></tr>
+      <tr><td>今日盈亏</td><td style="color:var(--green)"><b>+5,353 HKD (+2.24%)</b></td><td>今日表现强劲</td></tr>
+      <tr><td>证券净值</td><td><b>55,123 HKD (23.0%)</b></td><td>股票/期权持仓</td></tr>
+      <tr><td>结构性产品净值</td><td><b>152,539 HKD (63.8%)</b></td><td>FCN + Sharkfin</td></tr>
+      <tr><td>现金及可用</td><td><b>~31,470 HKD (13.2%)</b></td><td>流动性+购买力</td></tr>
+    </tbody></table>
+
+    <h4 style="margin:18px 0 8px">二、结构性产品 · 标的集中度分析</h4>
+    <table class="mtab"><thead><tr><th>底层标的</th><th>出现次数</th><th>涉及产品数</th><th>占FCN面值比例</th><th>风险评估</th></tr></thead><tbody>
+      <tr><td><b>英伟达(NVDA)</b></td><td><b>12 次</b></td><td><b>12/13 只</b></td><td>~90%</td><td><span style="color:var(--red)">🔴 极度集中</span></td></tr>
+      <tr><td>美光科技(MU)</td><td>8 次</td><td>8/13 只</td><td>~60%</td><td><span style="color:var(--red)">🔴 高度集中</span></td></tr>
+      <tr><td>谷歌-A(GOOGL)</td><td>6 次</td><td>6/13 只</td><td>~45%</td><td style="color:var(--amber)">🟠 较高集中</td></tr>
+      <tr><td>特斯拉(TSLA)</td><td>4 次</td><td>4/13 只</td><td>~30%</td><td>🟡 中等集中</td></tr>
+      <tr><td>苹果(AAPL)</td><td>1 次</td><td>1/13 只</td><td>~8%</td><td style="color:var(--green)">🟢 分散</td></tr>
+    </tbody></table>
+
+    <h4 style="margin:18px 0 8px">三、组合健康度评分</h4>
+    <table class="mtab"><thead><tr><th>评估维度</th><th>评分(0-100)</th><th>权重</th><th>加权分</th><th>说明</th></tr></thead><tbody>
+      <tr><td>分散化程度</td><td><b style="color:var(--red)">25</b></td><td>20%</td><td>5.0</td><td>英伟达极度集中</td></tr>
+      <tr><td>风险控制</td><td><b>60</b></td><td>25%</td><td>15.0</td><td>有期权对冲意识</td></tr>
+      <tr><td>收益能力</td><td><b>70</b></td><td>20%</td><td>14.0</td><td>FCN提供稳定票息</td></tr>
+      <tr><td>流动性</td><td><b>75</b></td><td>15%</td><td>11.3</td><td>现金约31,470 HKD</td></tr>
+      <tr><td>市场时机</td><td><b>65</b></td><td>20%</td><td>13.0</td><td>重仓AI科技方向</td></tr>
+      <tr><td colspan="4"><b>综合得分</b></td><td><b>58.3</b> — 中性偏谨慎</td></tr>
+    </tbody></table>
+
+    <h4 style="margin:18px 0 8px">四、操作建议清单</h4>
+    <table class="mtab"><thead><tr><th>优先级</th><th>建议</th><th>理由</th></tr></thead><tbody>
+      <tr><td><span style="color:var(--red)">🔴 高</span></td><td>降低英伟达集中度</td><td>12/13只含NVDA，系统性风险过大</td></tr>
+      <tr><td><span style="color:var(--red)">🔴 高</span></td><td>关注飞鱼科技流动性</td><td>仙股大额持仓，退出难度高</td></tr>
+      <tr><td style="color:var(--amber)">🟡 中</td><td>TQQQ PUT 考虑止盈</td><td>已赚94%，可锁定利润</td></tr>
+      <tr><td style="color:var(--amber)">🟡 中</td><td>12月到期产品提前规划</td><td>7只同月到期，避免被动</td></tr>
+      <tr><td style="color:var(--green)">🟢 低</td><td>增加非科技类配置</td><td>黄金、红利ETF等分散风险</td></tr>
+    </tbody></table>
+
+    <div class="note" style="margin-top:14px">
+      ⚠️ 本报告由模型依据截图数据整理，<b>不构成任何投资建议</b>。所有金额以券商账单为准。
+      下次计划更新：每周一次或收到新截图时。
+    </div>`;
 }
 
 /* 防御性渲染：数据先行，图表降级 */
@@ -976,13 +1178,11 @@ try{renderTheme();}catch(e){console.error('renderTheme:',e)}
 try{initCatTabs();}catch(e){console.error('initCatTabs:',e)}
 try{renderPivot();}catch(e){console.error('renderPivot:',e)}
 try{renderAccts();}catch(e){console.error('renderAccts:',e)}
-try{renderRisk();}catch(e){console.error('renderRisk:',e)}
 try{renderLog();}catch(e){console.error('renderLog:',e)}
 try{renderInc();}catch(e){console.error('renderInc:',e)}
 try{renderCalendar();}catch(e){console.error('renderCalendar:',e)}
 try{renderTxTabs();}catch(e){console.error('renderTxTabs:',e)}
 try{renderTx();}catch(e){console.error('renderTx:',e)}
-try{renderReportLog();}catch(e){console.error('renderReportLog:',e)}
 window.addEventListener('resize',function(){try{charts.forEach(function(c){c.resize()});}catch(_){}});
 </script>
 </body></html>
