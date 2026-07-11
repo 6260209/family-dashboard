@@ -2345,7 +2345,12 @@ function renderMine(){
   h+=`<div class="set-row"><div><div class="lbl">🏷️ 标签 / 持有人管理</div><div class="desc">维护资产分类与持有人标签</div></div><div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="showCatManager()">分类</button><button class="btn ghost sm" onclick="showHolderManager()">持有人</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl">管理入口</div><div class="desc">快速跳转账户 / 分类 / 录入</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="switchTab('accounts')">🏦 账户</button><button class="btn ghost sm" onclick="showCatManager()">🗂️ 分类</button><button class="btn ghost sm" onclick="switchTab('record')">➕ 录入</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl">数据</div><div class="desc">导出 / 重置本机改动</div></div><div style="display:flex;gap:6px"><button class="btn sm" onclick="exportData()">⤓ 导出</button><button class="btn ghost sm" onclick="resetEdits()">↺ 重置</button></div></div>`;
-  el.innerHTML=h;
+  const updateCard=`<div class="card" style="border:1px solid var(--border);margin-bottom:12px;padding:12px 14px">
+    <div class="ct" style="margin-bottom:6px">🔄 版本与更新</div>
+    <div style="font-size:12.5px;color:var(--dim);line-height:1.7;margin-bottom:10px">当前版本：<b style="color:var(--text)">${APP_VERSION}</b><br>如页面功能与预期不符（例如刚改完却没生效），多为浏览器缓存所致。点下方按钮<b>强制刷新</b>即可，<b>不会丢失</b>你在本机添加 / 修改的数据。</div>
+    <button class="btn" onclick="forceRefresh()">🔄 强制刷新（清除缓存）</button>
+  </div>`;
+  el.innerHTML=updateCard+h;
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
@@ -2357,7 +2362,19 @@ function checkCache(){
     localStorage.setItem('famdash_app_version',APP_VERSION);
   }
 }
-function forceRefresh(){ location.reload(true); }
+function forceRefresh(){
+  // 彻底绕过浏览器缓存：先注销 Service Worker + 清空 Cache Storage，再硬刷新
+  try{
+    if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations){
+      navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){try{r.unregister();}catch(e){}});});
+    }
+  }catch(e){}
+  if('caches' in window){
+    caches.keys().then(function(ks){
+      return Promise.all(ks.map(function(k){try{return caches.delete(k);}catch(e){return null;}}));
+    }).then(function(){location.reload(true);}).catch(function(){location.reload(true);});
+  } else { location.reload(true); }
+}
 
 /* ============ 汇率管理 ============ */
 function showFxModal(){
