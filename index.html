@@ -380,7 +380,14 @@ th.sortable.desc .arrow::after{content:'▼'}
     </div>
     <div class="note">说明：转账在两点账户间调整现金；买入扣账户现金并增加持仓，卖出反之。金额按建仓汇率折算人民币。流水仅存于本机浏览器，重要记录点「导出数据」备份。</div>
   </div>
-</div><!-- 投资计划/待确认已移至账户页 -->
+</div>  <!-- 交易流水（三路合并：交易+确认收入+手动录入） -->
+  <div class="card">
+    <div class="ct">📋 交易流水 <small style="color:var(--dim);font-weight:400;font-size:11px">(交易 + 收入 + 确认)</small></div>
+    <div id="ledger-body"></div>
+    <div class="subtotal" id="ledger-subtotal" style="margin-top:6px;font-size:11px;color:var(--dim)"></div>
+  </div>
+
+<!-- 投资计划/待确认已移至账户页 -->
 
 <!-- 分析视图（合并原回测+报告+日志+排行） -->
 <div class="view" id="view-analysis">
@@ -619,7 +626,7 @@ function initMeta(){
     });
     // 计划确认
     confirmedTodos.forEach(t=>{
-      const ccy=t.currency||'CNY';const amt=t.actual_amount||t.expected_amount||0;const cnyAmt=Math.round(ccyOf({amount:amt,currency:ccy})||amt);
+      const ccy=t.currency||'CNY';const amt=t.actual_amount||t.expected_amount||0;const cnyAmt=Math.round(toCny({amount:amt,currency:ccy})||amt);
       if(t.confirmed_at&&t.confirmed_at.indexOf(yrStr)===0){yearIncome+=cnyAmt;if(t.confirmed_at.indexOf(yrStr+'-'+moStr)===0)monthIncome+=cnyAmt;}
     });
   }catch(e){}
@@ -2096,7 +2103,7 @@ function renderInc(){
       type:t.type_label||'计划收入', type_label:t.type_label||'计划收入',
       name:t.name, project:'', account:t.account_name||'',
       currency:ccy, amount:amt,
-      cny:Math.round(ccyOf({amount:amt,currency:ccy})||amt),
+      cny:Math.round(toCny({amount:amt,currency:ccy})||amt),
       status:'received', _src:'计划确认'
     };
   });
@@ -2108,7 +2115,7 @@ function renderInc(){
       id:t.id, date:t.due||'', type:t.type_label||'计划收入', type_label:t.type_label||'计划收入',
       name:t.name, project:'', account:t.account_name||'',
       currency:ccy, amount:amt,
-      cny:Math.round(ccyOf({amount:amt,currency:ccy})||amt),
+      cny:Math.round(toCny({amount:amt,currency:ccy})||amt),
       status:'projected', _src:'预计'
     };
   });
@@ -2296,8 +2303,8 @@ function switchTab(name){
   else { const v=document.getElementById('view-'+name); if(v) v.classList.add('active'); }
   if(name==='income'){ try{renderInc();initIncomeChart();renderCalendar();}catch(e){console.error('income tab',e);} }
   if(name==='analysis'){ renderBacktest(); renderReport(); renderLog(); initRankingData(); }
-  if(name==='accounts'){ try{initAcctHolderTabs();renderAccts();}catch(e){} }
-  if(name==='mine'){ try{renderMine();renderPlans();renderTodos();renderGoal();}catch(e){} }
+  if(name==='accounts'){ try{initAcctHolderTabs();renderAccts();renderLedger();}catch(e){} }
+  if(name==='mine'){ try{renderMine();renderPlans();renderTodos();renderGoal();renderLedger();}catch(e){} }
   window.scrollTo(0,0);
   relayoutCharts();
 }
@@ -2596,6 +2603,72 @@ function txSecurities(aid){
   return Object.values(map).filter(x=>Math.abs(x.quantity)>1e-9);
 }
 function baseCashCny(a){ let c=0; (a.cash_holdings||[]).forEach(ch=>c+=toCny(ch.amount||0,ch.currency||'CNY')); return c; }
+
+/* ============ 交易流水（三路合并） ============ */
+let ledgerExpanded=true;
+function renderLedger(){
+  const el=document.getElementById('ledger-body'); if(!el)return;
+  // A. 交易记录 DATA.transactions
+  const txRows=(DATA.transactions||[]).map(t=>({
+    id:t.id||('tx-'+Date.now()+Math.random()), date:t.date||'',
+    type:t.type==='buy'?'买入':t.type==='sell'?'卖出':t.type==='income'?'收入':t.type==='transfer'?'转账':t.type==='dividend'?'股息':'其他',
+    typeRaw:t.type||'', account:acctName(t.account)||(t.account_from?acctName(t.account_from)+'→'+acctName(t.account_to):''),
+    target:t.asset_name||(t.name||''), code:t.code||'',
+    amount:t.amount||0, currency:t.currency||'CNY', fee:t.fee||0,
+    status:t.status||'completed', _src:'交易'
+  }));
+  // B. 已确认待确认事项
+  let todoRows=[];
+  try{
+    todoRows=(getTodos()||[]).filter(t=>t.status==='confirmed').map(t=>{
+      const amt=t.actual_amount||t.expected_amount||0;
+      return{id:t.id,date:t.confirmed_at?t.confirmed_at.slice(0,10):(t.due||''),type:'收入',typeRaw:'todo_income',
+        account:t.account_name||'',target:t.name||'',code:'',amount:amt,currency:t.currency||'CNY',fee:0,
+        status:'confirmed',_src:'计划确认'};
+    });
+  }catch(e){}
+  // C. 手动录入收入
+  const incRows=(DATA.income.records||[]).filter(r=>r.status==='received'||!r.status).map(r=>({
+    id:r.id||('inc-'+Date.now()),date:r.date||'',type:'收入',typeRaw:'manual_inc',
+    account:r.account||'',target:r.name||r.income_type||'',code:'',
+    amount:r.amount||0,currency:r.currency||'CNY',fee:0,status:'received',_src:'手动录入'
+  }));
+  // 合并+排序
+  const all=[...txRows,...todoRows,...incRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const typeTag=t=>{
+    const m={买入:'t-astock',卖出:'t-struct',收入:'t-afund',转账:'t-cash',股息:'t-bond'};
+    return `<span class="tag ${m[t.type]||'t-qdii'}">${t.type}</span>`;
+  };
+  const sign=(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':'−';
+  const cls=sign==='+'?'gn':'rd';
+  const maxShow=ledgerExpanded?all.length:Math.min(all.length,6);
+  const rows=all.slice(0,maxShow).map((t,i)=>{
+    const more=all.length>6&&!ledgerExpanded&&i===5?
+      `<tr><td colspan="9" style="text-align:center;padding:8px"><button class="btn sm ghost" onclick="ledgerExpanded=true;renderLedger()">展开更多 ${all.length-6} 条 ▼</button></td></tr>`:'';
+    return `<tr><td>${t.date||'—'}</td><td>${typeTag(t)}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${t.account||'—'}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${t.target}">${t.target||'—'}</td><td class="${cls}">${sign}${fmtNative(t.amount,t.currency)}</td><td>${t.currency}</td><td><span class="tag ${t._src==='计划确认'?'active':t._src==='手动录入'?'t-bond':''}" style="font-size:10px">${t._src}</span></td><td>${t.status==='confirmed'?'已确认':t.status==='received'?'已到账':t.status}</td><td><button class="edt sm" onclick="editLedgerRow('${t.id}','${t._src}')" title="编辑">✎</button> <button class="del sm" onclick="delLedgerRow('${t.id}','${t._src}')" title="删除">×</button></td></tr>${more}`;
+  }).join('');
+  const collapseBtn=all.length>6&&ledgerExpanded?
+    `<tr><td colspan="9" style="text-align:center;padding:6px"><button class="btn sm ghost" onclick="ledgerExpanded=false;renderLedger()">收起 ▲</button></td></tr>`:'';
+  el.innerHTML=`<table class="dt"><thead><tr><th>日期↓</th><th>类型</th><th>账户</th><th>标的</th><th>金额</th><th>币种</th><th>来源</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows||''}${collapseBtn}</tbody></table>`||
+    '<div style="color:var(--dim);padding:12px">暂无流水记录</div>';
+  // 汇总统计
+  let incTot=0,buyTot=0,sellTot=0;
+  all.forEach(t=>{const v=toCny(t.amount,t.currency);if(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc')incTot+=v;else if(t.typeRaw==='buy')buyTot+=v;else if(t.typeRaw==='sell')sellTot+=v;});
+  const subEl=document.getElementById('ledger-subtotal');
+  if(subEl)subEl.innerHTML=`共 <b>${all.length}</b> 条 · 收入 <b class="gn">+${fmtCny(incTot)}</b> · 买入 <b class="rd">−${fmtCny(buyTot)}</b>`;
+}
+function editLedgerRow(id,src){
+  if(src==='交易'){const t=DATA.transactions.find(x=>x.id===id);if(!t)return;/* reuse edit tx modal */}
+  else if(src==='计划确认'){toast('计划确认项请在待确认事项中撤销后重新确认');return;}
+  else if(src==='手动录入'){toast('手动录入项请在收入页编辑');return;}
+}
+function delLedgerRow(id,src){
+  if(src==='交易'){delTx(id);renderLedger();}
+  else if(src==='计划确认'){unconfirmTodo(id);setTimeout(()=>renderLedger(),100);}
+  else if(src==='手动录入'){delInc(id);setTimeout(()=>renderLedger(),100);}
+}
+
+
 function renderTx(){
   const rows=DATA.transactions.slice().sort((a,b)=>a.date<b.date?1:-1);
   const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息'};
@@ -2880,18 +2953,32 @@ function renderTodos(){
   if(!ts.length){el.innerHTML='<div style="color:var(--dim);font-size:12.5px;padding:6px">暂无待确认。分红到期、定投完成等可在此手动确认。</div>';return;}
   // 按日期排序
   ts.sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
-  el.innerHTML=`<table class="dt"><thead><tr><th>日期↑</th><th>类型</th><th>项目</th><th>账户</th><th>标的</th><th>金额↓</th><th>币种</th><th>状态</th></tr></thead><tbody>`+
-  ts.map(t=>{
-    const isPast=t.due && new Date(t.due)<new Date();
-    const st=t.status;
-    const stTag=st==='confirmed'?`<span class="pill-st active">已确认</span>`:
-              st==='cancelled'?`<span class="pill-st paused">已取消</span>`:
-              st==='skipped'?`<span class="pill-st" style="background:#fef3c7;color:#92400e">本期无</span>`:
-              `<span class="pill-st" style="${isPast?'background:#fee2e2;color:#dc2626':''}">${isPast?'逾期':'预计'}</span>`;
-    const amtDisp=t.actual_amount!=null?fmtNative(t.actual_amount,t.currency):
-                  `<span style="cursor:pointer;text-decoration:underline;color:var(--link)" onclick="showConfirmTodo('${t.id}')">${fmtNative(t.expected_amount||0,t.currency)}</span>`;
-    return `<tr style="${st==='cancelled'||st==='skipped'?'opacity:0.5':''}"><td>${t.due||'—'}</td><td>${escapeHtml(t.type_label)}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.account_name)||'—'}</td><td>${escapeHtml(t.target_asset)||'—'}</td><td style="${(t.actual_amount||0)>=0?'color:var(--green)':'color:var(--red)'}">${amtDisp}</td><td>${t.currency||'CNY'}</td><td>${stTag}${st==='pending'?` <button class="btn sm" onclick="showConfirmTodo('${t.id}')" title="确认到账金额">✓</button>`:''}</td></tr>`;
-  }).join('')+`</tbody></table>`;
+  el.innerHTML=(function(){
+    const MAX_SHOW=6;
+    const _c='cancelled',_s='skipped',_cf='confirmed',_cn='cancelled',_sk='skipped',_pd='pending';
+    const allRows=ts.map(t=>{
+      var isPast=t.due && new Date(t.due)<new Date();
+      var st=t.status;
+      var isCn=(st===_c)||(st===_s), isCf=(st===_cf), isPd=(st===_pd);
+      var stTag=isCf?'<span class="pill-st active">已确认</span>':
+                (st===_cn)?'<span class="pill-st paused">已取消</span>':
+                (st===_sk)?'<span class="pill-st" style="background:#fef3c7;color:#92400e">本期无</span>':
+                '<span class="pill-st" style="'+(isPast?'background:#fee2e2;color:#dc2626':'')+'">'+(isPast?'逾期':'预计')+'</span>';
+      var hasAmt=t.actual_amount!=null;
+      var amtDisp=hasAmt?fmtNative(t.actual_amount,t.currency):
+                    '<span style="cursor:pointer;text-decoration:underline;color:var(--link)" onclick="showConfirmTodo('+t.id+')">'+fmtNative(t.expected_amount||0,t.currency)+'</span>';
+      var posCls=(t.actual_amount||0)>=0;
+      var btnHtml=isPd?' <button class="btn sm" onclick="showConfirmTodo('+t.id+')" title="确认到账金额">✓</button>':'';
+      return '<tr style="'+(isCn?'opacity:0.5':'')+'"><td>'+(t.due||'—')+'</td><td>'+escapeHtml(t.type_label)+'</td><td>'+escapeHtml(t.name)+'</td><td>'+(escapeHtml(t.account_name)||'—')+'</td><td>'+(escapeHtml(t.target_asset)||'—')+'</td><td style="'+(posCls?'color:var(--green)':'color:var(--red)')+'">'+amtDisp+'</td><td>'+(t.currency||'CNY')+'</td><td>'+stTag+btnHtml+'</td></tr>';
+    });
+    var expanded=window._todosExpanded!==false;
+    var visible=expanded?allRows:allRows.slice(0,MAX_SHOW);
+    var moreBtn=allRows.length>MAX_SHOW&&!expanded?
+      '<tr><td colspan="8" style="text-align:center;padding:6px"><button class="btn sm ghost" onclick="_todosExpanded=true;renderTodos()" style="font-size:11px">展开更多 '+(allRows.length-MAX_SHOW)+' 条 &#9660;</button></td></tr>':'';
+    var collapseBtn=allRows.length>MAX_SHOW&&expanded?
+      '<tr><td colspan="8" style="text-align:center;padding:6px"><button class="btn sm ghost" onclick="_todosExpanded=false;renderTodos()" style="font-size:11px">收起 &#9650;</button></td></tr>':'';
+    return '<table class="dt"><thead><tr><th>日期&#8593;</th><th>类型</th><th>项目</th><th>账户</th><th>标的</th><th>金额&#8595;</th><th>币种</th><th>状态</th></tr></thead><tbody>'+visible.join('')+moreBtn+collapseBtn+'</tbody></table>';
+  })()
 }
 
 /* 弹出确认对话框：输入实际到账金额 */
