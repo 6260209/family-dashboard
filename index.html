@@ -1483,7 +1483,9 @@ function commitNewAccount(){
     score:100,
     signal:'HOLD',
     summary_cny:{total_asset_cny:amount},
-    securities:[],fund_holdings:[],holdings:[],cash_holdings:[],risk_flags:[]
+    securities:[],fund_holdings:[],holdings:[],
+    cash_holdings: amount>0 ? [{name:'初始现金',amount:amount,currency:'CNY',type:'现金',profit:0,return_pct:0}] : [],
+    risk_flags:[]
   };
   DATA.accounts.push(newAcct);
   DATA.meta.total_accounts=(DATA.meta.total_accounts||0)+1;
@@ -2066,7 +2068,7 @@ function saveStructInline(aid,k,i){
 /* 收入聚合（与 build 脚本口径一致，支持本地编辑后重算） */
 function computeIncomeAgg(){
   const recs=DATA.income.records||[];const now=new Date();const yr=now.getFullYear();
-  const cnyOf=r=>{const a=Number(r.amount)||0;const c=(r.currency||'CNY').toUpperCase();if(c==='USD'||c==='USDT')return a*7.155;if(c==='HKD')return a/1.09;return a;};
+  const cnyOf=r=>{const a=Number(r.amount)||Number(r.cny)||0;const c=(r.currency||'CNY').toUpperCase();if(c==='USD'||c==='USDT')return a*7.155;if(c==='HKD')return a/1.09;return a;};
   const TL={dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',other:'其他收入'};
   recs.forEach(r=>{r.cny=Math.round(cnyOf(r));r.type_label=TL[r.type]||r.type;});
   const daily={},monthly={},yearly={};
@@ -2151,7 +2153,7 @@ function renderInc(){
   try{initIncomeChart();}catch(e){console.error(e)}
 }
 // 撤销已确认（重新变回pending）
-function unconfirmTodo(id){const ts=getTodos();const t=ts.find(x=>x.id===id);if(!t)return;t.status='pending';t.actual_amount=null;t.confirmed_at=null;saveTodos(ts);renderTodos();renderInc();toast('已撤销，回到待确认');}
+function unconfirmTodo(id){const ts=getTodos();const t=ts.find(x=>x.id===id);if(!t)return;t.status='pending';t.actual_amount=null;t.confirmed_at=null;saveTodos(ts);/* 清除确认时生成的 income.record */DATA.income.records=DATA.income.records.filter(r=>r.id!=='inc_conf_'+id);computeIncomeAgg();saveEditsLocal();renderTodos();renderInc();if(typeof renderCalendar==='function')renderCalendar();toast('已撤销，回到待确认');}
 function initIncomeChart(){
   const c=initChart('chartIncome'); if(!c)return; const m=DATA.income.monthly;
   c.setOption({tooltip:{trigger:'axis',axisPointer:{type:'shadow'}},legend:{bottom:0,textStyle:{color:'#6b7280',fontSize:11}},
@@ -2499,7 +2501,7 @@ function saveTrade(){
     if(!tx.account){toast('请选择账户');return;}
     if(!tx.name){toast('请填写来源/标的');return;}
     if(tx.amount<=0){toast('金额需大于0');return;}
-    const inc={id:tx.id,date:tx.date,type:'dividend',type_label:'股息/分红',account:acctName(tx.account),holder:'',name:tx.name,project:'',currency:tx.currency,status:tx.status,location:document.getElementById('tr-location').value||'',note:tx.note};
+    const inc={id:tx.id,date:tx.date,type:'dividend',type_label:'股息/分红',account:acctName(tx.account),holder:'',name:tx.name,project:'',currency:tx.currency,amount:tx.amount,status:tx.status,location:document.getElementById('tr-location').value||'',note:tx.note};
     inc.cny=toCny(tx.amount,tx.currency);
     DATA.income.records.push(inc); computeIncomeAgg();
   } else {
@@ -2519,6 +2521,20 @@ function saveTrade(){
     if(tx.quantity<=0||price<=0){toast('数量与单价需大于0');return;}
   }
   DATA.transactions.push(tx);
+  /* 买入/卖出时同步更新账户持仓，使 recomputePortfolio → acctLiveTotalCny 能汇总到总资产 */
+  if((tab==='buy'||tab==='sell')&&tx.account){
+    const a=acct(tx.account); if(a){ const costCny=toCny(tx.amount,tx.currency||'CNY');
+      if(tab==='buy'){
+        if(!a.securities)a.securities=[];
+        a.securities.push({asset_name:tx.asset_name,code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||'',location:tx.location||'',notes:tx.note||''});
+        if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny+=costCny;
+      }else{
+        if(a.securities){const s=a.securities.find(s=>(s.asset_name===tx.asset_name)||(s.code&&s.code===tx.code));
+          if(s){s.quantity=Math.max(0,(s.quantity||0)-tx.quantity);if(s.market_value_cny)s.market_value_cny=Math.max(0,s.market_value_cny-costCny);if(s.quantity<=0)a.securities=a.securities.filter(x=>x!==s);}}
+        if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny=Math.max(0,(a.summary_cny.total_asset_cny||0)-costCny);
+      }
+    }
+  }
   saveEditsLocal(); renderTx(); renderInc(); renderCalendar(); recomputePortfolio();
   toast('已保存交易：'+typeLabels[tab]);
   const summary=tab==='dividend'?`${tx.name} ¥${tx.amount} ${tx.currency}`:`${tx.asset_name} ${tx.quantity}股 @${tx.amount} ${tx.currency}`;
@@ -2566,6 +2582,20 @@ function addTx(){
     const inc={id:tx.id,date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
     inc.cny=toCny(tx.amount,tx.currency);
     DATA.income.records.push(inc); computeIncomeAgg();
+  }
+  /* 买入/卖出时同步更新账户持仓（与 saveTrade 对称） */
+  if((type==='buy'||type==='sell')&&tx.account){
+    const a=acct(tx.account); if(a){ const costCny=toCny(tx.amount,tx.currency||'CNY');
+      if(type==='buy'){
+        if(!a.securities)a.securities=[];
+        a.securities.push({asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:'',asset_category:'',location:'',notes:tx.note||''});
+        if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny+=costCny;
+      }else{
+        if(a.securities){const s=a.securities.find(s=>(s.asset_name===(tx.asset_name||''))||(s.code&&s.code===tx.code));
+          if(s){s.quantity=Math.max(0,(s.quantity||0)-tx.quantity);if(s.market_value_cny)s.market_value_cny=Math.max(0,s.market_value_cny-costCny);if(s.quantity<=0)a.securities=a.securities.filter(x=>x!==s);}}
+        if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny=Math.max(0,(a.summary_cny.total_asset_cny||0)-costCny);
+      }
+    }
   }
   saveEditsLocal(); renderTx(); renderInc(); renderCalendar(); recomputePortfolio();
   toast('已保存流水：'+({income:'收入',transfer:'转账',buy:'买入',sell:'卖出'})[type]);
@@ -3058,12 +3088,20 @@ function confirmTodoAmount(id){
   // 联动刷新收入页
   if(typeof renderInc==='function')renderInc();
   if(typeof initIncomeChart==='function')initIncomeChart();
+  /* 同时写入 income.records 使日历/聚合能统计到（renderInc 只合并展示，不写 calendar） */
+  const ccy=t.currency||'CNY'; const amt=actual||0;
+  if(amt>0){
+    const inc={id:'inc_conf_'+t.id,date:t.confirmed_at?t.confirmed_at.slice(0,10):(t.due||''),type:t.kind==='FCN'?'fcn_coupon':'dividend',type_label:t.type_label||t.name||'计划收入',account:t.account_name||'',holder:'',name:t.name,project:'',currency:ccy,amount:amt,status:'received',note:'来自计划确认',_src:'计划确认'};
+    inc.cny=Math.round(toCny(amt,ccy)||amt);
+    DATA.income.records.push(inc); computeIncomeAgg(); saveEditsLocal();
+    if(typeof renderCalendar==='function')renderCalendar();
+  }
 }
 function showTodoForm(){/* 保持原有手动添加 */}
 function commitTodo(){/* 保持原有手动添加 */}
 function confirmTodo(id){showConfirmTodo(id);} /* 兼容旧入口 */
 function skipTodo(id){const t=getTodos().find(x=>x.id===id);if(!t)return;t.status='skipped';saveTodos(getTodos());renderTodos();toast('已标记本期无');logActivity('跳过待办',t.name);}
-function delTodo(id){const t=getTodos().find(x=>x.id===id);let ts=getTodos().filter(x=>x.id!==id);saveTodos(ts);renderTodos();toast('已删除');if(t)logActivity('删除待确认',t.name);}
+function delTodo(id){const t=getTodos().find(x=>x.id===id);let ts=getTodos().filter(x=>x.id!==id);saveTodos(ts);DATA.income.records=DATA.income.records.filter(r=>r.id!=='inc_conf_'+id);computeIncomeAgg();saveEditsLocal();renderTodos();if(typeof renderInc==='function')renderInc();if(typeof renderCalendar==='function')renderCalendar();toast('已删除');if(t)logActivity('删除待确认',t.name);}
 
 
 /* ============ 家庭收入回看 ============ */
