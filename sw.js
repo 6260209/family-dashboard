@@ -2,7 +2,7 @@
  * v2 变更：HTML 文档改为「网络优先」，确保每次打开都拿到最新页面；
  *          静态资源仍「缓存优先 + 后台更新」，兼顾离线可用与更新及时。
  */
-const CACHE = 'pf-cache-v2';
+const CACHE = 'pf-cache-v3';
 const ASSETS = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', function(e){
