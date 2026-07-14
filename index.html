@@ -7289,8 +7289,9 @@ function commitEditConsolPrice(codeKey,rowIdx){
   const newPrice=parseFloat(inp.value);
   if(isNaN(newPrice)||newPrice<=0){alert('请输入有效的正数价格');return;}
 
-  // 遍历所有账户，找到匹配代码的证券，更新 market_value = new_price × quantity
   let changedCount=0;
+
+  /* ---- ① 证券类：更新 market_value = new_price × quantity ---- */
   for(const a of DATA.accounts){
     if(!a.securities)continue;
     for(const t of a.securities){
@@ -7307,6 +7308,20 @@ function commitEditConsolPrice(codeKey,rowIdx){
       }
     }
   }
+
+  /* ---- ② 加密货币类：更新 value_usdt = new_price × amount ---- */
+  for(const a of DATA.accounts){
+    if(!a.holdings)continue;
+    for(const h of a.holdings){
+      if(h.is_cash)continue; /* 稳定币/现金类不改价 */
+      const hName=h.name||'';
+      if(hName===codeKey && (h.amount>0 || h.amount)){
+        h.value_usdt=+(newPrice*h.amount).toFixed(6);
+        changedCount++;
+      }
+    }
+  }
+
   if(changedCount===0){alert('未找到匹配持仓，无法更新');renderConsolidated();return;}
 
   // 重算账户级汇总
