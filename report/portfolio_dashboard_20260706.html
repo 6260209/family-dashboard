@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>谢俊辰富途牛牛持仓分析仪表盘 | 2026-07-06</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f0f23;--card:#1a1a2e;--card-hover:#222240;
+  --buy:#00d4aa;--sell:#ff4757;--hold:#ffa502;
+  --accent1:#667eea;--accent2:#764ba2;
+  --text:#e2e8f0;--text-dim:#94a3b8;
+  --border:#2d2d44;--green-grad:linear-gradient(135deg,#00d4aa,#00a085);
+  --red-grad:linear-gradient(135deg,#ff4757,#ff6b81);
+  --orange-grad:linear-gradient(135deg,#ffa502,#ffb142);
+  --purple-grad:linear-gradient(135deg,#667eea,#764ba2);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;padding:20px}
+.container{max-width:1200px;margin:0 auto}
+
+/* Header */
+.header{text-align:center;padding:30px 0 20px;border-bottom:1px solid var(--border);margin-bottom:30px}
+.header h1{font-size:28px;background:var(--purple-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800}
+.header .meta{color:var(--text-dim);font-size:13px;margin-top:8px}
+.header .badge{display:inline-block;padding:3px 12px;border-radius:20px;font-size:11px;margin:5px 3px;background:var(--card);border:1px solid var(--border)}
+.badge.safe{color:var(--buy);border-color:var(--buy)}
+
+/* Summary Cards */
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:30px}
+.card{background:var(--card);border-radius:16px;padding:20px;border:1px solid var(--border);transition:transform .2s,box-shadow .2s}
+.card:hover{transform:translateY(-3px);box-shadow:0 10px 40px rgba(102,126,234,.15)}
+.card .label{font-size:12px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.card .value{font-size:28px;font-weight:700;color:var(--text)}
+.card .sub{font-size:12px;margin-top:4px}
+.card.positive .value{color:var(--buy)}
+.card.negative .value{color:var(--sell)}
+.card.highlight{background:var(--purple-grad)}
+.card.highlight .label,.card.highlight .value,.card.highlight .sub{color:#fff}
+
+/* Signal Badge */
+.signal-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 24px;border-radius:30px;font-size:18px;font-weight:700;margin:15px auto}
+.signal-badge.buy{background:rgba(0,212,170,.15);color:var(--buy);border:2px solid var(--buy)}
+.signal-badge.hold{background:rgba(255,165,2,.15);color:var(--hold);border:2px solid var(--hold)}
+
+/* Section */
+.section{margin-bottom:35px}
+.section-title{font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.section-title::before{content:'';width:4px;height:22px;border-radius:2px;display:inline-block}
+.sec-overview::before{background:var(--purple-grad)}
+.sec-securities::before{background:var(--green-grad)}
+.sec-fcn::before{background:var(--orange-grad)}
+.sec-risk::before{background:var(--red-grad)}
+.sec-plan::before{background:linear-gradient(90deg,#667eea,#00d4aa)}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden;font-size:14px}
+thead{background:rgba(102,126,234,.1)}
+th{padding:12px 14px;text-align:left;font-weight:600;color:var(--text-dim);font-size:12px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+td{padding:11px 14px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.03)}
+.text-green{color:var(--buy)}
+.text-red{color:var(--sell)}
+.text-orange{color:var(--hold)}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.tag-us{background:rgba(102,126,234,.2);color:#a5b4fc}
+.tag-hk{background:rgba(255,165,2,.2);color:#ffd166}
+.tag-option{background:rgba(160,82,255,.2);color:#c084fc}
+.tag-stock{background:rgba(0,212,170,.2);color:#00d4aa}
+.tag-sharkfin{background:rgba(0,180,216,.2);color:#00d4aa}
+.tag-fcn{background:rgba(255,165,2,.2);color:#ffa502}
+
+/* Charts */
+.chart-container{background:var(--card);border-radius:16px;padding:20px;border:1px solid var(--border);margin-bottom:25px}
+.chart-title{font-size:15px;font-weight:600;margin-bottom:15px;color:var(--text-dim)}
+.chart{width:100%;height:350px}
+
+/* Risk Meter */
+.risk-meter{display:flex;align-items:center;gap:20px;background:var(--card);border-radius:16px;padding:24px;border:1px solid var(--border)}
+.meter-bar{flex:1;height:14px;border-radius:7px;background:linear-gradient(90deg,var(--buy) 0%,var(--hold) 50%,var(--sell) 100%);position:relative}
+.meter-pointer{position:absolute;top:-8px;width:4px;height:30px;background:#fff;border-radius:2px;box-shadow:0 2px 8px rgba(0,0,0,.5);transition:left .5s}
+.meter-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-top:8px}
+
+/* Score Circle */
+.score-circle{width:140px;height:140px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column;position:relative}
+.score-circle svg{position:absolute;width:100%;height:100%;transform:rotate(-90deg)}
+.score-circle .score-num{font-size:36px;font-weight:800;z-index:1}
+.score-circle .score-label{font-size:12px;color:var(--text-dim);z-index:1}
+
+/* Checklist */
+.checklist{list-style:none}
+.checklist li{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.checklist li:last-child{border-bottom:none}
+.check-icon{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px}
+.check-icon.high{background:rgba(255,71,87,.15);color:var(--sell)}
+.check-icon.mid{background:rgba(255,165,2,.15);color:var(--hold)}
+.check-icon.low{background:rgba(0,212,170,.15);color:var(--buy)}
+
+/* Footer */
+.footer{text-align:center;padding:30px 0 10px;border-top:1px solid var(--border);margin-top:40px;color:var(--text-dim);font-size:12px;line-height:1.8}
+
+/* Grid for side by side */
+.split-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:768px){.split-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Header -->
+<div class="header">
+  <h1>📊 谢俊辰 · 富途持仓分析仪表盘</h1>
+  <div class="meta">
+    <span class="badge">富途牛牛</span>
+    <span class="badge safe">✅ 风控安全</span>
+    <span class="badge">保证金账户 #3697</span>
+    快照: 2026-07-06 23:19 HKT
+  </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="summary-grid">
+  <div class="card highlight">
+    <div class="label">总资产 (HKD)</div>
+    <div class="value">239,132</div>
+    <div class="sub">≈ $30,653 USD</div>
+  </div>
+  <div class="card positive">
+    <div class="label">今日盈亏</div>
+    <div class="value">+5,353</div>
+    <div class="sub text-green">▲ +2.24%</div>
+  </div>
+  <div class="card">
+    <div class="label">证券净值</div>
+    <div class="value">55,123</div>
+    <div class="sub">占比 23.0%</div>
+  </div>
+  <div class="card">
+    <div class="label">结构性产品净值</div>
+    <div class="value">152,539</div>
+    <div class="sub">占比 63.8%</div>
+  </div>
+  <div class="card">
+    <div class="label">可用资金</div>
+    <div class="value">31,471</div>
+    <div class="sub">流动性+购买力</div>
+  </div>
+
+  <!-- Signal & Score -->
+  <div class="card" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px">
+    <div class="signal-badge hold">⚠️ HOLD 中性偏谨慎</div>
+    <div style="display:flex;align-items:center;gap:15px">
+      <div class="score-circle" style="--score:58">
+        <svg viewBox="0 0 36 36"><path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#2d2d44" stroke-width="3"/><path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#ffa502" stroke-width="3" stroke-dasharray="58,100" stroke-linecap="round"/></svg>
+        <div class="score-num">58</div>
+        <div class="score-label">综合评分</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Section: Asset Allocation -->
+<div class="section">
+  <h2 class="section-title sec-overview">📊 资产配置结构</h2>
+  <div class="split-grid">
+    <div class="chart-container">
+      <div class="chart-title">配置比例（按净值）</div>
+      <div id="pieChart" class="chart" style="height:320px"></div>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title">市场分布</div>
+      <div id="marketChart" class="chart" style="height:320px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Section: Securities -->
+<div class="section">
+  <h2 class="section-title sec-securities">📈 证券持仓明细</h2>
+  <table>
+    <thead><tr><th>#</th><th>市场</th><th>标的</th><th>代码</th><th>类型</th><th>方向/数量</th><th>成本价</th><th>现价</th><th>市值(HKD)</th><th>盈亏</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td><td><span class="tag tag-us">🇺🇸美股</span></td>
+        <td>TQQQ PUT</td><td>26091860</td><td><span class="tag tag-option">看跌期权</span></td>
+        <td>空 ×1</td><td>$7.48</td><td>$3.85</td><td>≈ -3,003</td>
+        <td><span class="text-green">+$363 (+94%)</span></td>
+      </tr>
+      <tr>
+        <td>2</td><td><span class="tag tag-hk">🇭🇰港股</span></td>
+        <td>飞鱼科技</td><td>01022.HK</td><td><span class="tag tag-stock">正股</span></td>
+        <td>多 ×105K</td><td>$0.506</td><td>$0.450</td><td>47,250</td>
+        <td><span class="text-red">-$5,895 (-11%)</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Section: Structured Products -->
+<div class="section">
+  <h2 class="section-title sec-fcn">🏛️ 结构性产品组合（共13只）</h2>
+  
+  <!-- USD Products -->
+  <div style="margin-bottom:20px">
+    <div style="font-size:14px;font-weight:600;color:var(--accent1);margin-bottom:10px">🇺🇸 美元结构性产品 — 7只，合计 $11,000 USD</div>
+    <table>
+      <thead><tr><th>#</th><th>产品编号</th><th>类型</th><th>标的篮子</th><th>面值(USD)</th><th>占比</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Sharkfin 261007-1</td><td><span class="tag tag-sharkfin">鲨鱼鳍</span></td><td>中芯国际</td><td>1,000</td><td>3.27%</td></tr>
+        <tr><td>2</td><td>Sharkfin 261014-1</td><td><span class="tag tag-sharkfin">鲨鱼鳍</span></td><td>紫金矿业</td><td>1,000</td><td>3.27%</td></tr>
+        <tr><td>3</td><td>FCN 270104-134</td><td><span class="tag tag-fcn">FCN</span></td><td>美光+英伟达+谷歌A</td><td>3,000</td><td>9.69%</td></tr>
+        <tr><td>4</td><td>FCN 261203-127</td><td><span class="tag tag-fcn">FCN</span></td><td>谷歌A+英伟达+博通+美光</td><td>1,500</td><td>4.83%</td></tr>
+        <tr><td>5</td><td>FCN 261202-113</td><td><span class="tag tag-fcn">FCN</span></td><td>苹果+英伟达+特斯拉</td><td>1,500</td><td>4.83%</td></tr>
+        <tr><td>6</td><td>FCN 261201-175</td><td><span class="tag tag-fcn">FCN</span></td><td>特斯拉+英伟达+谷歌A</td><td>1,500</td><td>4.72%</td></tr>
+        <tr><td>7</td><td>FCN 261125-209</td><td><span class="tag tag-fcn">FCN</span></td><td>谷歌A+微软+甲骨文+亚马逊</td><td>1,500</td><td>4.43%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- HKD Products -->
+  <div>
+    <div style="font-size:14px;font-weight:600;color:var(--hold);margin-bottom:10px">🇭🇰 港元结构性产品 — 6只，合计 HK$70,000</div>
+    <table>
+      <thead><tr><th>#</th><th>产品编号</th><th>类型</th><th>标的篮子</th><th>面值(HKD)</th><th>占比</th></tr></thead>
+      <tbody>
+        <tr><td>8</td><td>FCN 261202-220</td><td><span class="tag tag-fcn">FCN</span></td><td>特斯拉+英伟达+美光</td><td>10,000</td><td>4.12%</td></tr>
+        <tr><td>9</td><td>FCN 261222-134</td><td><span class="tag tag-fcn">FCN</span></td><td>英伟达+谷歌A+亚马逊+美光</td><td>10,000</td><td>4.12%</td></tr>
+        <tr><td>10</td><td>FCN 261231-90</td><td><span class="tag tag-fcn">FCN</span></td><td>美光+英伟达+谷歌A</td><td>10,000</td><td>4.12%</td></tr>
+        <tr><td>11</td><td>FCN 270105-191</td><td><span class="tag tag-fcn">FCN</span></td><td>美光+特斯拉+英特尔</td><td>10,000</td><td>4.12%</td></tr>
+        <tr><td>12</td><td>FCN 261201-155</td><td><span class="tag tag-fcn">FCN</span></td><td>英伟达+SMCI+英特尔</td><td>10,000</td><td>4.07%</td></tr>
+        <tr><td>13</td><td>FCN 261113-333</td><td><span class="tag tag-fcn">FCN</span></td><td>谷歌A+博通+AMD?</td><td>20,000</td><td>8.19%</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Underlying Exposure -->
+<div class="section">
+  <div class="split-grid">
+    <div class="chart-container">
+      <div class="chart-title">底层标的出现频率（集中度风险）</div>
+      <div id="exposureChart" class="chart" style="height:380px"></div>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title">到期日分布</div>
+      <div id="expiryChart" class="chart" style="height:380px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Risk Alert -->
+<div class="section">
+  <h2 class="section-title sec-risk">🚨 风险警报与信号归因</h2>
+  <div style="background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:12px;padding:20px;margin-bottom:16px">
+    <div style="font-weight:700;color:var(--sell);font-size:15px;margin-bottom:10px">🔴 高危警报：英伟达(NVDA)过度集中</div>
+    <p style="font-size:14px;color:var(--text)">您的 <strong>13只结构性产品中有12只包含英伟达(NVDA)</strong> 作为底层标的。若NVDA出现大幅回调（如AI板块泡沫破裂、业绩不及预期、行业周期下行），整个结构性产品组合将面临系统性冲击。</p>
+  </div>
+  <div style="background:rgba(255,165,2,.06);border:1px solid rgba(255,165,2,.2);border-radius:12px;padding:20px;margin-bottom:16px">
+    <div style="font-weight:700;color:var(--hold);font-size:15px;margin-bottom:10px">⚠️ 中度风险：飞鱼科技仙股持仓</div>
+    <p style="font-size:14px;color:var(--text)">飞鱼科技(01022)为低价仙股（现价$0.45），持有105,000股，占证券仓位85.7%。流动性差，退出难度高。</p>
+  </div>
+  <div style="background:rgba(0,212,170,.06);border:1px solid rgba(0,212,170,.2);border-radius:12px;padding:20px">
+    <div style="font-weight:700;color:var(--buy);font-size:15px;margin-bottom:10px">✅ 积极信号</div>
+    <ul style="font-size:14px;color:var(--text);padding-left:20px">
+      <li>TQQQ PUT 空头盈利 +94%，时间衰减有利卖方</li>
+      <li>今日整体收益 +2.24%，趋势向好</li>
+      <li>现金及购买力充足（~31,471 HKD）</li>
+      <li>风控状态显示「安全」</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Signal Attribution -->
+<div class="section">
+  <h2 class="section-title sec-overview">📡 信号归因雷达图</h2>
+  <div class="chart-container">
+    <div id="radarChart" class="chart" style="height:380px"></div>
+  </div>
+  <table style="margin-top:16px">
+    <thead><tr><th>维度</th><th>贡献度</th><th>关键因素</th></tr></thead>
+    <tbody>
+      <tr><td>技术指标</td><td>20%</td><td>飞鱼科技反弹+11%，TQQQ期权浮盈</td></tr>
+      <tr><td>基本面</td><td>15%</td><td>NVDA/AI赛道强势支撑FCN估值</td></tr>
+      <tr><td>集中度风险</td><td>-25%</td><td>12/13只含NVDA，严重扣分</td></tr>
+      <tr><td>流动性</td><td>15%</td><td>现金充裕但仙股难变现</td></tr>
+      <tr><td>市场环境</td><td>15%</td><td>当前科技股牛市有利FCN票息</td></tr>
+      <tr><td>跨境合规</td><td>-10%</td><td>CRS/外汇管制需持续关注</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Battle Plan -->
+<div class="section">
+  <h2 class="section-title sec-plan">🎯 作战计划</h2>
+  <ul class="checklist">
+    <li>
+      <div class="check-icon high">🔴</div>
+      <div><strong>降低 NVDA 集中度</strong><br><span style="color:var(--text-dim);font-size:13px">到期续作时选择不含或少含NVDA的标的；或增加非科技类FCN</span></div>
+    </li>
+    <li>
+      <div class="check-icon high">🔴</div>
+      <div><strong>制定飞鱼科技退出策略</strong><br><span style="color:var(--text-dim);font-size:13px">设反弹目标位分批减持；评估长期持有的机会成本</span></div>
+    </li>
+    <li>
+      <div class="check-icon mid">🟡</div>
+      <div><strong>TQQQ PUT 止盈时机</strong><br><span style="color:var(--text-dim);font-size:13px">已赚94%可锁定利润；关注剩余期限和行权风险</span></div>
+    </li>
+    <li>
+      <div class="check-icon mid">🟡</div>
+      <div><strong>12月到期密集管理</strong><br><span style="color:var(--text-dim);font-size:13px">7只产品同月到期，提前规划续作/赎回资金安排</span></div>
+    </li>
+    <li>
+      <div class="check-icon low">🟢</div>
+      <div><strong>增加分散化配置</strong><br><span style="color:var(--text-dim);font-size:13px">考虑红利ETF、黄金ETF等低相关品种降低组合波动</span></div>
+    </li>
+  </ul>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <p><strong>谢俊辰 · 富途牛牛持仓分析仪表盘 v1.0</strong></p>
+  <p>数据来源: 富途牛牛APP截图OCR识别 | 快照时间: 2026-07-06 23:19 HKT</p>
+  <p>综合评分: <strong>58/100</strong> (中性偏谨慎) | 信号: ⚠️ HOLD</p>
+  <hr style="border-color:var(--border);margin:15px 0">
+  <p style="font-size:11px;color:var(--text-dim)">
+    ⚠️ 免责声明：本分析仅供学习研究参考，不构成任何投资建议。<br>
+    市场有风险，投资需谨慎。历史业绩不代表未来表现。<br>
+    跨境投资请关注个人年度购汇额度(5万美元)、CRS信息交换、境外所得税务申报等合规要求。
+  </p>
+</div>
+
+</div><!-- end container -->
+
+<script>
+// ===== Pie Chart: Asset Allocation =====
+const pieChart = echarts.init(document.getElementById('pieChart'));
+pieChart.setOption({
+  tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+  color:['#667eea','#00d4aa','#ffa502','#94a3b8'],
+  series:[{
+    type:'pie',radius:['45%','72%'],center:['50%','50%'],
+    label:{formatter:'{b}\n{d}%',fontSize:12},
+    data:[
+      {value:152539,name:'结构性产品',itemStyle:{color:'#764ba2'}},
+      {value:55123,name:'证券持仓',itemStyle:{color:'#00d4aa'}},
+      {value:31471,name:'现金/流动',itemStyle:{color:'#ffa502'}},
+      {value:-?name:'其他保证金',itemStyle:{color:'#94a3b8'}}
+    ].filter(d=>d.value>=0)
+  }]
+});
+
+// ===== Bar Chart: Market Distribution =====
+const marketChart = echarts.init(document.getElementById('marketChart'));
+marketChart.setOption({
+  tooltip:{trigger:'axis'},
+  grid:{left:80,right:20,top:20,bottom:30},
+  xAxis:{type:'value',axisLabel:{color:'#94a3b8'},splitLine:{lineStyle:{color:'#2d2d44'}}},
+  yAxis:{type:'category',data:['港股正股','美元FCN','港元FCN','美股期权'],axisLabel:{color:'#e2e8f8'}},
+  series:[{type:'bar',barWidth:24,
+    data:[
+      {value:47250,itemStyle:{color:'#00d4aa'}},
+      {value:85800,itemStyle:{color:'#667eea'}},
+      {value:70000,itemStyle:{color:'#ffa502'}},
+      {value:-3003,itemStyle:{color:'#c084fc'}}
+    ],
+    label:{show:true,position:'right',color:'#e2e8f0',fontSize:12,formatter:'{c}'}
+  }]
+});
+
+// ===== Horizontal Bar: Underlying Exposure =====
+const exposureChart = echarts.init(document.getElementById('exposureChart'));
+exposureChart.setOption({
+  tooltip:{trigger:'axis',axisPointer:{type:'shadow'}},
+  grid:{left:100,right:30,top:10,bottom:20},
+  xAxis:{type:'value',max:13,axisLabel:{color:'#94a3b8'},splitLine:{lineStyle:{color:'#2d2d44'}}},
+  yAxis:{type:'category',
+    data:['英特尔','特斯拉','苹果','亚马逊','微软','甲骨文','博通','紫金矿','中芯国','谷歌-A','美光科','英伟达'],
+    axisLabel:{color:'#e2e8f0',fontSize:12}},
+  series:[{
+    type:'bar',barWidth:20,
+    data:[3,4,1,2,1,1,2,1,1,6,8,12],
+    itemStyle:{
+      color:function(params){return params.value>=10?'#ff4757':params.value>=6?'#ffa502':'#667eea';}
+    },
+    label:{show:true,position:'right',fontSize:11,color:'#94a3b8'}
+  }],
+  markLine:{silent:true,data:[{yAxis:'英伟达',lineStyle:{color:'#ff4757',type:'dashed',width:2},label:{formatter:'⚠ 过度集中',color:'#ff4757'}}]}
+});
+
+// ===== Expiry Calendar =====
+const expiryChart = echarts.init(document.getElementById('expiryChart'));
+expiryChart.setOption({
+  tooltip:{trigger:'axis'},
+  grid:{left:70,right:20,top:20,bottom:30},
+  xAxis:{type:'category',data:['11月','12月','1月','待确认(Sharkfin)'],axisLabel:{color:'#e2e8f0'}},
+  yAxis:{type:'value',axisLabel:{color:'#94a3b8'},splitLine:{lineStyle:{color:'#2d2d44'}}},
+  series:[{
+    type:'bar',barWidth:40,
+    data:[
+      {value:2,itemStyle:{color:'#667eea'},name:'11月(2只)'},
+      {value:7,itemStyle:{color:'#ff4757'},name:'12月(7只)'},
+      {value:2,itemStyle:{color:'#ffa502'},name:'1月(2只)'},
+      {value:2,itemStyle:{color:'#94a3b8'},name:'待确认'}
+    ],
+    label:{show:true,position:'top',fontSize:14,fontWeight:600}
+  }]
+});
+
+// ===== Radar Chart =====
+const radarChart = echarts.init(document.getElementById('radarChart'));
+radarChart.setOption({
+  radar:{indicator:[
+    {name:'分散化',max:100},{name:'风险控制',max:100},{name:'收益能力',max:100},
+    {name:'流动性',max:100},{name:'市场时机',max:100},{name:'合规性',max:100}
+  ],shape:'polygon',axisName:{color:'#e2e8f0',fontSize:12},
+    splitArea:{areaStyle:{color:['rgba(102,126,234,.05)','rgba(102,126,234,.1)']}},
+    splitLine:{lineStyle:{color:'#2d2d44'}}},
+  series:[{
+    type:'radar',data:[{
+      value:[25,60,70,75,65,75],
+      name:'当前组合',
+      areaStyle:{color:'rgba(118,75,162,.3)'},
+      lineStyle:{color:'#764ba2',width:2},
+      itemStyle:{color:'#764ba2'}
+    },{
+      value:[80,85,75,80,70,90],
+      name:'理想组合',
+      areaStyle:{color:'rgba(0,212,170,.1)'},
+      lineStyle:{color:'#00d4aa',width:1,type:'dashed'},
+      itemStyle:{color:'#00d4aa'}
+    }],
+    legend:{data:['当前组合','理想组合'],bottom:0,textStyle:{color:'#94a3b8'}}
+  }]
+});
+
+// Resize handler
+window.addEventListener('resize',()=>{pieChart.resize();marketChart.resize();exposureChart.resize();expiryChart.resize();radarChart.resize();});
+</script>
+</body>
+</html>
