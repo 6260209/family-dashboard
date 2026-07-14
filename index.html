@@ -9877,12 +9877,12 @@ function renderMine(){
   });
   h+=`<div class="set-row"><div><div class="lbl">☁️ 跨设备同步</div><div class="desc">把本机数据推到云端 / 拉取其他设备最新</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="syncNow()">🔄 立即同步</button><button class="btn ghost sm" onclick="showSyncConfig()">⚙️ 配置</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl">🌐 货币管理</div><div class="desc">HKD/USD 改汇率，或添加其他货币（JPY/EUR/GBP…）</div></div><button class="btn ghost sm" onclick="showCurrencyManager()">管理</button></div>`;
-  h+=`<div class="set-row"><div><div class="lbl">🏷️ 标签 / 持有人管理</div><div class="desc">维护资产分类与持有人标签</div></div><div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="showCatManager()">分类</button><button class="btn ghost sm" onclick="showHolderManager()">持有人</button></div></div>`;
+  h+=`<div class="set-row"><div><div class="lbl">👤 持有人管理</div><div class="desc">维护资产持有人标签（分类编辑已移至聚合表内 🏷 按钮）</div></div><button class="btn ghost sm" onclick="showHolderManager()">持有人</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">📋 资产类型 / 币种管理</div><div class="desc">增删改现金/固收类型与币种（如定期存款、JPY、EUR…）</div></div><button class="btn ghost sm" onclick="showCashTypeManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">📊 投资项目管理</div><div class="desc">增删改投资项目分类（如纳斯达克100、黄金、REITs…）</div></div><button class="btn ghost sm" onclick="showProjectManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">🏷️ 资产类别管理</div><div class="desc">增删改资产类别（如场内ETF、场外基金、债券…）</div></div><button class="btn ghost sm" onclick="showCategoryManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">🌍 所在地管理</div><div class="desc">增删改资产所在地（如中国内地、香港、美国…）</div></div><button class="btn ghost sm" onclick="showLocationManager()">管理</button></div>`;
-  h+=`<div class="set-row"><div><div class="lbl">管理入口</div><div class="desc">快速跳转账户 / 分类 / 录入</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="switchTab('accounts')">🏦 账户</button><button class="btn ghost sm" onclick="showCatManager()">🗂️ 分类</button><button class="btn ghost sm" onclick="switchTab('trade')">➕ 录入</button></div></div>`;
+  h+=`<div class="set-row"><div><div class="lbl">管理入口</div><div class="desc">快速跳转账户 / 录入</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="switchTab('accounts')">🏦 账户</button><button class="btn ghost sm" onclick="switchTab('trade')">➕ 录入</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl">数据</div><div class="desc">导出 / 重置本机改动</div></div><div style="display:flex;gap:6px"><button class="btn sm" onclick="exportData()">⤓ 导出</button><button class="btn ghost sm" onclick="resetEdits()">↺ 重置</button></div></div>`;
   el.innerHTML=h;
 }
