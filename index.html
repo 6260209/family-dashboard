@@ -2111,7 +2111,7 @@ function getCashTypes(){try{const a=JSON.parse(localStorage.getItem(CASH_TYPE_KE
 function getCashCcys(){try{const a=JSON.parse(localStorage.getItem(CASH_CCY_KEY)||'null');if(Array.isArray(a)&&a.length)return a;}catch(e){}return DEFAULT_CASH_CCYS.slice();}
 function getProjects(){try{const a=JSON.parse(localStorage.getItem(PROJECT_KEY)||'null');if(Array.isArray(a)&&a.length)return a;}catch(e){}return DEFAULT_PROJECTS.slice();}
 function genCatId(){return 'cat_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-3);}
-function getCategories(){try{const a=JSON.parse(localStorage.getItem(CATEGORY_KEY)||'null');if(Array.isArray(a)&&a.length)return a;}catch(e){}return DEFAULT_CATEGORIES.map(c=>({id:c.id,name:c.name}));}
+function getCategories(){try{const a=JSON.parse(localStorage.getItem(CATEGORY_KEY)||'null');if(Array.isArray(a)&&a.length){if(typeof a[0]==='string')return a.map(s=>({id:genCatId(),name:s}));return a;}}catch(e){}return DEFAULT_CATEGORIES.map(c=>({id:c.id,name:c.name}));}
 function catNames(){return getCategories().map(c=>(c&&c.name!=null?c.name:c));}
 function catNameById(id){if(!id)return '';const a=getCategories();const f=a.find(c=>(c&&c.id)===id);return f?(f.name||''):'';}
 function resolveCatId(name){const nrm=s=>((s==null?'':String(s)).trim().replace(/\s+/g,''));const a=getCategories();let f=a.find(c=>nrm(c&&c.name)===nrm(name));if(f)return f.id;const id=genCatId();a.push({id,name});saveCategories(a);try{patchAllSchema();}catch(e){}return id;}
