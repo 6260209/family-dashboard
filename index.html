@@ -4495,12 +4495,21 @@ const SYNC_FILE='sync.json';
 const SYNC_KEYS=['famdash_v1','famdash_activity_log','famdash_settings','famdash_holders','famdash_currencies','famdash_plans','famdash_todos','famdash_goals','famdash_categories','famdash_locations','famdash_projects'];
 function getSyncToken(){try{return localStorage.getItem('famdash_sync_token')||'';}catch(e){return '';}}
 function syncCollect(){
-  const state={};SYNC_KEYS.forEach(function(k){try{state[k]=localStorage.getItem(k);}catch(e){}});
-  return {syncedAt:new Date().toISOString(),version:APP_VERSION,state:state};
+  const keys={};SYNC_KEYS.forEach(function(k){try{const v=localStorage.getItem(k);if(v!==null)keys[k]={updatedAt:Date.now(),value:v};}catch(e){}});
+  return {syncedAt:new Date().toISOString(),version:APP_VERSION,keys:keys};
 }
 function syncApply(snap){
-  if(!snap||!snap.state)return false;let changed=false;
-  SYNC_KEYS.forEach(function(k){if(snap.state[k]!=null){try{localStorage.setItem(k,snap.state[k]);changed=true;}catch(e){}}});
+  if(!snap)return false;
+  let state=snap.state;
+  if(!state && snap.keys) state=snap.keys;
+  if(!state)return false;
+  let changed=false;
+  SYNC_KEYS.forEach(function(k){
+    let val=state[k];
+    if(val===undefined)return;
+    if(val && typeof val==='object' && 'value' in val) val=val.value;
+    if(val!=null){try{localStorage.setItem(k,val);changed=true;}catch(e){}}
+  });
   return changed;
 }
 function _b64encode(str){return btoa(unescape(encodeURIComponent(str)));}
@@ -4568,7 +4577,7 @@ function syncPullForce(){
   syncPull().then(function(res){
     if(!res.snap){toast('拉取失败：云端无数据或令牌无效');return;}
     syncApply(res.snap);
-    localStorage.setItem('famdash_sync_lastpull',String(new Date(res.syncedAt||Date.now()).getTime()));
+    localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt||Date.now()).getTime()));
     localStorage.setItem('famdash_sync_localmod','0');
     toast('☁️ 已用云端数据覆盖本地，刷新中…');
     setTimeout(function(){location.reload();},500);
