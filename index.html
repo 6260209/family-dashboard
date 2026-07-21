@@ -1047,7 +1047,7 @@ function toggleArchive(id){
 }
 function setShowArchived(v){
   showArchived=!!v;
-  try{const s=getSettings();s.showArchived=showArchived;localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}
+  try{const s=getSettings();s.showArchived=showArchived;localStorage.setItem(SET_KEY,JSON.stringify(s));setSyncMeta(SET_KEY,Date.now());}catch(e){}
   renderAccts();
 }
 
@@ -2329,11 +2329,11 @@ function recCatName(rec){
 }
 function getLocations(){try{const a=JSON.parse(localStorage.getItem(LOCATION_KEY)||'null');if(Array.isArray(a)&&a.length)return a;}catch(e){}return DEFAULT_LOCATIONS.slice();}
 
-function saveCashTypes(arr){try{localStorage.setItem(CASH_TYPE_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));}catch(e){}}
-function saveCashCcys(arr){try{localStorage.setItem(CASH_CCY_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));}catch(e){}}
-function saveProjects(arr){try{localStorage.setItem(PROJECT_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));}catch(e){}}
-function saveCategories(arr){try{localStorage.setItem(CATEGORY_KEY,JSON.stringify(arr.filter((v,i)=>arr.findIndex(x=>(x&&v&&x.id)===v.id)===i)));}catch(e){}}
-function saveLocations(arr){try{localStorage.setItem(LOCATION_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));}catch(e){}}
+function saveCashTypes(arr){try{localStorage.setItem(CASH_TYPE_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));setSyncMeta(CASH_TYPE_KEY,Date.now());}catch(e){}}
+function saveCashCcys(arr){try{localStorage.setItem(CASH_CCY_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));setSyncMeta(CASH_CCY_KEY,Date.now());}catch(e){}}
+function saveProjects(arr){try{localStorage.setItem(PROJECT_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));setSyncMeta(PROJECT_KEY,Date.now());}catch(e){}}
+function saveCategories(arr){try{localStorage.setItem(CATEGORY_KEY,JSON.stringify(arr.filter((v,i)=>arr.findIndex(x=>(x&&v&&x.id)===v.id)===i)));setSyncMeta(CATEGORY_KEY,Date.now());}catch(e){}}
+function saveLocations(arr){try{localStorage.setItem(LOCATION_KEY,JSON.stringify(arr.filter((v,i)=>arr.indexOf(v)===i)));setSyncMeta(LOCATION_KEY,Date.now());}catch(e){}}
 
 // 让 SEC_SCHEMA 所有动态字段选项实时从 localStorage 取值
 function patchAllSchema(){
@@ -2376,7 +2376,7 @@ function enrichExistingAssets(){
 }
 const acct=aid=>DATA.accounts.find(x=>x.id===aid);
 function toast(msg){const t=document.getElementById('toast');if(!t)return;t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
-function saveEditsLocal(){try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));}catch(e){}}
+function saveEditsLocal(){try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}}
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
   try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));scheduleSyncPush();}}catch(e){}
 function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts)DATA.accounts=o.accounts;if(o.income){DATA.income.records=o.income;computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
@@ -3183,7 +3183,7 @@ function toCny(amt,ccy){ccy=(ccy||'CNY').toUpperCase();if(ccy==='USD')return (am
 // 内置 CNY/HKD/USD；用户可在「货币管理」中添加其他货币（如 JPY/EUR/GBP）并填写兑人民币汇率。
 const CCY_KEY='famdash_currencies';
 function getCurrencies(){try{return JSON.parse(localStorage.getItem(CCY_KEY))||[];}catch(e){return[];}}
-function saveCurrencies(arr){try{localStorage.setItem(CCY_KEY,JSON.stringify(arr));}catch(e){}}
+function saveCurrencies(arr){try{localStorage.setItem(CCY_KEY,JSON.stringify(arr));setSyncMeta(CCY_KEY,Date.now());}catch(e){}}
 // 查某货币兑人民币的汇率（rateToCny：1 单位外币 = ? 人民币），无则返回 null
 function customRateToCny(code){if(!code)return null;const c=getCurrencies().find(x=>String(x.code).toUpperCase()===String(code).toUpperCase());return c?(Number(c.rateToCny)||0):null;}
 // 全部可用币种代码（内置 + 自定义）
@@ -3956,7 +3956,7 @@ function initSortable(){
 /* ============ 投资计划 ============ */
 const PLANS_KEY='famdash_plans';
 function getPlans(){try{return JSON.parse(localStorage.getItem(PLANS_KEY))||[];}catch(e){return[];}}
-function savePlans(p){try{localStorage.setItem(PLANS_KEY,JSON.stringify(p));}catch(e){}}
+function savePlans(p){try{localStorage.setItem(PLANS_KEY,JSON.stringify(p));setSyncMeta(PLANS_KEY,Date.now());}catch(e){}}
 function renderPlans(){
   const el=document.getElementById('plan-list'); if(!el)return;
   const ps=getPlans();
@@ -4023,7 +4023,7 @@ function terminatePlan(id){
 /* ============ 待确认事项 ============ */
 const TODOS_KEY='famdash_todos';
 function getTodos(){try{return JSON.parse(localStorage.getItem(TODOS_KEY))||[];}catch(e){return[];}}
-function saveTodos(t){try{localStorage.setItem(TODOS_KEY,JSON.stringify(t));}catch(e){}}
+function saveTodos(t){try{localStorage.setItem(TODOS_KEY,JSON.stringify(t));setSyncMeta(TODOS_KEY,Date.now());}catch(e){}}
 
 /* 根据投资计划自动生成待确认事项 */
 function generatePlanTodos(plan){
@@ -4160,7 +4160,7 @@ function delTodo(id){const t=getTodos().find(x=>x.id===id);let ts=getTodos().fil
 /* ============ 财富目标 ============ */
 const GOALS_KEY='famdash_goals';
 function getGoals(){try{return JSON.parse(localStorage.getItem(GOALS_KEY))||{};}catch(e){return{};}}
-function saveGoals(g){try{localStorage.setItem(GOALS_KEY,JSON.stringify(g));}catch(e){}}
+function saveGoals(g){try{localStorage.setItem(GOALS_KEY,JSON.stringify(g));setSyncMeta(GOALS_KEY,Date.now());}catch(e){}}
 function renderGoal(){
   const el=document.getElementById('goal-content'); if(!el)return;
   const g=getGoals();const target=Number(g.target)||0;const cur=DATA.total.cny||0;
@@ -4246,8 +4246,8 @@ function delMile(i){const g=getGoals();const m=g.milestones&&g.milestones[i];g.m
 /* ============ 我的 · 设置 ============ */
 const SET_KEY='famdash_settings';
 function getSettings(){try{return JSON.parse(localStorage.getItem(SET_KEY))||{};}catch(e){return{};}}
-function saveSetting(k,v){const s=getSettings();s[k]=v;try{localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}applySettings();}
-function writeSettings(s){try{localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}applySettings();}
+function saveSetting(k,v){const s=getSettings();s[k]=v;try{localStorage.setItem(SET_KEY,JSON.stringify(s));setSyncMeta(SET_KEY,Date.now());}catch(e){}applySettings();}
+function writeSettings(s){try{localStorage.setItem(SET_KEY,JSON.stringify(s));setSyncMeta(SET_KEY,Date.now());}catch(e){}applySettings();}
 function applySettings(){
   const s=getSettings();const upIsRed=s.upIsRed!==false;
   document.documentElement.style.setProperty('--up',upIsRed?'#dc2626':'#16a34a');
@@ -4665,7 +4665,7 @@ function delCurrency(code){
 /* ============ 持有人 / 标签管理 ============ */
 const HOLDERS_KEY='famdash_holders';
 function getHolders(){try{return JSON.parse(localStorage.getItem(HOLDERS_KEY))||[];}catch(e){return[];}}
-function saveHolders(h){try{localStorage.setItem(HOLDERS_KEY,JSON.stringify(h));}catch(e){}}
+function saveHolders(h){try{localStorage.setItem(HOLDERS_KEY,JSON.stringify(h));setSyncMeta(HOLDERS_KEY,Date.now());}catch(e){}}
 function showHolderManager(){
   const def=[...new Set(DATA.flat.map(r=>r.holder))];
   const all=[...new Set([...def,...getHolders()])];
@@ -4693,18 +4693,39 @@ function syncCollect(){
   const keys={};SYNC_KEYS.forEach(function(k){try{const v=localStorage.getItem(k);if(v!==null)keys[k]={updatedAt:Date.now(),value:v};}catch(e){}});
   return {syncedAt:new Date().toISOString(),version:APP_VERSION,keys:keys};
 }
+// 每键同步时间戳：记录本地每个同步键「最后修改时间」，
+// 使得 syncApply 只覆盖「云端比本地新」的键，本地刚编辑的内容绝不被旧云端回档。
+const SYNC_META_KEY='famdash_sync_meta';
+function getSyncMeta(){
+  try{ let m=JSON.parse(localStorage.getItem(SYNC_META_KEY)||'null'); if(m&&typeof m==='object')return m; }catch(e){}
+  // 惰性初始化：为当前本地已存在的【辅助】同步键打上「刚编辑」时间戳，
+  // 防止部署新代码后首次同步被云端陈旧数据回档（famdash_v1 除外，保证跨设备账户同步正常）。
+  const m={}; const skip='famdash_v1';
+  SYNC_KEYS.forEach(function(k){ if(k===skip)return; try{ if(localStorage.getItem(k)!=null) m[k]=Date.now(); }catch(e){} });
+  try{ localStorage.setItem(SYNC_META_KEY,JSON.stringify(m)); }catch(e){}
+  return m;
+}
+function setSyncMeta(k,ts){ try{ const m=getSyncMeta(); m[k]=ts; localStorage.setItem(SYNC_META_KEY,JSON.stringify(m)); }catch(e){} }
 function syncApply(snap){
   if(!snap)return false;
   let state=snap.state;
   if(!state && snap.keys) state=snap.keys;
   if(!state)return false;
+  const meta=getSyncMeta();
   let changed=false;
   SYNC_KEYS.forEach(function(k){
-    let val=state[k];
-    if(val===undefined)return;
-    if(val && typeof val==='object' && 'value' in val) val=val.value;
-    if(val!=null){try{localStorage.setItem(k,val);changed=true;}catch(e){}}
+    let entry=state[k];
+    if(entry===undefined)return;
+    let val=entry, cu=0;
+    if(entry && typeof entry==='object' && 'value' in entry){
+      cu=Number(entry.updatedAt)||0;
+      const lm=Number(meta[k]||'0')||0;
+      if(cu && lm && cu<lm) return; // 本地比云端新 → 保留本地，跳过本键
+      val=entry.value;
+    }
+    if(val!=null){ try{ localStorage.setItem(k,val); meta[k]=cu||Date.now(); changed=true; }catch(e){} }
   });
+  try{ localStorage.setItem(SYNC_META_KEY,JSON.stringify(meta)); }catch(e){}
   return changed;
 }
 function snapGet(snap,k){
@@ -4768,7 +4789,7 @@ function syncPull(){
   const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false});}
   return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{headers:{'Authorization':'token '+tok}})
     .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
-    .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:syncApply(snap)};})
+    .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};})
     .catch(function(e){console.warn('syncPull failed',e);return {snap:null,changed:false};});
 }
 function _syncShouldApply(snap){
@@ -4866,6 +4887,11 @@ function syncPullOnLoad(){
   try{
     const s=getSettings();if(s.syncEnabled===false)return;
     if(!getSyncToken())return;
+    // 全新浏览器（本机从未同步过 famdash_v1）：以部署的 ENC 基线和准，
+    // 不在加载时静默用云端覆盖——否则云端若有陈旧/分歧数据会摧毁已校验的好数据。
+    // 已同步过的设备（localStorage 有 famdash_v1）仍按时间戳自动合并；用户也可手动「同步/强制拉取」。
+    const hasLocal=(function(){try{return localStorage.getItem('famdash_v1')!==null;}catch(e){return false;}})();
+    if(!hasLocal)return;
     syncPull().then(function(res){
       if(res.snap && _syncShouldApply(res.snap)){
         syncApply(res.snap); applyCloudToData(res.snap);
