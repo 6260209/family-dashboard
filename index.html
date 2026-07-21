@@ -2379,7 +2379,7 @@ function toast(msg){const t=document.getElementById('toast');if(!t)return;t.text
 function saveEditsLocal(){try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}}
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
   try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));scheduleSyncPush();}}catch(e){}
-function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts)DATA.accounts=o.accounts;if(o.income){DATA.income.records=o.income;computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
+function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts)DATA.accounts=o.accounts;if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
 function afterEdit(aid){
   const a=acct(aid);
   if(a)syncHoldingsFromLegacy(a); // 先由旧式数组回填统一 holdings（编辑已落在 legacy 数组上）
@@ -4735,6 +4735,13 @@ function snapGet(snap,k){
   if(val&&typeof val==='object'&&'value'in val)val=val.value;
   return val!=null?val:null;
 }
+// 收入记录归一化：兼容旧格式（income 为数组）与新格式（income 为 {records:[...]}）
+function incomeRecordsFrom(src){
+  if(!src) return [];
+  if(Array.isArray(src)) return src;
+  if(src && Array.isArray(src.records)) return src.records;
+  return [];
+}
 // 把云端快照中的 famdash_v1 应用进内存 DATA（账户/收入/交易）。
 // 关键：applyCloudToData 与 syncApply 配套——只写 localStorage 不够，
 // 否则紧随其后的 syncPush 会把「陈旧基线」而非「云端数据」推回云端（覆盖手机数据）。
@@ -4743,7 +4750,7 @@ function applyCloudToData(snap){
   if(!v1)return;
   try{const o=JSON.parse(v1);
     if(o.accounts)DATA.accounts=o.accounts;
-    if(o.income){DATA.income.records=o.income;computeIncomeAgg();}
+    if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     if(o.transactions)DATA.transactions=o.transactions;
   }catch(e){console.warn('applyCloudToData',e);}
 }
