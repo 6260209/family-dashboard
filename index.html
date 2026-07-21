@@ -2412,9 +2412,14 @@ function showAddForm(aid,sec,idx){
     if(_lbl.indexOf('(CNY)')>=0) _lbl=_lbl.replace('(CNY)','('+_ccy+')');
     if(_lbl.indexOf('(USDT)')>=0) _lbl=_lbl.replace('(USDT)','('+_ccy+')');
     if(f.t==='select'){
-      const allOpts = [...new Set([...(f.options||[]), ...extraOpts(f.k)])];
+      // 子账户字段强制使用标准分类列表，避免从历史脏数据捡拾孤儿值（如"美基金/中基金/港基金"等）
+      const isCatField = (f.k === 'asset_category');
+      const allOpts = isCatField ? catNames() : [...new Set([...(f.options||[]), ...extraOpts(f.k)])];
       const sel=(cur&&cur[f.k]!=null)?cur[f.k]:(allOpts[0]||'');
-      return `<div class="row" style="display:flex;align-items:center;gap:8px;margin:8px 0"><label style="min-width:84px;color:var(--dim);font-size:12.5px;font-weight:600">${_lbl}</label><select id="af-${sec}-${f.k}" data-fld="${f.k}" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:#fff">${allOpts.map(o=>`<option ${o===sel?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select><button type="button" class="btn ghost sm" data-addopt="${f.k}" data-sec="${sec}" style="padding:5px 9px;font-size:11px">+ 新增</button></div>`;
+      // 子账户字段：若当前值是孤儿分类（不在标准列表中），追加带标记的占位项
+      let catHtml = allOpts.map(o=>`<option ${o===sel?'selected':''}>${escapeHtml(o)}</option>`).join('');
+      if(isCatField && sel && !allOpts.includes(sel)){ catHtml = `<option value="${escapeHtml(sel)}" selected style="color:var(--amber)">${escapeHtml(sel)} ⚠️（未归类）</option>` + catHtml; }
+      return `<div class="row" style="display:flex;align-items:center;gap:8px;margin:8px 0"><label style="min-width:84px;color:var(--dim);font-size:12.5px;font-weight:600">${_lbl}</label><select id="af-${sec}-${f.k}" data-fld="${f.k}" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:#fff">${catHtml}</select>${isCatField ? '':`<button type="button" class="btn ghost sm" data-addopt="${f.k}" data-sec="${sec}" style="padding:5px 9px;font-size:11px">+ 新增</button>`}</div>`;
     }
     if(f.readOnly){
       return `<div class="row" style="display:flex;align-items:center;gap:8px;margin:8px 0"><label style="min-width:84px;color:var(--dim);font-size:12.5px;font-weight:600">${_lbl}</label><input id="af-${sec}-${f.k}" type="${f.t||'text'}" readonly placeholder="自动计算" value="${cur&&cur[f.k]!=null?escapeHtml(String(cur[f.k])):''}" style="flex:1;min-width:0;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:#f8fafc;color:var(--dim)"></div>`;
