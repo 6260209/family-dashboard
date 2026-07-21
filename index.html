@@ -2181,7 +2181,8 @@ const SEC_SCHEMA={
     {k:'location',l:'所在地',t:'select',options:[]},
     {k:'amount',l:'数量',t:'number'},
     {k:'value_usdt',l:'现价(USDT)',t:'number'},
-    {k:'pnl_pct',l:'收益率%',t:'number'},
+    {k:'cost_price',l:'成本价(USDT)',t:'number'},
+    {k:'pnl_pct',l:'收益率%',t:'number',readOnly:true},
     {k:'notes',l:'备注',t:'text',ph:'可选'}
   ]},
   crypto:{label:'加密/代币',fields:[
@@ -2536,17 +2537,18 @@ function showAddForm(aid,sec,idx,presetCat){
       if(idx==null) catSel.addEventListener('input',_onCat);
     }
   }
-  // 加密代币(holdings)：数量 + 现价(USDT) → 如有成本则算收益率（暂仅联动显示）
+  // 加密代币(holdings)：成本(USDT) + 现价(USDT) → 自动算收益率%
   if(sec==='holdings'){
     const hAmt=document.getElementById('af-holdings-amount');
     const hPrice=document.getElementById('af-holdings-value_usdt');
+    const hCost=document.getElementById('af-holdings-cost_price');
     const hPct=document.getElementById('af-holdings-pnl_pct');
     const _hcalc=()=>{
-      const A=Number(hAmt.value)||0, V=Number(hPrice.value)||0;
-      if(A>0&&V>0){
-        /* holdings 无成本价字段，收益率需用户手动填或后续接入成本数据 */
-      }
+      const C=Number(hCost?hCost.value:0)||0, V=Number(hPrice?hPrice.value:0)||0;
+      if(hPct){ hPct.value = (C>0) ? +((V-C)/C*100).toFixed(2) : ''; }
     };
+    [hCost,hPrice].forEach(el=>el&&el.addEventListener('input',_hcalc));
+    setTimeout(_hcalc,30);
   }
   // 保存按钮：先读值，再关 modal，再 commit（避免删 DOM 后读不到值）
   document.getElementById('af-save-btn').onclick=function(){
@@ -2603,7 +2605,7 @@ function addHolding(aid,sec,vals,idx){
     if(sec==='securities') extra=`数量 ${o.quantity} · 市值 ¥${o.market_value_cny}`;
     else if(sec==='fund_holdings') extra=`${o.asset_category||'基金'} · ¥${o.amount}`;
     else if(sec==='cash_holdings') extra=`${o.type||''} · ${o.amount} ${o.currency||''}`;
-    else if(sec==='holdings') extra=`数量 ${o.amount} · 单价 $${o.value_usdt}`;
+    else if(sec==='holdings') extra=`数量 ${o.amount} · 现价 $${o.value_usdt}`;
     logActivity('添加'+secLabel,`${acctName(aid)} · ${name}${extra?' · '+extra:''}`);
     /* 手动录入持仓时自动生成一条交易流水，使「流水明细」可追踪该操作 */
     if(!isEdit){
@@ -3449,7 +3451,7 @@ function saveTrade(){
     tx.fee=Number(document.getElementById('tr-fee').value)||0;
     tx.amount=+(tx.quantity*price).toFixed(2);
     if(!tx.account||!tx.asset_name){toast('请填写账户与标的');return;}
-    if(tx.quantity<=0||price<=0){toast('数量与单价需大于0');return;}
+    if(tx.quantity<=0||price<=0){toast('数量与现价需大于0');return;}
     if(tab==='sell'){
       const _a=acct(tx.account); const _s=_a&&_a.securities&&_a.securities.find(s=>s.asset_name===tx.asset_name);
       if(!_s){toast('未找到对应持仓，无法卖出');return;}
@@ -3523,7 +3525,7 @@ function addTx(){
     tx.fee=Number(document.getElementById('tx-fee').value)||0;
     tx.amount=+(tx.quantity*price).toFixed(2);
     if(!tx.account||!tx.asset_name){toast('请填写账户与标的');return;}
-    if(tx.quantity<=0||price<=0){toast('数量与单价需大于0');return;}
+    if(tx.quantity<=0||price<=0){toast('数量与现价需大于0');return;}
     if(type==='sell'){
       const _a=acct(tx.account); const _s=_a&&_a.securities&&_a.securities.find(s=>s.asset_name===tx.asset_name);
       if(!_s){toast('未找到对应持仓，无法卖出');return;}
