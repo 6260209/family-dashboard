@@ -4815,17 +4815,17 @@ function syncNow(){
   const s=getSettings();if(s.syncEnabled===false){toast('云端同步已关闭');return;}
   if(!getSyncToken()){toast('未配置同步令牌，请到「我的 → ⚙️ 配置」填入');return;}
   toast('☁️ 同步中…');
-  // 修复：云端优先。先拉云端并应用到内存+本地，再以云端为准推送——
-  // 绝不允许把「重新部署带来的陈旧基线」推送覆盖手机的真实数据。
-  syncPull().then(function(res){
+  // 修复 v2: 先 push 本地改动到云端，再 pull 拉取最新合并。
+  // 旧版先 pull 会覆盖内存 DATA 导致后续 push 推的是旧数据（而非用户刚编辑的）。
+  syncPush().then(function(){
+    return syncPull();
+  }).then(function(res){
     if(res.snap && _syncShouldApply(res.snap)){
       syncApply(res.snap); applyCloudToData(res.snap);
       localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
       localStorage.setItem('famdash_sync_localmod','0');
     }
-    return syncPush();
-  }).then(function(){
-    toast('☁️ 已用云端数据合并并同步');
+    toast('☁️ 同步完成');
     setTimeout(function(){location.reload();},400);
   }).catch(function(e){console.warn('syncNow',e);toast('同步出错');});
 }
