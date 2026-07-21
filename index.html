@@ -4110,7 +4110,7 @@ function renderGoalGrowth(){
   } else est.style.display='none';
 }
 function saveGoalTarget(){const v=Number(document.getElementById('goal-target').value)||0;const g=getGoals();const old=g.target;g.target=v;saveGoals(g);renderGoal();toast('目标已保存');logActivity('修改财富目标',`¥${old||0} → ¥${v}`);}
-function saveGoalForecast(){const rate=Number((document.getElementById('fc-rate')||{}).value)||0;if(!(rate>0)){toast('年化收益率需大于0');return;}if(rate>0.45){toast('年化收益率过高（>45%），请确认后修改');return;}const g=getGoals();g.annualRate=rate;g.dca=Number((document.getElementById('fc-dca')||{}).value)||0;g.fcYears=Number((document.getElementById('fc-years')||{}).value)||10;saveGoals(g);try{if(typeof initMeta==='function')initMeta();}catch(e){}}
+function saveGoalForecast(){const rate=Number((document.getElementById('fc-rate')||{}).value)||0;if(!(rate>0)){toast('年化收益率需大于0');return;}if(rate>50){toast('年化收益率过高（>50%），请确认后修改');return;}const g=getGoals();g.annualRate=rate;g.dca=Number((document.getElementById('fc-dca')||{}).value)||0;g.fcYears=Number((document.getElementById('fc-years')||{}).value)||10;saveGoals(g);try{if(typeof initMeta==='function')initMeta();}catch(e){}}
 function estMonthsTo(t){
   const amt=Number(t)||0; if(amt<=0) return '—';
   const start=DATA.total.cny||0;
