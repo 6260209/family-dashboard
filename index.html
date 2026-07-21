@@ -2273,6 +2273,12 @@ function getProjects(){try{const a=JSON.parse(localStorage.getItem(PROJECT_KEY)|
 function genCatId(){return 'cat_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-3);}
 function getCategories(){try{const a=JSON.parse(localStorage.getItem(CATEGORY_KEY)||'null');if(Array.isArray(a)&&a.length){if(typeof a[0]==='string')return a.map(s=>({id:genCatId(),name:s}));return a;}}catch(e){}return DEFAULT_CATEGORIES.map(c=>({id:c.id,name:c.name}));}
 function catNames(){return getCategories().map(c=>(c&&c.name!=null?c.name:c));}
+// ===== 子账户模式：stock=股票单价模式（数量/现价/成本价），fund=基金资产模式（金额/盈亏/收益率%）=====
+const MODE_DEFAULTS={'cat_sec_etf':'stock','cat_fund_off':'fund','cat_astock':'stock','cat_hk':'stock','cat_us':'stock','cat_bond':'stock','cat_cash':'fund','cat_mmf':'fund','cat_struct':'fund','cat_crypto':'fund','cat_bank':'fund','cat_ins':'fund','cat_other':'fund'};
+function guessMode(name){if(/股|ETF|证券|stock|bond|债|指数/i.test(name||''))return 'stock';return 'fund';}
+function catMode(id){if(!id)return 'fund';const a=getCategories();const f=a.find(c=>c&&c.id===id);if(!f)return 'fund';if(f.mode)return f.mode;const d=MODE_DEFAULTS[f.id];return d||guessMode(f.name);}
+function catModeOf(name){const id=resolveCatIdSafe(name);return id?catMode(id):guessMode(name);}
+function setCatMode(id,mode){const a=getCategories();const f=a.find(c=>c&&c.id===id);if(!f)return;f.mode=mode;saveCategories(a);try{patchAllSchema();}catch(e){}showCategoryManager();}
 function catNameById(id){if(!id)return '';const a=getCategories();const f=a.find(c=>(c&&c.id)===id);return f?(f.name||''):'';}
 function resolveCatId(name){const nrm=s=>((s==null?'':String(s)).trim().replace(/\s+/g,''));const a=getCategories();let f=a.find(c=>nrm(c&&c.name)===nrm(name));if(f)return f.id;const id=genCatId();a.push({id,name});saveCategories(a);try{patchAllSchema();}catch(e){}return id;}
 function resolveCatIdSafe(name){const nrm=s=>((s==null?'':String(s)).trim().replace(/\s+/g,''));const a=getCategories();const f=a.find(c=>nrm(c&&c.name)===nrm(name));return f?f.id:null;}
@@ -2378,7 +2384,7 @@ function delStruct(aid,k,i){
   afterEdit(aid);
   logActivity('删除结构性产品',`${acctName(aid)} · ${name}`);
 }
-function showAddForm(aid,sec,idx){
+function showAddForm(aid,sec,idx,presetCat){
   let sc=SEC_SCHEMA[sec];if(!sc)return;
   const a=acct(aid);
   let cur=(idx!=null&&a[sec])?a[sec][idx]:null;
@@ -2415,7 +2421,7 @@ function showAddForm(aid,sec,idx){
       // 子账户字段强制使用标准分类列表，避免从历史脏数据捡拾孤儿值（如"美基金/中基金/港基金"等）
       const isCatField = (f.k === 'asset_category');
       const allOpts = isCatField ? catNames() : [...new Set([...(f.options||[]), ...extraOpts(f.k)])];
-      const sel=(cur&&cur[f.k]!=null)?cur[f.k]:(allOpts[0]||'');
+      const sel=(cur&&cur[f.k]!=null)?cur[f.k]:(presetCat!=null?presetCat:(allOpts[0]||''));
       // 子账户字段：若当前值是孤儿分类（不在标准列表中），追加带标记的占位项
       let catHtml = allOpts.map(o=>`<option ${o===sel?'selected':''}>${escapeHtml(o)}</option>`).join('');
       if(isCatField && sel && !allOpts.includes(sel)){ catHtml = `<option value="${escapeHtml(sel)}" selected style="color:var(--amber)">${escapeHtml(sel)} ⚠️（未归类）</option>` + catHtml; }
@@ -2512,6 +2518,23 @@ function showAddForm(aid,sec,idx){
     };
     [amt,pf].forEach(el=>el&&el.addEventListener('input',_calc));
     setTimeout(_calc,30);
+  }
+  // 子账户模式联动：添加时按所选子账户的模式自动切换表单（证券↔基金）
+  if(sec==='securities'||sec==='fund_holdings'){
+    const catSel=document.getElementById('af-'+sec+'-asset_category');
+    if(catSel){
+      let _catLock=false;
+      const _onCat=()=>{
+        if(_catLock) return; _catLock=true; setTimeout(()=>{_catLock=false;},60);
+        const m=catModeOf(catSel.value); const targetSec=m==='stock'?'securities':'fund_holdings';
+        if(targetSec!==sec){
+          if(idx==null){ showAddForm(aid,targetSec,null,catSel.value); }
+          else { toast('提示：该子账户为'+(m==='stock'?'股票单价':'基金资产')+'模式，建议用对应区块的「添加」按钮录入'); }
+        }
+      };
+      catSel.addEventListener('change',_onCat);
+      if(idx==null) catSel.addEventListener('input',_onCat);
+    }
   }
   // 加密代币(holdings)：数量 + 现价(USDT) → 如有成本则算收益率（暂仅联动显示）
   if(sec==='holdings'){
@@ -4327,9 +4350,10 @@ function showCategoryManager(){
     const isOther=c.name===otherName;
     const delBtn=isOther?'':'<button class="del" onclick="delCatItem(\''+escapeAttr(c.id)+'\')" aria-label="删除">×</button>';
     const moveBtns=isOther?'':`<button class="mgr-move" onclick="moveCat(${idx},-1)" title="上移" aria-label="上移">▲</button><button class="mgr-move" onclick="moveCat(${idx},1)" title="下移" aria-label="下移">▼</button>`;
-    return `<div class="mgr-item" draggable="true" data-idx="${idx}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(c.name)}</span><span style="display:flex;gap:8px">${moveBtns}<button class="mgr-edit" onclick="showRenameModal('category','${escapeAttr(c.name)}')" title="重命名" aria-label="重命名">✎</button>${delBtn}</span></div>`;
+    const modeSel=`<select class="cat-mode" onchange="setCatMode('${escapeAttr(c.id)}',this.value)" aria-label="子账户模式" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text)"><option value="stock" ${catMode(c.id)==='stock'?'selected':''}>股票单价模式</option><option value="fund" ${catMode(c.id)==='fund'?'selected':''}>基金资产模式</option></select>`;
+    return `<div class="mgr-item" draggable="true" data-idx="${idx}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(c.name)}</span>${modeSel}<span style="display:flex;gap:8px">${moveBtns}<button class="mgr-edit" onclick="showRenameModal('category','${escapeAttr(c.name)}')" title="重命名" aria-label="重命名">✎</button>${delBtn}</span></div>`;
   }).join('');
-  const html=`<div class="modal open" id="cat-modal" style="display:flex"><div class="box" style="max-width:460px"><div class="mhead"><h3>🏷️ 子账户管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('cat-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">子账户列表 <button class="btn sm" onclick="cashToTop()" title="把「流动现金」移到最前" aria-label="把「流动现金」移到最前">💧 现金置顶</button></div><div class="mgr-tip">拖动 ⋮⋮ 排序 · 手机请用 ▲▼ 按钮</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无</div>'}</div><div class="mgr-add"><input id="cat-input" placeholder="如：衍生品、商品、房地产" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px"><button class="btn sm" onclick="addCatItem()">＋ 添加</button></div></div><div class="mgr-foot"><button class="btn ghost" onclick="resetCats()">↺ 恢复默认</button><button class="btn" onclick="closeCatManager()">完成</button></div></div></div></div>`;
+  const html=`<div class="modal open" id="cat-modal" style="display:flex"><div class="box" style="max-width:460px"><div class="mhead"><h3>🏷️ 子账户管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('cat-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">子账户列表 <button class="btn sm" onclick="cashToTop()" title="把「流动现金」移到最前" aria-label="把「流动现金」移到最前">💧 现金置顶</button></div><div class="mgr-tip">拖动 ⋮⋮ 排序 · 手机请用 ▲▼ 按钮</div><div class="mgr-tip" style="margin-top:4px;color:var(--dim)">模式：<b>股票单价模式</b>=数量/现价/成本价 · <b>基金资产模式</b>=金额/盈亏/收益率%</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无</div>'}</div><div class="mgr-add"><input id="cat-input" placeholder="如：衍生品、商品、房地产" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px"><button class="btn sm" onclick="addCatItem()">＋ 添加</button></div></div><div class="mgr-foot"><button class="btn ghost" onclick="resetCats()">↺ 恢复默认</button><button class="btn" onclick="closeCatManager()">完成</button></div></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
   document.querySelectorAll('#cat-modal .mgr-item').forEach(el=>{
     el.addEventListener('dragstart',catDragStart);
