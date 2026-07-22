@@ -4838,12 +4838,13 @@ function _syncShouldApply(snap){
 function syncNow(){
   const s=getSettings();if(s.syncEnabled===false){toast('云端同步已关闭');return;}
   if(!getSyncToken()){toast('未配置同步令牌，请到「我的 → ⚙️ 配置」填入');return;}
+  // 安全双向同步：本地有未推送改动 → 先 push 再 pull（保留本机编辑，不被云端旧数据覆盖）；
+  // 本地无改动（含全新设备首次设令牌）→ 先 pull 再 push（避免把陈旧基线/空数据推回云端覆盖手机数据）。
+  const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
+  const lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
+  const hasEdits=localMod>lastPull;
   toast('☁️ 同步中…');
-  // 修复 v2: 先 push 本地改动到云端，再 pull 拉取最新合并。
-  // 旧版先 pull 会覆盖内存 DATA 导致后续 push 推的是旧数据（而非用户刚编辑的）。
-  syncPush().then(function(){
-    return syncPull();
-  }).then(function(res){
+  const doPull=function(){ return syncPull().then(function(res){
     if(res.snap && _syncShouldApply(res.snap)){
       syncApply(res.snap); applyCloudToData(res.snap);
       localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
@@ -4851,7 +4852,9 @@ function syncNow(){
     }
     toast('☁️ 同步完成');
     setTimeout(function(){location.reload();},400);
-  }).catch(function(e){console.warn('syncNow',e);toast('同步出错');});
+  }); };
+  if(hasEdits){ syncPush().then(doPull).catch(function(e){console.warn('syncNow',e);toast('同步出错');}); }
+  else { doPull().catch(function(e){console.warn('syncNow',e);toast('同步出错');}); }
 }
 function syncPullForce(){
   const s=getSettings();if(s.syncEnabled===false){toast('云端同步已关闭');return;}
