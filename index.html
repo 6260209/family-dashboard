@@ -4945,15 +4945,21 @@ function syncPullOnLoad(){
     const hasLocal=(function(){try{return localStorage.getItem('famdash_v1')!==null;}catch(e){return false;}})();
     syncPull().then(function(res){
       if(res.snap && _syncShouldApply(res.snap)){
-        syncApply(res.snap); applyCloudToData(res.snap);
+        syncApply(res.snap);            // 把所有 SYNC_KEYS（含 famdash_categories 子账户）写入 localStorage
+        applyCloudToData(res.snap);     // 将云端 famdash_v1 合并进内存 DATA（账户/收入/交易）
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
         localStorage.setItem('famdash_sync_localmod','0');
-        recomputePortfolio();
-        // 应用云端后重载一次让 UI 生效；sessionStorage 标记，整个标签页会话内只重载一次，避免死循环
-        if(!hasLocal || sessionStorage.getItem('famdash_onload_pulled')!=='1'){
-          try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
-          setTimeout(function(){location.reload();},300);
-        }
+        // 就地重算并刷新 UI（不再 location.reload —— 避免重复输密码、且规避重载后空白页的渲染 bug）
+        try{ recomputePortfolio(); }catch(e){}
+        try{ renderAccts(); }catch(e){}
+        try{ initAcctHolderTabs(); }catch(e){}
+        try{ renderHolderMgmt(); }catch(e){}
+        try{ renderInc(); }catch(e){}
+        try{ renderTx(); }catch(e){}
+        try{ renderPivot(); }catch(e){}
+        try{ renderMine(); }catch(e){}
+        try{ applySettings(); }catch(e){}
+        toast('☁️ 已从云端同步最新数据');
       }
     }).catch(function(e){console.warn('syncPullOnLoad',e);});
   }catch(e){}
