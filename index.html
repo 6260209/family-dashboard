@@ -4770,6 +4770,7 @@ function syncApply(snap){
   const meta=getSyncMeta();
   let changed=false;
   SYNC_KEYS.forEach(function(k){
+    if(k==='famdash_v1')return; // v1 由 applyCloudToData 负责合并写入，避免用云端覆盖本地持仓
     let entry=state[k];
     if(entry===undefined)return;
     let val=entry, cu=0;
@@ -4801,14 +4802,52 @@ function incomeRecordsFrom(src){
 // 把云端快照中的 famdash_v1 应用进内存 DATA（账户/收入/交易）。
 // 关键：applyCloudToData 与 syncApply 配套——只写 localStorage 不够，
 // 否则紧随其后的 syncPush 会把「陈旧基线」而非「云端数据」推回云端（覆盖手机数据）。
-function applyCloudToData(snap){
+function unionHoldings(localArr, cloudArr, keyFn){
+  keyFn=keyFn||function(x){return (x.symbol||x.name||x.id||'');};
+  const map={}; const out=[];
+  (localArr||[]).forEach(function(x){const k=keyFn(x); if(!(k in map)){map[k]=true; out.push(x);}});
+  (cloudArr||[]).forEach(function(x){const k=keyFn(x); if(!(k in map)){map[k]=true; out.push(x);}});
+  return out;
+}
+function mergeV1Accounts(cloudAccounts, localAccounts){
+  const localMap={}; (localAccounts||[]).forEach(function(a){ localMap[a.id||a.name]=a; });
+  const out=[];
+  (cloudAccounts||[]).forEach(function(c){
+    const la=localMap[c.id||c.name];
+    if(la){
+      const m=Object.assign({},c);
+      ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(k){
+        if(la[k]&&la[k].length) m[k]=unionHoldings(la[k], c[k]||[], function(x){return (x.symbol||x.name||x.id||'');});
+        else if(c[k]) m[k]=c[k];
+      });
+      out.push(m); delete localMap[c.id||c.name];
+    } else { out.push(c); }
+  });
+  Object.keys(localMap).forEach(function(k){ out.push(localMap[k]); });
+  return out;
+}
+// 云端快照 famdash_v1 与本地 localStorage famdash_v1 做**合并**(默认)或**覆盖**(overwrite=true)。
+// 合并：账户按 id 对齐；同账户内各持仓数组按 symbol/name 取并集(本地独有持仓永不丢失)；本地有收入/交易则优先本地。
+// 返回 true 表示本次合并把「本地独有数据」带入(需推回云端找回)。
+function applyCloudToData(snap, overwrite){
   const v1=snapGet(snap,'famdash_v1');
-  if(!v1)return;
-  try{const o=JSON.parse(v1);
-    if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv); DATA.accounts.forEach(normalizeSecPnl);}
+  if(!v1)return false;
+  let localV1=null; try{const raw=localStorage.getItem('famdash_v1'); if(raw)localV1=JSON.parse(raw);}catch(e){}
+  let o, mergedLocal=false;
+  try{
+    o=JSON.parse(v1);
+    if(!overwrite && localV1){
+      o.accounts=mergeV1Accounts(o.accounts||[], localV1.accounts||[]);
+      if(localV1.income) o.income=localV1.income;
+      if(localV1.transactions) o.transactions=localV1.transactions;
+      mergedLocal=(localV1.accounts||[]).length>0 || !!localV1.income || !!localV1.transactions;
+    }
+    if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     if(o.transactions)DATA.transactions=o.transactions;
-  }catch(e){console.warn('applyCloudToData',e);}
+    try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
+  }catch(e){console.warn('applyCloudToData',e);return false;}
+  return mergedLocal;
 }
 function getDeviceLabel(){
   try{const n=localStorage.getItem('famdash_device_name'); if(n&&n.trim())return n.trim();}catch(e){}
@@ -4878,12 +4917,19 @@ function syncNow(){
   toast('☁️ 同步中…');
   const doPull=function(){ return syncPull().then(function(res){
     if(res.snap && _syncShouldApply(res.snap)){
-      syncApply(res.snap); applyCloudToData(res.snap);
+      syncApply(res.snap);
+      const merged=applyCloudToData(res.snap);
       localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
+      if(merged){
+        localStorage.setItem('famdash_sync_localmod',String(Date.now()));
+        toast('☁️ 已合并本地数据，正在同步到云端…');
+        syncPush().then(function(){ try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){} toast('☁️ 同步完成'); }).catch(function(){ toast('☁️ 同步完成'); });
+        return;
+      }
       localStorage.setItem('famdash_sync_localmod','0');
+      try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
     }
     toast('☁️ 同步完成');
-    setTimeout(function(){location.reload();},400);
   }); };
   if(hasEdits){ syncPush().then(doPull).catch(function(e){console.warn('syncNow',e);toast('同步出错');}); }
   else { doPull().catch(function(e){console.warn('syncNow',e);toast('同步出错');}); }
@@ -4894,7 +4940,7 @@ function syncPullForce(){
   toast('☁️ 正在强制拉取云端…');
   syncPull().then(function(res){
     if(!res.snap){toast('拉取失败：云端无数据或令牌无效');return;}
-    syncApply(res.snap); applyCloudToData(res.snap);
+    syncApply(res.snap); applyCloudToData(res.snap, true);
     localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt||Date.now()).getTime()));
     localStorage.setItem('famdash_sync_localmod','0');
     toast('☁️ 已用云端数据覆盖本地，刷新中…');
@@ -4942,7 +4988,7 @@ function restoreFromCommit(sha){
     .then(function(r){if(!r.ok)throw new Error('拉取历史 '+r.status);return r.json();})
     .then(function(meta){
       const snap=JSON.parse(_b64decode(meta.content));
-      syncApply(snap); applyCloudToData(snap);
+      syncApply(snap); applyCloudToData(snap, true);
       localStorage.setItem('famdash_sync_localmod','0');
       return syncPush();
     })
@@ -4953,21 +4999,25 @@ function syncPullOnLoad(){
   try{
     const s=getSettings();if(s.syncEnabled===false)return;
     if(!getSyncToken())return;
+    if(sessionStorage.getItem('famdash_onload_pulled')==='1')return; // 本次会话已拉取过，避免重载死循环
     // 全新浏览器（本机从未同步过 famdash_v1）：以部署的 ENC 基线和准，
     // 不在加载时静默用云端覆盖——否则云端若有陈旧/分歧数据会摧毁已校验的好数据。
     // 已同步过的设备（localStorage 有 famdash_v1）仍按时间戳自动合并；用户也可手动「同步/强制拉取」。
     const hasLocal=(function(){try{return localStorage.getItem('famdash_v1')!==null;}catch(e){return false;}})();
     syncPull().then(function(res){
       if(res.snap && _syncShouldApply(res.snap)){
-        syncApply(res.snap); applyCloudToData(res.snap);
+        syncApply(res.snap);
+        const merged=applyCloudToData(res.snap);
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
-        localStorage.setItem('famdash_sync_localmod','0');
+        if(merged) localStorage.setItem('famdash_sync_localmod',String(Date.now()));
+        else localStorage.setItem('famdash_sync_localmod','0');
         recomputePortfolio();
-        // 应用云端后重载一次让 UI 生效；sessionStorage 标记，整个标签页会话内只重载一次，避免死循环
-        if(!hasLocal || sessionStorage.getItem('famdash_onload_pulled')!=='1'){
-          try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
-          setTimeout(function(){location.reload();},300);
-        }
+        // 合并/应用云端后就地重渲染当前视图(绝不 location.reload：避免手机重复输密码、且本地有云端缺的数据时无限重载)
+        try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
+        try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
+        if(!hasLocal){ setTimeout(function(){location.reload();},300); } // 仅全新设备(无任何本地数据)才重载一次以完整渲染
+      } else {
+        try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
       }
     }).catch(function(e){console.warn('syncPullOnLoad',e);});
   }catch(e){}
