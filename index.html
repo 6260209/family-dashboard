@@ -4801,6 +4801,17 @@ function _doSyncPush(tok,attempt){
   return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{headers:{'Authorization':'token '+tok}})
     .then(function(r){return r.ok?r.json():null;})
     .then(function(meta){
+      // 防覆盖：若云端快照比本地最后改动更新，说明云端有别人/其他设备刚同步的好数据，
+      // 放弃本次推送，改为本地采用云端（避免把陈旧本地基线推回云端覆盖手机数据）。
+      let cloudT=0;
+      try{ if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); cloudT=new Date(cs.syncedAt).getTime()||0; } }catch(e){}
+      const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
+      if(cloudT && cloudT>localMod){
+        return syncPull().then(function(res){
+          if(res.snap && _syncShouldApply(res.snap)){ syncApply(res.snap); applyCloudToData(res.snap); localStorage.setItem('famdash_sync_lastpull',String(cloudT)); localStorage.setItem('famdash_sync_localmod','0'); }
+          toast('☁️ 云端有更新，已采用云端（未覆盖）'); return false;
+        });
+      }
       const body={message:'sync: '+fmtSyncTime(snap.syncedAt)+' · '+getDeviceLabel(),content:content};
       if(meta&&meta.sha)body.sha=meta.sha;
       return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{
@@ -4810,10 +4821,10 @@ function _doSyncPush(tok,attempt){
           if(r.status===409 && attempt<2){ return _doSyncPush(tok,attempt+1); } // 冲突：重新取 sha 后重试
           throw new Error('push '+r.status);
         }
-        return true;
+        try{localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));}catch(e){}
+        toast('☁️ 已同步到云端'); return true;
       });
     })
-    .then(function(){try{localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));}catch(e){}toast('☁️ 已同步到云端');return true;})
     .catch(function(e){console.error('syncPush failed',e);toast('同步失败：'+(e&&e.message||e));return false;});
 }
 function syncPull(){
@@ -4838,23 +4849,30 @@ function _syncShouldApply(snap){
 function syncNow(){
   const s=getSettings();if(s.syncEnabled===false){toast('云端同步已关闭');return;}
   if(!getSyncToken()){toast('未配置同步令牌，请到「我的 → ⚙️ 配置」填入');return;}
-  // 安全双向同步：本地有未推送改动 → 先 push 再 pull（保留本机编辑，不被云端旧数据覆盖）；
-  // 本地无改动（含全新设备首次设令牌）→ 先 pull 再 push（避免把陈旧基线/空数据推回云端覆盖手机数据）。
-  const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
-  const lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
-  const hasEdits=localMod>lastPull;
   toast('☁️ 同步中…');
-  const doPull=function(){ return syncPull().then(function(res){
-    if(res.snap && _syncShouldApply(res.snap)){
-      syncApply(res.snap); applyCloudToData(res.snap);
-      localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
-      localStorage.setItem('famdash_sync_localmod','0');
+  // 云端权威策略：永远先拉取云端最新快照并采用，杜绝任何设备把陈旧本地基线推回云端覆盖手机数据。
+  // 仅当本地改动确实比云端快照「更新」时才在采用云端之后把本地未推送改动推回（极少触发，日常编辑已由自动推送完成）。
+  const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
+  syncPull().then(function(res){
+    const snap=res.snap;
+    const cloudT=snap?(new Date(snap.syncedAt).getTime()||0):0;
+    if(snap && _syncShouldApply(snap)){
+      syncApply(snap); applyCloudToData(snap);
+      localStorage.setItem('famdash_sync_lastpull',String(cloudT||Date.now()));
     }
-    toast('☁️ 同步完成');
-    setTimeout(function(){location.reload();},400);
-  }); };
-  if(hasEdits){ syncPush().then(doPull).catch(function(e){console.warn('syncNow',e);toast('同步出错');}); }
-  else { doPull().catch(function(e){console.warn('syncNow',e);toast('同步出错');}); }
+    if(localMod>cloudT && localMod>0){
+      // 本地有比云端更新的改动 → 推回云端（当前内存已含云端，推送不会丢失云端数据）
+      syncPush().then(function(){
+        localStorage.setItem('famdash_sync_localmod','0');
+        toast('☁️ 已同步（本地改动已上传）');
+        setTimeout(function(){location.reload();},400);
+      }).catch(function(){ setTimeout(function(){location.reload();},400); });
+    } else {
+      localStorage.setItem('famdash_sync_localmod','0');
+      toast('☁️ 同步完成');
+      setTimeout(function(){location.reload();},400);
+    }
+  }).catch(function(e){console.warn('syncNow',e);toast('同步出错');});
 }
 function syncPullForce(){
   const s=getSettings();if(s.syncEnabled===false){toast('云端同步已关闭');return;}
