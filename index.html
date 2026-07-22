@@ -1327,14 +1327,27 @@ function acctNativeTotal(a){
   (a.holdings||[]).forEach(h=>{ total+=jToNative(toCny(h.value||0,_ccyOfH(h)),'CNY',nat); });
   return total;
 }
-function secValRaw(t){const c=t.currency||'CNY';if(c==='CNY')return t.market_value_cny||0;if(c==='HKD')return t.market_value_hkd||0;return t.market_value_usd||0;}
+// 证券市值兜底：市值字段缺失/为0 时，用「数量×现价」按币种折算补齐，
+// 解决「存量 HKD/USD 持仓 market_value 为空，导致详情页 HK$ 0 / 小计与总额漏算」的 bug。
+function secMvNorm(t){
+  const q=Number(t.quantity)||0, p=Number(t.price)||0;
+  if(q>0&&p>0){
+    const nat=q*p, c=t.currency||'CNY';
+    if(c==='HKD'){ if(!t.market_value_hkd)t.market_value_hkd=Math.round(nat*100)/100; if(!t.market_value_cny)t.market_value_cny=Math.round(nat/FX_CNY_HKD*100)/100; }
+    else if(c==='USD'||c==='USDT'){ if(!t.market_value_usd)t.market_value_usd=Math.round(nat*100)/100; if(!t.market_value_cny)t.market_value_cny=Math.round(nat*FX_USD_CNY*100)/100; }
+    else { if(!t.market_value_cny)t.market_value_cny=Math.round(nat*100)/100; }
+  }
+  return t;
+}
+function normalizeSecurityMv(a){ if(a&&a.securities)a.securities.forEach(secMvNorm); return a; }
+function secValRaw(t){const c=t.currency||'CNY';let v=c==='CNY'?t.market_value_cny||0:c==='HKD'?t.market_value_hkd||0:t.market_value_usd||0;if(!v){const q=Number(t.quantity)||0,p=Number(t.price)||0;if(q>0&&p>0)v=q*p;}return v;}
 
 function secVal(t){
   if(t.market_value_cny) return t.market_value_cny; // 优先：手动录入的市值
   const c=t.currency||'HKD';
-  if(c==='CNY') return t.market_value_cny||0;
-  if(c==='HKD') return (t.market_value_hkd||0)/1.09;
-  return (t.market_value_usd||0)*7.155;
+  let v = c==='CNY' ? (t.market_value_cny||0) : c==='HKD' ? (t.market_value_hkd||0)/1.09 : (t.market_value_usd||0)*7.155;
+  if(!v){ const q=Number(t.quantity)||0,p=Number(t.price)||0; if(q>0&&p>0) v=q*p*(c==='CNY'?1:(c==='HKD'?1/1.09:7.155)); }
+  return v;
 }
 function usdToCny(u){return (u||0)*7.155;}
 function hkdToCny(h){return (h||0)/1.09;}
@@ -1512,6 +1525,7 @@ function _fwdVal(t,ccy){
 }
 function syncHoldingsFromLegacy(a){
   if(!a)return a;
+  normalizeSecurityMv(a);
   const H=[];
   // 价值保真：以 a.holdings 现有条目(按 id)的原 value/pnl 为准，重建时不再二次折算，
   // 既消除"编辑/删除后市值漂移"，也保证详情页(派生数组)与总额(真源 value)价格一致。
@@ -2379,7 +2393,7 @@ function toast(msg){const t=document.getElementById('toast');if(!t)return;t.text
 function saveEditsLocal(){try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}}
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
   try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));scheduleSyncPush();}}catch(e){}
-function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts)DATA.accounts=o.accounts;if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
+function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);}if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
 function afterEdit(aid){
   const a=acct(aid);
   if(a)syncHoldingsFromLegacy(a); // 先由旧式数组回填统一 holdings（编辑已落在 legacy 数组上）
@@ -2616,6 +2630,16 @@ function commitAdd(aid,sec,idx,preVals){
   if(sec==='structured_products'){addStruct(aid,vals,isEdit?idx:null);}
   else{addHolding(aid,sec,vals,idx==null?null:idx);}
 }
+// 证券市值按币种正确折算到 market_value_hkd / market_value_usd / market_value_cny，
+// 解决「HKD 持仓市值被写进 market_value_cny、导致详情页显示 HK$ 0 / 小计与总额口径不一致」的 bug。
+function secMvFields(qty, price, ccy){
+  const nat=(Number(qty)||0)*(Number(price)||0);
+  const r={market_value_cny:0,market_value_hkd:0,market_value_usd:0};
+  if(ccy==='HKD'){ r.market_value_hkd=Math.round(nat*100)/100; r.market_value_cny=Math.round(nat/FX_CNY_HKD*100)/100; }
+  else if(ccy==='USD'||ccy==='USDT'){ r.market_value_usd=Math.round(nat*100)/100; r.market_value_cny=Math.round(nat*FX_USD_CNY*100)/100; }
+  else { r.market_value_cny=Math.round(nat*100)/100; r.market_value_hkd=Math.round(nat*FX_CNY_HKD*100)/100; }
+  return r;
+}
 function addHolding(aid,sec,vals,idx){
   const a=acct(aid);
   const isEdit=idx!=null&&a[sec]&&a[sec][idx];
@@ -2623,7 +2647,7 @@ function addHolding(aid,sec,vals,idx){
   a[sec]=a[sec]||[];
   const o={};
   SEC_SCHEMA[sec].fields.forEach(f=>{o[f.k]=(f.t==='number')?(Number(vals[f.k])||0):(vals[f.k]||'');});
-  if(sec==='securities'){o.market_value_cny=o.mv;delete o.mv;if(!o.pnl_pct)o.pnl_pct=0;}
+  if(sec==='securities'){const _mv=secMvFields(o.quantity,o.price,o.currency||'CNY');o.market_value_cny=_mv.market_value_cny;o.market_value_hkd=_mv.market_value_hkd;o.market_value_usd=_mv.market_value_usd;delete o.mv;if(!o.pnl_pct)o.pnl_pct=0;}
   if(sec==='fund_holdings'){o.pct=o.pct||0;o.profit=o.profit||0;}
   if(sec==='holdings'){o.pnl_pct=o.pnl_pct||0;
     // 加密货币：value = 数量 × 现价(value_usdt)，作为 holdings 真源的"总值"字段
@@ -2713,7 +2737,7 @@ function saveSecInline(aid,idx){
   t.location=document.getElementById('sec-loc-'+idx).value;
   t.quantity=Number(document.getElementById('sec-qty-'+idx).value)||0;
   t.price=Number(document.getElementById('sec-price-'+idx).value)||0;
-  t.market_value_cny=Number(document.getElementById('sec-mv-'+idx).value)||0;
+  const _mv=secMvFields(t.quantity,t.price,t.currency||'CNY');t.market_value_cny=_mv.market_value_cny;t.market_value_hkd=_mv.market_value_hkd;t.market_value_usd=_mv.market_value_usd;
   t.cost_price=Number(document.getElementById('sec-cost-'+idx).value)||0;
   t.pnl_amount=Number(document.getElementById('sec-pnl-'+idx).value)||0;
   t.notes=document.getElementById('sec-notes-'+idx).value.trim();
@@ -4749,7 +4773,7 @@ function applyCloudToData(snap){
   const v1=snapGet(snap,'famdash_v1');
   if(!v1)return;
   try{const o=JSON.parse(v1);
-    if(o.accounts)DATA.accounts=o.accounts;
+    if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     if(o.transactions)DATA.transactions=o.transactions;
   }catch(e){console.warn('applyCloudToData',e);}
@@ -4898,13 +4922,17 @@ function syncPullOnLoad(){
     // 不在加载时静默用云端覆盖——否则云端若有陈旧/分歧数据会摧毁已校验的好数据。
     // 已同步过的设备（localStorage 有 famdash_v1）仍按时间戳自动合并；用户也可手动「同步/强制拉取」。
     const hasLocal=(function(){try{return localStorage.getItem('famdash_v1')!==null;}catch(e){return false;}})();
-    if(!hasLocal)return;
     syncPull().then(function(res){
       if(res.snap && _syncShouldApply(res.snap)){
         syncApply(res.snap); applyCloudToData(res.snap);
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
         localStorage.setItem('famdash_sync_localmod','0');
-        // 静默应用，不自动 reload（避免 reload→syncPullOnLoad→reload 死循环）
+        recomputePortfolio();
+        // 应用云端后重载一次让 UI 生效；sessionStorage 标记，整个标签页会话内只重载一次，避免死循环
+        if(!hasLocal || sessionStorage.getItem('famdash_onload_pulled')!=='1'){
+          try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
+          setTimeout(function(){location.reload();},300);
+        }
       }
     }).catch(function(e){console.warn('syncPullOnLoad',e);});
   }catch(e){}
