@@ -4260,15 +4260,15 @@ function delTxSecurity(aid,codeOrName){
   logActivity('删除流水调整持仓',aid+' · '+codeOrName+' · '+removed+'条记录');
 }
 function baseCashCny(a){
-  let c=0;
-  (a.cash_holdings||[]).forEach(ch=>{ c+=toCny(ch.amount||0,ch.currency||'CNY'); if(ch._seeded) throw 'seeded'; });
+  let c=0, hasSeeded=false;
   try{
-    // 如果 seedBrokerAssets 已种入 cash_holdings，这里已算入；否则回退 broker 可用余额
-    if(a.summary){
-      const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
-      if(cashHkd) c += toCny(cashHkd,'HKD');
-    }
+    (a.cash_holdings||[]).forEach(ch=>{ c+=toCny(ch.amount||0,ch.currency||'CNY'); if(ch._seeded) hasSeeded=true; });
   }catch(e){}
+  // 无 seedBrokerAssets 条目时回退券商端可用余额
+  if(!hasSeeded && a.summary){
+    const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
+    if(cashHkd) c += toCny(cashHkd,'HKD');
+  }
   return c;
 }
 
