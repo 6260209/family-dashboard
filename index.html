@@ -2187,8 +2187,8 @@ function openAcct(aid){
       edt=editBtn('cash_holdings',it.idx); del=delBtn('cash_holdings',it.idx);
     } else if(sec==='crypto'){
       ccy=r.currency||'USDT';
-      name=r.name+(r.is_cash?' [稳定币]':''); qty=r.amount||''; cost=r.cost_price!=null?fmt(r.cost_price):'—'; price=fmt(r.value_usdt||0);
-      const totalMv=(r.amount||0)*(r.value_usdt||0);
+      name=r.name+(r.is_cash?' [稳定币]':''); qty=r.qty?String(r.qty):(r.amount?String(r.amount):'—'); cost=r.cost_price!=null?fmt(r.cost_price):'—'; price=fmt(r.value_usdt||0);
+      const totalMv=r.value_usdt?(r.qty||0)*(r.value_usdt||0):(r.value||0);
       mv=fmtMV(totalMv,ccy); mvCny=usdToCny(totalMv);
       const p=r.cost_price!=null?(totalMv-(r.amount||0)*(r.cost_price||0)):0;
       pnl=p?(p>=0?'+':'')+fmt(p):'—'; pnlCls=p>=0?'gn':'rd';
