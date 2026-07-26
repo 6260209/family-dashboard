@@ -1673,21 +1673,18 @@ function acctLiveTotalCny(a){
 }
 // 初始化时把券商端「可用现金 / 结构化产品净值」种入可编辑结构，
 // 使实时汇总(acctLiveTotalCny)≈原始 summary，且不丢真实资产、现金在弹窗可见。
+// 注意：用户已显式删除的"_seeded"条目不应再被自动重新种入！
+// 只在 cash_holdings 完全为空时才种入；用户自己添加的 cash_holdings 不覆盖。
 function seedBrokerAssets(){
   (DATA.accounts||[]).forEach(a=>{
-    // 1) 券商可用现金 → cash_holdings（仅当为空）。优先 cash_hkd，否则用 remaining_liquidity_hkd（富途等字段名不同）
-  if(a.summary){
-    const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
-    if(cashHkd){
-      const seededIdx = (a.cash_holdings||[]).findIndex(c=>c._seeded);
-      if(seededIdx>=0){ a.cash_holdings[seededIdx].amount = cashHkd; }
-      else {
-        if(!a.cash_holdings) a.cash_holdings=[];
-        a.cash_holdings.push({name:'券商可用资金',amount:cashHkd,currency:'HKD',type:'现金',profit:0,return_pct:0,asset_category:'现金',_seeded:true});
+    // 1) 券商可用现金 → cash_holdings（仅当完全为空）
+    if(a.summary){
+      const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
+      if(cashHkd && (!a.cash_holdings || a.cash_holdings.length === 0)){
+        a.cash_holdings=[{name:'券商可用资金',amount:cashHkd,currency:'HKD',type:'现金',profit:0,return_pct:0,asset_category:'现金',_seeded:true}];
       }
     }
-  }
-    // 2) 券商结构化产品净值 → structured_products（仅当为空且 summary 有 structured_nv_hkd）
+    // 2) 券商结构化产品净值 → structured_products（仅当完全为空）
     if((!a.structured_products||(!a.structured_products.hkd_products&&!a.structured_products.usd_products)) && a.summary && a.summary.structured_nv_hkd){
       a.structured_products={hkd_products:{items:[{product_id:'券商结构化产品(自动导入)',face_value_hkd:a.summary.structured_nv_hkd,underlying:['结构性产品'],_seeded:true}]}};
     }
