@@ -4260,13 +4260,15 @@ function delTxSecurity(aid,codeOrName){
   logActivity('删除流水调整持仓',aid+' · '+codeOrName+' · '+removed+'条记录');
 }
 function baseCashCny(a){
-  let c=0, hasSeeded=false;
-  (a.cash_holdings||[]).forEach(ch=>{ c+=toCny(ch.amount||0,ch.currency||'CNY'); if(ch._seeded) hasSeeded=true; });
-  // 现金持仓为空、或未被 seedBrokerAssets 种入券商余额时，回退券商端可用余额（币安/富途等差价字段），避免现金显示 0
-  if(!hasSeeded && a.summary){
-    const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
-    if(cashHkd) c += toCny(cashHkd,'HKD');
-  }
+  let c=0;
+  (a.cash_holdings||[]).forEach(ch=>{ c+=toCny(ch.amount||0,ch.currency||'CNY'); if(ch._seeded) throw 'seeded'; });
+  try{
+    // 如果 seedBrokerAssets 已种入 cash_holdings，这里已算入；否则回退 broker 可用余额
+    if(a.summary){
+      const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
+      if(cashHkd) c += toCny(cashHkd,'HKD');
+    }
+  }catch(e){}
   return c;
 }
 
@@ -5553,10 +5555,11 @@ function syncNow(){
   const _meta=getSyncMeta();
   const _hasAnyKeyEdits=Object.keys(_meta).some(function(k){return Number(_meta[k]||0)>_lastPull;});
   const hasEdits=Number(localStorage.getItem('famdash_sync_localmod')||'0')>0 || _hasAnyKeyEdits;
-  const doPull=function(){ return syncPull().then(function(res){
+    const doPull=function(){ return syncPull().then(function(res){
     if(res.snap && _syncShouldApply(res.snap)){
       syncApply(res.snap);
       const merged=applyCloudToData(res.snap);
+      try{seedBrokerAssets();}catch(e){}
       localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
       if(merged){
         localStorage.setItem('famdash_sync_localmod',String(Date.now()));
@@ -5650,6 +5653,7 @@ function syncPullOnLoad(){
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
         if(merged) localStorage.setItem('famdash_sync_localmod',String(Date.now()));
         else localStorage.setItem('famdash_sync_localmod','0');
+        try{seedBrokerAssets();}catch(e){}
         recomputePortfolio();
         // 合并/应用云端后就地重渲染当前视图(绝不 location.reload：避免手机重复输密码、且本地有云端缺的数据时无限重载)
         try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
