@@ -995,7 +995,7 @@ function analysisData(){
   if(analysisDim==='account')  return (DATA.account_breakdown||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:null}));
   if(analysisDim==='region')   return (DATA.region_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
   if(analysisDim==='holder')   return (DATA.holder_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
-  if(analysisDim==='catClass') return (DATA.category_summary||[]).filter(d=>d.value>0 && d.name!=='流动现金').map(d=>({name:d.name,value:d.value,color:d.color}));
+  if(analysisDim==='catClass') return (DATA.theme_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
   return [];
 }
 const ANALYSIS_PALETTE=['#0ea5e9','#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#64748b'];
