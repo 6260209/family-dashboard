@@ -2127,6 +2127,8 @@ function openAcct(aid){
   (a.fund_holdings||[]).forEach((f,i)=>_addCatItem('fund_holdings',f,i));
   (a.cash_holdings||[]).forEach((c,i)=>_addCatItem('cash_holdings',c,i));
   (a.crypto||[]).forEach((x,i)=>_addCatItem('crypto',x,i));
+  // crypto 可能还在 a.holdings 中未转为 a.crypto
+  (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto')_addCatItem('crypto',h,i);});
   if(a.structured_products){
     ['usd_products','hkd_products'].forEach(k=>{
       (a.structured_products[k]||{}).items&&a.structured_products[k].items.forEach((p,i)=>_addCatItem('structured_products',p,{k,i}));
