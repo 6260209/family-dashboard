@@ -2121,54 +2121,92 @@ function openAcct(aid){
   // 再补"未分类"等不在用户列表中的分类
   Object.keys(catItems).forEach(name=>{ if(!order.some(cid=>{const cat=cats.find(c=>c.id===cid);return cat&&cat.name===name;}) && !orderedCats.includes(name)) orderedCats.push(name); });
 
-  // 渲染每个分类区块
+  // 渲染每个分类区块（统一列：# | 标的名称 | 投资项目 | 数量 | 成本价 | 现价 | 市值 | 币种 | 盈亏 | 收益率 | 子账户 | 所在地 | 备注 | 操作）
+  // 每分类一张表，含所有section类型（证券/基金/现金/加密/结构性），统一列映射
+  function _rowOf(it){
+    const r=it.record, sec=it.section;
+    let type='',name='',proj='',qty='',cost='',price='',mv='',mvCny=0,pnl='',pnlCls='',pct='',pctCls='',ccy='',cat='',loc='',notes='',edt='',del='';
+    if(sec==='securities'){
+      ccy=r.currency||'CNY';
+      name=r.asset_name||''; qty=r.quantity||''; cost=r.cost_price||''; price=r.price||'';
+      mv=fmtNative(secValRaw(r),ccy);
+      const p=r.pnl_amount||0;
+      mvCny=jSecValueCny(r);
+      pnl=(p>=0?'+':'')+fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
+      const pp=r.pnl_pct;
+      pct=pp!=null?((pp>=0?'+':'')+pp+'%'):''; pctCls=pp>=0?'gn':'rd';
+      proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
+      edt=editBtn('securities',it.idx); del=delBtn('securities',it.idx);
+    } else if(sec==='fund_holdings'){
+      ccy=r.currency||'CNY';
+      name=r.name||''; qty='—'; cost='—'; price='—';
+      mv=fmtNative(r.amount||0,ccy);
+      const p=r.profit||0;
+      mvCny=toCny(r.amount||0,ccy);
+      pnl=(p>=0?'+':'')+fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
+      const pp=r.pct;
+      pct=pp!=null?((pp>=0?'+':'')+pp+'%'):''; pctCls=pp>=0?'gn':'rd';
+      proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
+      edt=editBtn('fund_holdings',it.idx); del=delBtn('fund_holdings',it.idx);
+    } else if(sec==='cash_holdings'){
+      ccy=r.currency||'CNY';
+      name=r.name||'现金类资产'; qty='—'; cost='—'; price='—';
+      mv=fmtMV(r.amount||0,ccy);
+      const p=r.profit||0;
+      mvCny=toCny(r.amount||0,ccy);
+      pnl=fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
+      pct=(r.return_pct||0)+'%';
+      proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
+      edt=editBtn('cash_holdings',it.idx); del=delBtn('cash_holdings',it.idx);
+    } else if(sec==='crypto'){
+      ccy=r.currency||'USDT';
+      name=r.name+(r.is_cash?' [稳定币]':''); qty=r.amount||''; cost=r.cost_price!=null?fmt(r.cost_price):'—'; price=fmt(r.value_usdt||0);
+      const totalMv=(r.amount||0)*(r.value_usdt||0);
+      mv=fmtMV(totalMv,ccy); mvCny=usdToCny(totalMv);
+      const p=r.cost_price!=null?(totalMv-(r.amount||0)*(r.cost_price||0)):0;
+      pnl=p?(p>=0?'+':'')+fmt(p):'—'; pnlCls=p>=0?'gn':'rd';
+      const pp=r.pnl_pct; pct=pp!=null?((pp>=0?'+':'')+pp+'%'):''; pctCls=pp>=0?'gn':'rd';
+      proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
+      edt=editBtn('crypto',it.idx); del=delBtn('crypto',it.idx);
+    } else if(sec==='structured_products'){
+      ccy=r.currency||'';
+      name=r.product_id||''; qty='—'; cost='—'; price='—';
+      const fv=r.face_value_usd||r.face_value_hkd||0;
+      mv=fmtCny(r.face_value_usd?usdToCny(fv):hkdToCny(fv));
+      mvCny=mv.replace(/[^0-9.-]/g,'')*1;
+      pnl=r.profit!=null?String(r.profit):'—';
+      pct=r.return_pct!=null?(r.return_pct+'%'):'';
+      proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
+      const spIdx=it.idx;
+      edt=`<button class="edt" onclick="showAddForm('${aid}','structured_products','${spIdx.k}:${spIdx.i}')"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`;
+      del=`<button class="del" onclick="delStruct('${aid}','${spIdx.k}',${spIdx.i})">×</button>`;
+    }
+    const ccyTag=ccy?('<span class="tag '+(ccy==='HKD'?'t-hk':ccy==='USD'?'t-us':ccy==='USDT'?'t-crypto':'t-astock')+'">'+ccy+'</span>'):'—';
+    return {name,proj,qty,cost,price,mv,ccyTag,pnl,pnlCls,pct,pctCls,cat,loc,notes,edt,del,mvCny};
+  }
+  function _rowId(li,it){
+    if(it.section==='securities') return 'sec-row-'+it.idx;
+    if(it.section==='fund_holdings') return 'fund-row-'+it.idx;
+    if(it.section==='cash_holdings') return 'cash-row-'+it.idx;
+    if(it.section==='crypto') return 'hold-row-'+it.idx;
+    if(it.section==='structured_products') return 'struct-row-'+it.idx.k+'-'+it.idx.i;
+    return '';
+  }
   orderedCats.forEach(catName=>{
     const items=catItems[catName]||[];
     if(!items.length) return;
-    h+='<div class="mt" style="margin-top:16px;font-size:14px;font-weight:700">'+escapeHtml(catName)+'</div>';
-    // 按 section 分组渲染不同的表格格式
-    const bySec={};
-    items.forEach(it=>{if(!bySec[it.section])bySec[it.section]=[];bySec[it.section].push(it);});
-    Object.keys(bySec).forEach(secKey=>{
-      const groupItems=bySec[secKey];
-      if(secKey==='securities'){
-        h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>数量</th><th>成本价</th><th>现价</th><th>市值</th><th>币种</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
-        groupItems.forEach((it,li)=>{const t=it.record,idx=it.idx;const _ccy=t.currency||'CNY',_proj=t.project||'',_cat=recCatName(t),_loc=t.location||'',_notes=t.notes||'',_price=t.price||'',_pnlAmt=t.pnl_amount||0;
-          h+=`<tr id="sec-row-${idx}"><td>${li+1}</td><td><b>${escapeHtml(t.asset_name)}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${_proj}">${_proj?('<span class="tag t-qdii" style="font-size:10px">'+(_proj.length>10?_proj.slice(0,9)+'…':_proj)+'</span>'):'—'}</td><td>${t.quantity||''}</td><td>${t.cost_price||''}</td><td>${_price||''}</td><td>${fmtNative(secValRaw(t),_ccy)}</td><td><span class="tag ${_ccy==='HKD'?'t-hk':_ccy==='USD'?'t-us':_ccy==='USDT'?'t-crypto':'t-astock'}">${_ccy}</span></td><td class="${_pnlAmt>=0?'gn':'rd'}">${(_pnlAmt>=0?'+':'')+fmtNative(_pnlAmt,_ccy)}</td><td class="${t.pnl_pct>=0?'gn':'rd'}">${(t.pnl_pct>=0?'+':'')+t.pnl_pct}%</td><td>${_cat?('<span class="tag t-bond" style="font-size:10px">'+escapeHtml(_cat)+'</span>'):'—'}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${_loc||'—'}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(_notes)}">${_notes||'—'}</td><td>${editBtn('securities',idx)}${delBtn('securities',idx)}</td></tr>`;});
-        h+='</tbody></table></div>';
-        const secCny=groupItems.reduce((s,it)=>s+jSecValueCny(it.record),0);
-        h+=`<div style="margin-top:6px;padding:4px 10px;background:#f0f9ff;border-radius:6px;font-size:12px;display:flex;justify-content:space-between"><span style="color:var(--dim)">证券 小计</span><b style="color:#0c4a6e">${secCny>0?fmtCny(secCny):'\u2014'}</b> <small style="font-weight:400;color:var(--dim)">(本位币折算)</small></div>`;
-      }
-      if(secKey==='fund_holdings'){
-        const mainCcy=groupItems[0].record.currency||'CNY';
-        const subTotal=groupItems.reduce((s,it)=>s+(it.record.amount||0),0);
-        h+='<div style="margin:8px 0 4px;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:600;font-size:13px;color:var(--dim)">基金</span><span style="font-size:11px;color:var(--dim)">'+groupItems.length+'项 · 合计 '+fmtNative(subTotal,mainCcy)+'</span></div>';
-        h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>币种</th><th>投资项目</th><th>子账户</th><th>所在地</th><th>基金</th><th>金额</th><th>盈亏</th><th>收益率</th><th>备注</th><th></th></tr></thead><tbody>';
-        groupItems.forEach((it,li)=>{const f=it.record,idx=it.idx;const p=(f.profit||0),_ccy=f.currency||'CNY',_proj=f.project||'',_cat=recCatName(f),_loc=f.location||'',_notes=f.notes||'';
-          h+=`<tr id="fund-row-${idx}"><td>${li+1}</td><td><span class="tag ${_ccy==='HKD'?'t-hk':_ccy==='USD'?'t-us':_ccy==='USDT'?'t-crypto':'t-astock'}">${_ccy}</span></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(_proj)}">${_proj?('<span class="tag t-qdii" style="font-size:10px">'+(_proj.length>10?_proj.slice(0,9)+'…':_proj)+'</span>'):'—'}</td><td>${_cat?('<span class="tag t-afund" style="font-size:10px">'+escapeHtml(_cat)+'</span>'):'—'}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${_loc||'—'}</td><td><b>${escapeHtml(f.name)}</b></td><td>${fmtNative(f.amount||0,_ccy)}</td><td class="${p>=0?'gn':'rd'}">${(p>=0?'+':'')+fmtNative(p,_ccy)}</td><td class="${f.pct>=0?'gn':'rd'}">${(f.pct>=0?'+':'')+f.pct}%</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(_notes)}">${_notes||'—'}</td><td>${editBtn('fund_holdings',idx)}${delBtn('fund_holdings',idx)}</td></tr>`;});
-        h+='</tbody></table></div>';
-        const fundCny=groupItems.reduce((s,it)=>s+toCny(it.record.amount||0,it.record.currency||'CNY'),0);
-        h+=`<div style="margin-top:6px;padding:4px 10px;background:#f0fdf4;border-radius:6px;font-size:12px;display:flex;justify-content:space-between"><span style="color:var(--dim)">基金 小计</span><b style="color:#166534">${fundCny>0?fmtCny(fundCny):'\u2014'}</b> <small style="font-weight:400;color:var(--dim)">(本位币折算)</small></div>`;
-      }
-      if(secKey==='cash_holdings'){
-        h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>市值</th><th>币种</th><th>收益</th><th>收益率</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
-        groupItems.forEach((it,li)=>{const c=it.record,idx=it.idx;
-          h+=`<tr id="cash-row-${idx}"><td>${li+1}</td><td><b>${escapeHtml(c.name||'现金类资产')}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(c.project||'')}">${c.project||"—"}</td><td>${fmtMV(c.amount||0,c.currency||'CNY')}</td><td>${c.currency||'CNY'}</td><td class="${(c.profit||0)>=0?'gn':'rd'}">${fmtNative(c.profit||0,c.currency||'CNY')}</td><td>${c.return_pct||0}%</td><td>${c.location||"—"}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(c.notes||'')}">${c.notes||'—'}</td><td>${editBtn('cash_holdings',idx)}${delBtn('cash_holdings',idx)}</td></tr>`;});
-        h+='</tbody></table></div>';
-      }
-      if(secKey==='structured_products'){
-        h+='<table class="mtab"><thead><tr><th>#</th><th>币种</th><th>投资项目</th><th>子账户</th><th>所在地</th><th>产品</th><th>挂钩标的</th><th>名义本金(CNY)</th><th>票息/盈亏</th><th>收益率%</th><th>备注</th><th></th></tr></thead><tbody>';
-        groupItems.forEach((it,li)=>{const p=it.record,spIdx=it.idx;const fv=p.face_value_usd||p.face_value_hkd||0;const cv=p.face_value_usd?usdToCny(fv):hkdToCny(fv);h+=`<tr id="struct-row-${spIdx.k}-${spIdx.i}"><td>${li+1}</td><td>${p.currency?('<span class="tag '+(p.currency==="HKD"?"t-hk":p.currency=="USD"?"t-us":"t-struct")+'">'+p.currency+'</span>'):"—"}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(p.project||'')}">${p.project||'—'}</td><td>${p.asset_category||p.cat_id?('<span class="tag t-struct" style="font-size:10px">'+escapeHtml(recCatName(p))+'</span>'):"—"}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${p.location||'—'}</td><td><b>${escapeHtml(p.product_id||'')}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml((p.underlying||[]).join(' / '))}">${(p.underlying||[]).join(' / ')||'—'}</td><td>${fmtCny(cv)}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${p.profit!=null?p.profit:'—'}</td><td>${p.return_pct!=null?p.return_pct:'—'}%</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(p.notes||'')}">${p.notes||"—"}</td><td><button class="edt" title="编辑" onclick="showAddForm('${aid}','structured_products','${spIdx.k}:${spIdx.i}')" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button><button class="del" onclick="delStruct('${aid}','${spIdx.k}',${spIdx.i})" aria-label="删除">×</button></td></tr>`;});
-        h+='</tbody></table>';
-      }
-      if(secKey==='crypto'){
-        h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>数量</th><th>成本</th><th>现价</th><th>市值</th><th>币种</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
-        groupItems.forEach((it,li)=>{const x=it.record,idx=it.idx;h+=`<tr id="hold-row-${idx}"><td>${li+1}</td><td><b>${escapeHtml(x.name)}</b>${x.is_cash?' <span class="tag t-cash">稳定币</span>':''}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis">${x.project||'—'}</td><td>${x.amount||''}</td><td>${x.cost_price!=null?fmt(x.cost_price):'—'}</td><td>${fmt(x.value_usdt||0)}</td><td>${fmtMV((x.amount||0)*(x.value_usdt||0),'USDT')}</td><td>${x.currency?('<span class="tag '+(x.currency==='HKD'?'t-hk':x.currency==='USD'?'t-us':'t-crypto')+'">'+x.currency+'</span>'):'—'}</td><td class="${((x.amount||0)*(x.value_usdt||0)-(x.amount||0)*(x.cost_price||0))>=0?'gn':'rd'}">${x.cost_price!=null?fmt((x.amount||0)*(x.value_usdt||0)-(x.amount||0)*(x.cost_price||0)):'—'}</td><td class="${x.pnl_pct>=0?'gn':'rd'}">${(x.pnl_pct>=0?'+':'')+x.pnl_pct}%</td><td>${x.asset_category||x.cat_id?('<span class="tag t-crypto" style="font-size:10px">'+escapeHtml(recCatName(x))+'</span>'):'—'}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${x.location||'—'}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(x.notes||'')}">${x.notes||'—'}</td><td>${editBtn('crypto',idx)}${delBtn('crypto',idx)}</td></tr>`;});
-        h+='</tbody></table></div>';
-        const cryCny=groupItems.reduce((s,it)=>s+usdToCny((it.record.amount||0)*(it.record.value_usdt||0)),0);
-        h+=`<div style="margin-top:6px;padding:4px 10px;background:#fffbeb;border-radius:6px;font-size:12px;display:flex;justify-content:space-between"><span style="color:var(--dim)">加密 小计</span><b style="color:#92400e">${cryCny>0?fmtCny(cryCny):'\u2014'}</b> <small style="font-weight:400;color:var(--dim)">(本位币折算)</small></div>`;
-      }
+    h+='<div class="mt" style="margin-top:16px;font-size:14px;font-weight:700">'+escapeHtml(catName)+' <span style="font-size:11px;color:var(--dim);font-weight:400">'+items.length+'项</span></div>';
+    h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>数量</th><th>成本价</th><th>现价</th><th>市值</th><th>币种</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
+    let catCny=0;
+    items.forEach((it,li)=>{
+      const r=_rowOf(it); catCny+=r.mvCny||0;
+      const projTag=r.proj?('<span class="tag t-qdii" style="font-size:10px">'+(r.proj.length>10?r.proj.slice(0,9)+'…':escapeHtml(r.proj))+'</span>'):'—';
+      const catTag=r.cat?('<span class="tag t-afund" style="font-size:10px">'+escapeHtml(r.cat)+'</span>'):'—';
+      h+=`<tr id="${_rowId(li,it)}"><td>${li+1}</td><td><b>${escapeHtml(r.name)}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.proj)}">${projTag}</td><td>${r.qty}</td><td>${r.cost}</td><td>${r.price}</td><td>${r.mv}</td><td>${r.ccyTag}</td><td class="${r.pnlCls}">${r.pnl}</td><td class="${r.pctCls}">${r.pct}</td><td>${catTag}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${r.loc||'—'}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.notes)}">${r.notes||'—'}</td><td>${r.edt}${r.del}</td></tr>`;
     });
+    h+='</tbody></table></div>';
+    // 分类合计小计（统一表格下，给一个合并的本位币小计）
+    h+=`<div style="margin-top:6px;padding:4px 10px;background:#ecfdf5;border-radius:6px;font-size:12px;display:flex;justify-content:space-between"><span style="color:var(--dim)">`+escapeHtml(catName)+` 小计</span><b style="color:#065f46">${catCny>0?fmtCny(catCny):'\u2014'}</b> <small style="font-weight:400;color:var(--dim)">(本位币折算)</small></div>`;
   });
 
   // ===== 现金合计概要 + 流水调整持仓 =====
