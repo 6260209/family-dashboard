@@ -2016,7 +2016,7 @@ function recomputeAggregations(){
   const settingsLocs=getLocations();
   const locNormMap={}; settingsLocs.forEach(l=>locNormMap[normLoc(l)]=l);
   const region_map={},theme_map={};
-  for(const r of flat){const L=locNormMap[normLoc(r.loc)]||r.loc||remapRegion(jRegionOf(r.underlying))||jRegionOf(r.underlying);region_map[L]=(region_map[L]||0)+(r.mv||0);theme_map[r.underlying]=(theme_map[r.underlying]||0)+(r.mv||0);}
+  for(const r of flat){const L=locNormMap[normLoc(r.loc)]||r.loc||remapRegion(jRegionOf(r.underlying))||jRegionOf(r.underlying);region_map[L]=(region_map[L]||0)+(r.mv||0);const themeKey=r.project||r.underlying||'其他主题';theme_map[themeKey]=(theme_map[themeKey]||0)+(r.mv||0);}
   const region_summary=[];
   for(const L of settingsLocs){const v=region_map[L];if(v>0)region_summary.push({name:L,value:Math.round(v),pct:Math.round(v/(invested_cny||1)*1000)/10,color:REGION_COLORS[L]||'#64748b'});}
   const knownLocs=new Set(settingsLocs);
