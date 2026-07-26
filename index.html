@@ -2037,7 +2037,7 @@ function recomputeAggregations(){
   const return_pct=cost_basis?Math.round(hold_pnl_cny/cost_basis*10000)/100:0;
   // 现金/债券/货币基金/银行理财按【子账户】精确汇总（与聚合页筛选口径一致，根除首页与聚合页不一致）
   // 关键：用本函数局部 flat（jBuildFlat 输出），不是 DATA.flat（DATA.flat 还在本函数末尾才赋值，会读到旧值）
-  const cash_cny_val=Math.round(flat.filter(r=>{const cn=resolveCatName(r);return cn==='现金'||cn==='货币基金'||cn==='银行理财';}).reduce((s,r)=>s+(r.mv||0),0));
+  const cash_cny_val=Math.round(flat.filter(r=>{const cn=resolveCatName(r);return (cn==='现金'||cn==='货币基金'||cn==='银行理财') && r.name!=='账户闲置现金';}).reduce((s,r)=>s+(r.mv||0),0));
   const bond_cny_val=Math.round(flat.filter(r=>resolveCatName(r)==='债券').reduce((s,r)=>s+(r.mv||0),0));
   // —— 写回 DATA ——
   DATA.allocation=alloc.map(d=>({name:d.name,value:Math.round(jHkdToCny(d.value)),pct:d.pct,color:d.color}));
