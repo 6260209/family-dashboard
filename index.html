@@ -1676,12 +1676,17 @@ function acctLiveTotalCny(a){
 function seedBrokerAssets(){
   (DATA.accounts||[]).forEach(a=>{
     // 1) 券商可用现金 → cash_holdings（仅当为空）。优先 cash_hkd，否则用 remaining_liquidity_hkd（富途等字段名不同）
-    if((!a.cash_holdings||a.cash_holdings.length===0) && a.summary){
-      const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
-      if(cashHkd){
-        a.cash_holdings=[{name:'券商可用资金',amount:cashHkd,currency:'HKD',type:'现金',profit:0,return_pct:0,_seeded:true}];
+  if(a.summary){
+    const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
+    if(cashHkd){
+      const seededIdx = (a.cash_holdings||[]).findIndex(c=>c._seeded);
+      if(seededIdx>=0){ a.cash_holdings[seededIdx].amount = cashHkd; }
+      else {
+        if(!a.cash_holdings) a.cash_holdings=[];
+        a.cash_holdings.push({name:'券商可用资金',amount:cashHkd,currency:'HKD',type:'现金',profit:0,return_pct:0,asset_category:'现金',_seeded:true});
       }
     }
+  }
     // 2) 券商结构化产品净值 → structured_products（仅当为空且 summary 有 structured_nv_hkd）
     if((!a.structured_products||(!a.structured_products.hkd_products&&!a.structured_products.usd_products)) && a.summary && a.summary.structured_nv_hkd){
       a.structured_products={hkd_products:{items:[{product_id:'券商结构化产品(自动导入)',face_value_hkd:a.summary.structured_nv_hkd,underlying:['结构性产品'],_seeded:true}]}};
@@ -2037,7 +2042,7 @@ function recomputeAggregations(){
   const return_pct=cost_basis?Math.round(hold_pnl_cny/cost_basis*10000)/100:0;
   // 现金/债券/货币基金/银行理财按【子账户】精确汇总（与聚合页筛选口径一致，根除首页与聚合页不一致）
   // 关键：用本函数局部 flat（jBuildFlat 输出），不是 DATA.flat（DATA.flat 还在本函数末尾才赋值，会读到旧值）
-  const cash_cny_val=Math.round(flat.filter(r=>{const cn=resolveCatName(r);return (cn==='现金'||cn==='货币基金'||cn==='银行理财') && r.name!=='账户闲置现金';}).reduce((s,r)=>s+(r.mv||0),0));
+  const cash_cny_val=Math.round(flat.filter(r=>{const cn=resolveCatName(r);return cn==='现金'||cn==='货币基金'||cn==='银行理财';}).reduce((s,r)=>s+(r.mv||0),0));
   const bond_cny_val=Math.round(flat.filter(r=>resolveCatName(r)==='债券').reduce((s,r)=>s+(r.mv||0),0));
   // —— 写回 DATA ——
   DATA.allocation=alloc.map(d=>({name:d.name,value:Math.round(jHkdToCny(d.value)),pct:d.pct,color:d.color}));
@@ -2236,7 +2241,9 @@ function openAcct(aid){
   let tot = (function(){const v=accountTotalCny(a);return v>0?fmtCny(v):'—';})();
   const dc=txCashDelta(a.id);
   const dch=baseCashCny(a)+dc;
-  h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（本位币折算） <b>'+fmtCny(dch)+'</b> <small style="font-weight:400;opacity:.85">（= 下方各项之和 · 含券商可用余额）</small>'+(dc?(' <span style="font-size:11px">('+(dc>=0?'+':'')+fmtCny(dc)+' 流水)</span>'):'')+' · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+h;
+  let txNote='';
+  if(dc!==0) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水影响：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span></div>`;
+  h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（本位币折算） <b>'+fmtCny(dch)+'</b> <small style="font-weight:400;opacity:.85">（= 下方各项之和 · 含券商可用余额）</small>'+(dc?(' <span style="font-size:11px">('+(dc>=0?'+':'')+fmtCny(dc)+' 流水)</span>'):'')+' · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
   const dsec=txSecurities(a.id);
   let dsecHtml='';
   if(dsec.length){
