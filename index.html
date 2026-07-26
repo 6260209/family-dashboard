@@ -1550,23 +1550,33 @@ function commitEditConsolPrice(rowIdx){
   const newPrice=parseFloat(inp.value);
   if(isNaN(newPrice)||newPrice<=0){alert('请输入有效的正数价格');return;}
   let affected=0;
-  for(const f of r.raws){
-    const t=flatFindRaw(f); if(!t)continue;
-    t.price=newPrice;
-    if(typeof t.quantity==='number' && t.quantity>0){
-      const ccy=t.currency||'HKD';
-      if(ccy==='CNY')t.market_value_cny=+(newPrice*t.quantity).toFixed(2);
-      else if(ccy==='HKD')t.market_value_hkd=+(newPrice*t.quantity).toFixed(2);
-      else t.market_value_usd=+(newPrice*t.quantity).toFixed(2);
-    }
-    affected++;
-  }
+  // 按名称匹配，遍历所有section数组（holdings/securities/fund_holdings/cash_holdings/crypto）
+  // 避免 flatFindRaw 只按索引找漏掉 securities 等数组
+  const aidSet=new Set(r.raws.map(x=>x.aid));
+  aidSet.forEach(aid=>{
+    const a=acct(aid); if(!a)return;
+    ['holdings','securities','fund_holdings','cash_holdings','crypto'].forEach(secName=>{
+      const arr=a[secName]||[];
+      arr.forEach(t=>{
+        const tName=(t.name||t.asset_name||'');
+        if(tName===r.name){
+          t.price=newPrice;
+          if(typeof t.quantity==='number' && t.quantity>0){
+            const ccy=t.currency||'HKD';
+            if(ccy==='CNY')t.market_value_cny=+(newPrice*t.quantity).toFixed(2);
+            else if(ccy==='HKD')t.market_value_hkd=+(newPrice*t.quantity).toFixed(2);
+            else t.market_value_usd=+(newPrice*t.quantity).toFixed(2);
+          }
+          affected++;
+        }
+      });
+    });
+    jRecomputeSummary(a);
+  });
   if(affected===0){alert('未找到可更新的持仓');renderConsolidated();return;}
-  const aids=new Set(r.raws.map(x=>x.aid));
-  aids.forEach(aid=>{const a=acct(aid); if(a)jRecomputeSummary(a);});
   recomputePortfolio(); renderConsolidated(); renderAccts();
   const _sym=(r.currency==='HKD'?'HK$':r.currency==='USD'?'$':'¥');
-  toast('已更新 '+affected+' 个账户的现价为 '+_sym+newPrice.toFixed(4)+'，联动全部账户');
+  toast('已更新 '+affected+' 笔持仓的现价为 '+_sym+newPrice.toFixed(4)+'，联动全部账户');
 }
 function showToast(msg){
   var el=document.createElement('div');
