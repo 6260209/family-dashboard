@@ -2242,7 +2242,7 @@ function openAcct(aid){
   const dch=baseCashCny(a)+dc;
   let txNote='';
   if(dc!==0) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水影响：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span></div>`;
-  h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（本位币折算） <b>'+fmtCny(dch)+'</b> <small style="font-weight:400;opacity:.85">（= 下方各项之和 · 含券商可用余额）</small>'+(dc?(' <span style="font-size:11px">('+(dc>=0?'+':'')+fmtCny(dc)+' 流水)</span>'):'')+' · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
+  h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（本位币折算） <b>'+fmtCny(dch)+'</b> <small style="font-weight:400;opacity:.85">（= 现金小计 + 交易流水影响）</small> · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
   const dsec=txSecurities(a.id);
   let dsecHtml='';
   if(dsec.length){
