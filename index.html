@@ -659,6 +659,7 @@ th.sortable.desc .arrow::after{content:'▼'}
     <div class="sub-tabs" id="overview-dim-tabs">
       <div class="sub-tab active" onclick="switchOverviewDim('category',this)"><span class="dim-dot"></span>子账户</div>
       <div class="sub-tab" onclick="switchOverviewDim('account',this)"><span class="dim-dot"></span>账户</div>
+      <div class="sub-tab" onclick="switchOverviewDim('accountTag',this)"><span class="dim-dot"></span>账户标签</div>
       <div class="sub-tab" onclick="switchOverviewDim('region',this)"><span class="dim-dot"></span>所在地</div>
       <div class="sub-tab" onclick="switchOverviewDim('holder',this)"><span class="dim-dot"></span>持有人</div>
       <div class="sub-tab" onclick="switchOverviewDim('catClass',this)"><span class="dim-dot"></span>投资项目</div>
@@ -993,6 +994,7 @@ let analysisDim='category', analysisChart='donut';
 function analysisData(){
   if(analysisDim==='category') return (DATA.category_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
   if(analysisDim==='account')  return (DATA.account_breakdown||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:null}));
+  if(analysisDim==='accountTag')return (DATA.acct_tag_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:null}));
   if(analysisDim==='region')   return (DATA.region_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
   if(analysisDim==='holder')   return (DATA.holder_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
   if(analysisDim==='catClass') return (DATA.theme_summary||[]).filter(d=>d.value>0).map(d=>({name:d.name,value:d.value,color:d.color}));
@@ -2040,6 +2042,16 @@ function recomputeAggregations(){
   // —— 写回 DATA ——
   DATA.allocation=alloc.map(d=>({name:d.name,value:Math.round(jHkdToCny(d.value)),pct:d.pct,color:d.color}));
   DATA.account_breakdown=ab.map(x=>({name:x.name.replace(/^[^·]*\s*·\s*/,''),value:Math.round(jHkdToCny(x.asset_hkd)),pct:x.pct}));
+  // —— 账户标签汇总（按【账户标签管理】设置中的标签名分组）——
+  const tagSettings=getAccountTypes();
+  const tag_map={};
+  for(const a of accounts){const L=a.account_category||a.account_type||'未分类';tag_map[L]=(tag_map[L]||0)+(jGetTotalHkd(a)[0]);}
+  const acct_tag_summary=[];
+  for(const t of tagSettings){const v=tag_map[t];if(v>0)acct_tag_summary.push({name:t,value:Math.round(jHkdToCny(v)),pct:Math.round(jHkdToCny(v)/(total_cny||1)*1000)/10});}
+  // 用户未管理的标签也补上（按字母排序）
+  const tagSet=new Set(tagSettings);
+  Object.keys(tag_map).filter(k=>!tagSet.has(k)).sort().forEach(k=>{const v=tag_map[k];if(v>0)acct_tag_summary.push({name:k,value:Math.round(jHkdToCny(v)),pct:Math.round(jHkdToCny(v)/(total_cny||1)*1000)/10});});
+  DATA.acct_tag_summary=acct_tag_summary;
   DATA.flat=flat;
   DATA.category_summary=category_summary;
   DATA.region_summary=region_summary;
