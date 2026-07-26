@@ -2705,7 +2705,13 @@ function recCatName(rec){
   if(nm) return nm;
   nm = catNormName(rec.asset_category);        // 2) asset_category 匹配管理器中的名字
   if(nm) return nm;
-  // 3) 兜底：其他（固定默认子账户）
+  // 3) cat 字段通过 catToSettings 桥接后匹配管理器
+  const br=catToSettings(rec.cat);
+  if(br){
+    nm=catNormName(br);
+    if(nm) return nm;
+  }
+  // 4) 兜底：其他（固定默认子账户）
   const other = getCategories().find(c=>(c&&c.name)==='其他');
   return other ? other.name : '其他';
 }
