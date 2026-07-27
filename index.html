@@ -3738,6 +3738,21 @@ function addInc(){
   }else{
     DATA.income.records.push(r);
   }
+  // 已到账的收入同步生成交易流水，使 txCashDelta 能把它计入对应账户现金；预计收入不计入。
+  if(r.status==='received' && r.account && r.amount>0){
+    const txId=r.id; // 与 income 记录同 id，方便编辑/删除时联动
+    const existing=(DATA.transactions||[]).findIndex(x=>x.id===txId);
+    const tx={
+      id:txId,date:r.date,type:'income',account:r.account,
+      asset_name:r.name||r.type_label||ccyName(r.currency),
+      code:'',market:'',quantity:0,amount:r.amount,price:r.amount,currency:r.currency,
+      fee:0,note:(r.note||'')+' [来自收入]',status:'completed',
+      asset_category:r.asset_category||'现金',cat_id:r.cat_id||'cat_cash',
+      project:r.project||'',location:r.location||''
+    };
+    if(existing>=0) DATA.transactions[existing]=tx;
+    else { if(!DATA.transactions) DATA.transactions=[]; DATA.transactions.push(tx); }
+  }
   computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();toast(editId?'已修改收入记录':'已添加收入记录');logActivity(editId?'修改收入':'添加收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount} ${r.currency} (${({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他'})[r.type]||r.type})`);}
 function editInc(id){
   const r=DATA.income.records.find(x=>x.id===id);
@@ -3764,7 +3779,7 @@ function editInc(id){
     var btn=document.querySelector('#inc-modal .btn:not(.ghost)');if(btn) btn.textContent='保存修改';
   },50);
 }
-function delInc(id){const r=DATA.income.records.find(x=>x.id===id);DATA.income.records=DATA.income.records.filter(x=>x.id!==id);computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();if(r)logActivity('删除收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount}`);}
+function delInc(id){const r=DATA.income.records.find(x=>x.id===id);DATA.income.records=DATA.income.records.filter(x=>x.id!==id);if(id){DATA.transactions=(DATA.transactions||[]).filter(x=>x.id!==id);}computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();if(r)logActivity('删除收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount}`);}
 function exportData(){
   const payload={
     accounts:DATA.accounts,
@@ -4279,14 +4294,21 @@ function delTx(id){
   if(t) logActivity('删除流水',`${t.date} ${({income:'收入',transfer:'转账',buy:'买入',sell:'卖出'})[t.type]||t.type} ¥${t.amount||0}`);
 }
 function txCashDelta(aid){
+  const a=acct(aid);
   let d=0;
   DATA.transactions.forEach(t=>{
+    if(t.account!==aid && t.type!=='transfer') return;
     const v=toCny(t.amount||0,t.currency), f=toCny(t.fee||0,t.currency);
-    if(t.type==='income'&&t.account===aid) d+=v;
+    // 如果账户 cash_holdings 中已经存在同币种、同金额的记录，说明这笔钱已直接计入现金小计，
+    // 避免交易流水再重复加一次（解决 income/manual_adjust 与 cash_holding 双显导致的 double count）。
+    const dupInCash=(a&&a.cash_holdings||[]).some(function(ch){
+      return (ch.currency||'CNY')===(t.currency||'CNY') && Math.abs(Number(ch.amount||0)-Number(t.amount||0))<1e-6;
+    });
+    if(t.type==='income'&&t.account===aid){ if(!dupInCash) d+=v; }
     else if(t.type==='transfer'){ if(t.account_from===aid)d-=v; if(t.account_to===aid)d+=v; }
     else if(t.type==='buy'&&t.account===aid) d-=(v+f);
     else if(t.type==='sell'&&t.account===aid) d+=(v-f);
-    else if(t.type==='manual_adjust'&&t.account===aid) d+=v;
+    else if(t.type==='manual_adjust'&&t.account===aid){ if(!dupInCash) d+=v; }
   });
   return d;
 }
@@ -5511,12 +5533,20 @@ function mergeV1Accounts(cloudAccounts, localAccounts){
   Object.keys(localMap).forEach(function(k){ out.push(localMap[k]); });
   return out;
 }
+// 按 id 合并两个数组：云端优先，但保留本地独有的记录（防止刚录入尚未推送的内容被覆盖）。
+function mergeRecordsById(cloudArr, localArr, idFn){
+  idFn=idFn||function(x){return x.id||x.name||x._id||('k-'+(x.date||''));};
+  const map={};
+  (localArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+  (cloudArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+  return Object.values(map);
+}
 // 云端快照 famdash_v1 与本地 localStorage famdash_v1 做**合并**(默认)或**覆盖**(overwrite=true)。
 // 关键原则：账户/持仓在拉取云端时以云端为准（避免本地陈旧/不完整数据把云端权威数据覆盖回去，
 // 此前已多次发生「本地只有7条持仓却把云端40条覆盖掉」的数据丢失事故）。
-// 仅当本地存在云端没有的账户时，才把这些「本地独有账户」追加到云端。
-// 交易流水与收入同样是跨设备共享记录：拉取时以云端为准。
-// 返回 true 表示本次合并把「本地独有账户」带入(需推回云端找回)。
+// 仅当本地存在云端没有的账户/流水/收入时，才把这些「本地独有记录」追加到云端。
+// 交易流水与收入是跨设备共享记录，但**本地尚未推送的新增记录必须保留**，否则用户刚录的内容会
+// 在「push→pull」后立即消失。
 function applyCloudToData(snap, overwrite){
   const v1=snapGet(snap,'famdash_v1');
   if(!v1)return false;
@@ -5531,6 +5561,16 @@ function applyCloudToData(snap, overwrite){
         if(!cloudAcctMap[k]){ (o.accounts||(o.accounts=[])).push(a); cloudAcctMap[k]=a; }
       });
       mergedLocal=(localV1.accounts||[]).some(function(a){ return !cloudAcctMap[a.id||a.name]; });
+      // 合并交易流水与收入：云端为准，但保留本地独有记录
+      const localTx=localV1.transactions||[];
+      if(o.transactions || localTx.length){
+        o.transactions=mergeRecordsById(o.transactions||[], localTx, function(x){return x.id;});
+      }
+      const localInc=incomeRecordsFrom(localV1.income);
+      const cloudInc=incomeRecordsFrom(o.income);
+      if(cloudInc.length || localInc.length){
+        o.income={records:mergeRecordsById(cloudInc, localInc, function(x){return x.id;})};
+      }
     }
     if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
@@ -5606,8 +5646,11 @@ function _syncShouldApply(snap){
   if(localV1!==cloudV1)return true;    // 内容不一致（如重新部署带来的旧基线）→ 云端优先覆盖，杜绝旧数据刷回手机
   // 内容相同：用时间戳兜底，仅当云端比本地「最后拉取/最后修改」更新时才刷新（避免无谓刷新循环）
   const cloudT=new Date(snap.syncedAt).getTime()||0;
-  const lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
+  let lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
   const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
+  // 如果 lastPull 是未来的时间戳（例如临时冻结云端时 device 记下了 2027），必须归位，否则永远拉不到更新。
+  const nowT=Date.now();
+  if(lastPull>nowT+3600000){ try{ localStorage.setItem('famdash_sync_lastpull','0'); }catch(e){} lastPull=0; }
   return cloudT>lastPull && cloudT>localMod;
 }
 function syncNow(){
