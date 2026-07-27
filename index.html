@@ -1858,8 +1858,21 @@ function syncHoldingsFromLegacy(a){
   (a.cash_holdings||[]).forEach(c=>{const ccy=c.currency||'CNY';const v=Number(c.amount||0);const f2=pv(c.id,v,c.profit);H.push({id:c.id||genHid(),name:c.name,code:'',qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:c.asset_category||'现金',cat_id:c.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:c.location||'',project:c.project||'',source:'cash',market:'',asset_type:c.type||''});});
   const sp=a.structured_products||{};
   ['usd_products','hkd_products'].forEach(k=>{(sp[k]||{}).items&&sp[k].items.forEach(p=>{const ccy=k==='usd_products'?'USD':'HKD';const v=(ccy==='USD'?p.face_value_usd:p.face_value_hkd)||0;const f2=pv(p.id,v,null);H.push({id:p.id||genHid(),name:p.product_id,code:'',qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:'结构性产品',cat_id:p.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:p.location||'',project:p.project||'',source:'struct',market:(p.underlying||[]).join('/'),asset_type:''});});});
-  (a.crypto||[]).forEach(x=>{const ccy=x.currency||'USD';const usdVal=Number(x.value_usdt||0);const amt=Number(x.amount||0);const cost=Number(x.cost_price||0);let nativeVal=amt>0?amt*usdVal:usdVal;if(ccy==='HKD')nativeVal*=FX_USD_HKD;else if(ccy==='CNY')nativeVal*=FX_USD_CNY;const nativePnl=(amt>0&&cost>0)?Math.round(amt*(usdVal-cost)):(x.pnl!=null?x.pnl:null);H.push({id:x.id||x.uid||genHid(),name:x.name,code:'',qty:x.amount,cost_price:x.cost_price||null,price:null,value:nativeVal,pnl:nativePnl,cat:x.asset_category||'加密货币',cat_id:x.cat_id||'',ccy:ccy,holder:a.holder,location:x.location||'',project:x.project||'',source:'crypto',market:'',asset_type:'',is_cash:!!x.is_cash,pnl_pct:x.pnl_pct||0});});
+  (a.crypto||[]).forEach(x=>{
+    const ccy=x.currency||'USD';
+    // value_usdt 在旧数据中表示该加密货币的【总市值】（数量 × 现价），不是单价
+    const totalUsdt=Number(x.value_usdt||0);
+    const amt=Number(x.amount||0);
+    const cost=Number(x.cost_price||0);
+    let nativeVal=totalUsdt;
+    if(ccy==='HKD')nativeVal*=FX_USD_HKD;else if(ccy==='CNY')nativeVal*=FX_USD_CNY;
+    const unitPrice=(amt>0&&totalUsdt>0)?(totalUsdt/amt):0;
+    const nativePnl=(amt>0&&cost>0)?Math.round(amt*(unitPrice-cost)):(x.pnl!=null?x.pnl:null);
+    H.push({id:x.id||x.uid||genHid(),name:x.name,code:'',qty:x.amount,cost_price:x.cost_price||null,price:unitPrice||null,value:nativeVal,pnl:nativePnl,cat:x.asset_category||'加密货币',cat_id:x.cat_id||'',ccy:ccy,holder:a.holder,location:x.location||'',project:x.project||'',source:'crypto',market:'',asset_type:'',is_cash:!!x.is_cash,pnl_pct:x.pnl_pct||0});
+  });
   a.holdings=H;
+  // a.crypto 已合并进统一 holdings，清空旧数组避免详情页重复显示
+  a.crypto=[];
   return a;
 }
 function jBuildFlat(accounts){
@@ -1975,9 +1988,11 @@ function recomputeAggregations(){
       fund+=fCny*FX_CNY_HKD;
     }
     else if(cat==='crypto'){
-      let crCny=(a.crypto||[]).reduce((s,x)=>s+usdToCny((x.amount||0)*(x.value_usdt||0)),0);
+      // 统一口径：a.crypto 由 normalizeAccount 从 a.holdings(source='crypto') 重建，
+      // 其中 value_usdt 已是【总市值/总成本】(数量×单价)，直接求和即可，勿再乘 amount（否则重复计数）。
+      let crCny=(a.crypto||[]).reduce((s,x)=>s+toCny(x.value_usdt||0, x.currency||'USDT'),0);
       const usdt=(a.account_summary||{}).total_asset_usdt||0;
-      if(crCny<=0&&usdt) crCny=usdt*FX_USD_CNY;
+      if(crCny<=0&&usdt) crCny=usdToCny(usdt);
       crypto+=crCny*FX_CNY_HKD;
     }
     for(const c of (a.cash_holdings||[])){
@@ -2123,9 +2138,8 @@ function openAcct(aid){
   (a.securities||[]).forEach((t,i)=>_addCatItem('securities',t,i));
   (a.fund_holdings||[]).forEach((f,i)=>_addCatItem('fund_holdings',f,i));
   (a.cash_holdings||[]).forEach((c,i)=>_addCatItem('cash_holdings',c,i));
-  (a.crypto||[]).forEach((x,i)=>_addCatItem('crypto',x,i));
-  // crypto 可能还在 a.holdings 中未转为 a.crypto
-  (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto')_addCatItem('crypto',h,i);});
+  // 加密货币统一走 a.holdings（source==='crypto'），a.crypto 已在 syncHoldingsFromLegacy 中合并并清空
+  (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto')_addCatItem('holdings',h,i);});
   if(a.structured_products){
     ['usd_products','hkd_products'].forEach(k=>{
       (a.structured_products[k]||{}).items&&a.structured_products[k].items.forEach((p,i)=>_addCatItem('structured_products',p,{k,i}));
@@ -2184,16 +2198,22 @@ function openAcct(aid){
       pct=(r.return_pct||0)+'%';
       proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
       edt=editBtn('cash_holdings',it.idx); del=delBtn('cash_holdings',it.idx);
-    } else if(sec==='crypto'){
-      ccy=r.currency||'USDT';
-      name=r.name+(r.is_cash?' [稳定币]':''); qty=r.qty?String(r.qty):(r.amount?String(r.amount):'—'); cost=r.cost_price!=null?fmt(r.cost_price):'—'; price=fmt(r.value_usdt||0);
-      const totalMv=r.value_usdt?(r.qty||0)*(r.value_usdt||0):(r.value||0);
-      mv=fmtMV(totalMv,ccy); mvCny=usdToCny(totalMv);
-      const p=r.cost_price!=null?(totalMv-(r.amount||0)*(r.cost_price||0)):0;
+    } else if(sec==='crypto' || (sec==='holdings' && r.source==='crypto')){
+      // 统一持仓模型下，crypto 已并入 a.holdings（source==='crypto'），字段：
+      //   qty=数量, cost_price=成本价, price=单价(=总市值/数量), value=总市值(原生币种), pnl=盈亏(已算好), pnl_pct=收益率
+      ccy=r.currency||r.ccy||'USDT';
+      name=r.name+(r.is_cash?' [稳定币]':''); qty=r.qty?String(r.qty):'—'; cost=r.cost_price!=null?fmt(r.cost_price):'—';
+      price=(r.price)?fmt(r.price):'—';   // 现价 = 单价（unitPrice）
+      const totalMv=Number(r.value||0);   // 总市值（原生币种，与 a.holdings 真源一致）
+      mv=fmtMV(totalMv,ccy);
+      mvCny=toCny(totalMv,ccy);   // 原生币种 → 人民币（USD/USDT/HKD/CNY 全支持）
+      const p=(r.pnl!=null&&r.pnl!=='')?Number(r.pnl):0;   // 盈亏已在 syncHoldingsFromLegacy/normalizeSecPnl 算好
       pnl=p?(p>=0?'+':'')+fmt(p):'—'; pnlCls=p>=0?'gn':'rd';
       const pp=r.pnl_pct; pct=pp!=null?((pp>=0?'+':'')+pp+'%'):''; pctCls=pp>=0?'gn':'rd';
       proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
-      edt=editBtn('crypto',it.idx); del=delBtn('crypto',it.idx);
+      // 统一 holdings 后，crypto 记录在 a.holdings 中，编辑/删除也走 holdings
+      const editSec=(sec==='holdings')?'holdings':'crypto';
+      edt=editBtn(editSec,it.idx); del=delBtn(editSec,it.idx);
     } else if(sec==='structured_products'){
       ccy=r.currency||'';
       name=r.product_id||''; qty='—'; cost='—'; price='—';
