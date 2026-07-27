@@ -3674,6 +3674,7 @@ function showIncForm(){const el=document.getElementById('inc-form');el.style.dis
   el.innerHTML=`<div class="form-row"><b>添加收入：</b><input id="inc-date" type="date"><select id="inc-type"><option value="dividend">股票股息</option><option value="fcn_coupon">FCN票息</option><option value="fund_div">基金分红</option><option value="interest">利息</option><option value="other">其他</option></select><input id="inc-name" placeholder="标的/来源" style="min-width:110px"><input id="inc-amount" type="number" placeholder="金额" style="width:84px"><select id="inc-ccy"><option>CNY</option><option>USD</option><option>HKD</option></select><select id="inc-status"><option value="received">已到账</option><option value="projected">预计</option></select><button class="btn sm" onclick="addInc()">保存</button><button class="btn ghost sm" onclick="document.getElementById('inc-form').style.display='none'">取消</button></div>`;}
 function showIncModal(){
   const today=new Date().toISOString().slice(0,10);
+  const catOpts='<option value="">— 可选 —</option>'+catNames().map(n=>`<option value="${n}">${escapeHtml(n)}</option>`).join('');
   const html=`<div class="modal open" id="inc-modal" style="display:flex"><div class="box" style="max-width:540px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-income"/></svg> 录入收入</h3><button class="x" aria-label="关闭" onclick="document.getElementById('inc-modal').remove()">×</button></div><div class="mbody"><div class="tx-form">
     <div class="row"><label>日期</label><input id="inc-date" type="date" value="${today}"></div>
     <div class="row"><label>账户</label><select id="inc-account">${acctOptions('')}</select></div>
@@ -3691,6 +3692,7 @@ function showIncModal(){
       <option value="_custom">自定义...</option>
     </select></div>
     <div class="row" id="inc-custom-proj-row" style="display:none"><label>自定义项目</label><input id="inc-custom-proj" placeholder="输入项目名称" style="min-width:160px"></div>
+    <div class="row"><label>子账户</label><select id="inc-category">${catOpts}</select></div>
     <div class="row"><label>来源/标的</label><input id="inc-name" placeholder="如 NVDA 股息" style="min-width:160px"></div>
     <div class="row"><label>金额</label><input id="inc-amount" type="number" placeholder="金额"></div>
     <div class="row"><label>币种</label><select id="inc-ccy">${currencyOptions('CNY')}</select></div>
@@ -3705,7 +3707,9 @@ function showIncModal(){
 }
 function addInc(){
   const editId=window._editIncId;
-  const r={id:editId||'inc'+Date.now(),date:document.getElementById('inc-date').value||new Date().toISOString().slice(0,10),type:document.getElementById('inc-type').value,account:document.getElementById('inc-account').value||'',holder:'',name:document.getElementById('inc-name').value,project:(document.getElementById('inc-project')||{value:''}).value,amount:Number(document.getElementById('inc-amount').value)||0,currency:document.getElementById('inc-ccy').value,status:document.getElementById('inc-status').value,location:(document.getElementById('inc-location')||{value:''}).value||'',note:document.getElementById('inc-note').value||''};
+  const cat=(document.getElementById('inc-category')||{value:''}).value||'';
+  const r={id:editId||'inc'+Date.now(),date:document.getElementById('inc-date').value||new Date().toISOString().slice(0,10),type:document.getElementById('inc-type').value,account:document.getElementById('inc-account').value||'',holder:'',name:document.getElementById('inc-name').value,project:(document.getElementById('inc-project')||{value:''}).value,amount:Number(document.getElementById('inc-amount').value)||0,currency:document.getElementById('inc-ccy').value,status:document.getElementById('inc-status').value,location:(document.getElementById('inc-location')||{value:''}).value||'',note:document.getElementById('inc-note').value||'',asset_category:cat};
+  if(cat){r.cat_id=resolveCatId(cat);}
   if(r.project==='_custom') r.project=(document.getElementById('inc-custom-proj')||{value:''}).value||'自定义';
   if(editId){
     const idx=DATA.income.records.findIndex(x=>x.id===editId);
@@ -3732,6 +3736,7 @@ function editInc(id){
     if(document.getElementById('inc-name')) document.getElementById('inc-name').value=r.name||'';
     if(document.getElementById('inc-amount')) document.getElementById('inc-amount').value=r.amount||'';
     if(document.getElementById('inc-ccy')) document.getElementById('inc-ccy').value=r.currency||'CNY';
+    if(document.getElementById('inc-category')) document.getElementById('inc-category').value=r.asset_category||'';
     if(document.getElementById('inc-location')) document.getElementById('inc-location').value=r.location||'';
     if(document.getElementById('inc-status')) document.getElementById('inc-status').value=r.status||'received';
     if(document.getElementById('inc-note')) document.getElementById('inc-note').value=r.note||'';
@@ -3865,7 +3870,7 @@ function openTxModal(type){ txCur=type;
   const ccySug=getCashCcys();
   const nameSug=[...new Set(DATA.flat.map(r=>r.name).filter(Boolean))].slice(0,40);
   const catOpts='<option value="">— 可选 —</option>'+catNames().map(n=>`<option value="${n}">${escapeHtml(n)}</option>`).join('');
-  const typeLabels={income:'<svg class="ic-svg" width="14" height="14"><use href="#i-income"/></svg> 录入收入',transfer:'<svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 录入转账',buy:'<svg class="ic-svg" width="14" height="14"><use href="#i-arrow-up"/></svg> 录入买入',sell:'<svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 录入卖出'};
+  const typeLabels={income:'<svg class="ic-svg" width="14" height="14"><use href="#i-income"/></svg> 录入收入',transfer:'<svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 录入转账',buy:'<svg class="ic-svg" width="14" height="14"><use href="#i-arrow-up"/></svg> 录入买入',sell:'<svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 录入卖出',manual_adjust:'<svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑手动调整'};
   let f='';
   if(type==='income'){
     f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
@@ -3900,6 +3905,20 @@ function openTxModal(type){ txCur=type;
       <div class="row"><label>金额</label><input id="tx-amount" type="number" placeholder="金额"></div>
       <div class="row"><label>币种</label><select id="tx-ccy">${ccySug.map(c=>`<option>${c}</option>`).join('')}</select></div>
       <div class="row"><label>手续费</label><input id="tx-fee" type="number" placeholder="可选" value="0"></div>
+      <div class="row"><label>备注</label><input id="tx-note" placeholder="可选" style="min-width:160px"></div>`;
+  } else if(type==='manual_adjust'){
+    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
+      <div class="row"><label>账户</label><select id="tx-account">${acctOptions('')}</select></div>
+      <div class="row" style="align-items:flex-start"><label>标的</label><div style="flex:1">
+        <input id="tx-instrument" list="tx-instr-list" autocomplete="off" placeholder="输入或选择标的名称" oninput="resolveInstrumentInto('tx')" onchange="resolveInstrumentInto('tx')" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--card);color:var(--text)">
+        <datalist id="tx-instr-list">${buildInstrOptions()}</datalist>
+        <input type="hidden" id="tx-code">
+        <div id="tx-instr-hint" style="font-size:11px;color:var(--dim);margin-top:4px"></div>
+      </div></div>
+      <div class="row"><label>子账户</label><select id="tx-category">${catOpts}</select></div>
+      <div class="row"><label>数量</label><input id="tx-qty" type="number" placeholder="数量（可选）" value="0"></div>
+      <div class="row"><label>金额</label><input id="tx-amount" type="number" placeholder="金额"></div>
+      <div class="row"><label>币种</label><select id="tx-ccy">${ccySug.map(c=>`<option>${c}</option>`).join('')}</select></div>
       <div class="row"><label>备注</label><input id="tx-note" placeholder="可选" style="min-width:160px"></div>`;
   } else {
     f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
@@ -4142,10 +4161,22 @@ function addTx(){
     tx.fee=Number(document.getElementById('tx-fee').value)||0;
     if(!tx.account_from||!tx.account_to){toast('请选择转出/转入账户');return;}
     if(tx.account_from===tx.account_to){toast('转出与转入账户不能相同');return;}
+  } else if(type==='manual_adjust'){
+    tx.account=document.getElementById('tx-account').value;
+    tx.asset_name=document.getElementById('tx-instrument').value.trim()||'';
+    tx.code=document.getElementById('tx-code').value||'';
+    tx.asset_category=document.getElementById('tx-category').value||'';
+    tx.cat_id=tx.asset_category?resolveCatId(tx.asset_category):'';
+    tx.quantity=Number(document.getElementById('tx-qty').value)||0;
+    tx.amount=Number(document.getElementById('tx-amount').value)||0;
+    tx.currency=document.getElementById('tx-ccy').value||'CNY';
+    tx.fee=0;
+    if(!tx.account){toast('请选择账户');return;}
   } else {
     tx.account=document.getElementById('tx-account').value;
     tx.asset_name=document.getElementById('tx-instrument').value.trim()||'';
     tx.code=document.getElementById('tx-code').value;
+    tx.asset_category=document.getElementById('tx-category').value||'';
     if(!tx.asset_category && tx.asset_name){
       const _rec=(DATA.flat||[]).find(r=>r.name&&r.name===tx.asset_name);
       if(_rec&&_rec.asset_category){ tx.asset_category=_rec.asset_category; }
@@ -4174,10 +4205,10 @@ function addTx(){
   /* 买入/卖出时同步更新账户持仓（共用 applyTxToHolding） */
   applyTxToHolding(tx, type);
   saveEditsLocal(); renderTx(); renderInc(); renderCalendar(); recomputePortfolio();
-  toast('已保存流水：'+({income:'收入',transfer:'转账',buy:'买入',sell:'卖出'})[type]);
+  toast('已保存流水：'+({income:'收入',transfer:'转账',buy:'买入',sell:'卖出',manual_adjust:'手动调整'})[type]);
   // 流水日志
-  const typeLabel=({income:'收入',transfer:'转账',buy:'买入',sell:'卖出'})[type];
-  const summary=type==='income'?`${tx.name||'(未命名)'} ¥${tx.amount} ${tx.currency}`:type==='transfer'?`${acctName(tx.account_from)} → ${acctName(tx.account_to)} ¥${tx.amount} ${tx.currency}`:`${tx.asset_name||'(标的)'} ${tx.quantity}股 @${tx.currency==='CNY'?tx.amount:tx.amount} ${tx.currency}`;
+  const typeLabel=({income:'收入',transfer:'转账',buy:'买入',sell:'卖出',manual_adjust:'手动调整'})[type];
+  const summary=type==='income'?`${tx.name||'(未命名)'} ¥${tx.amount} ${tx.currency}`:type==='transfer'?`${acctName(tx.account_from)} → ${acctName(tx.account_to)} ¥${tx.amount} ${tx.currency}`:`${tx.asset_name||'(标的)'} ${tx.quantity||0} ${tx.currency==='CNY'?tx.amount:tx.amount}`;
   logActivity('添加'+typeLabel,`${tx.date} ${summary}`);
   return true;
   } catch(e){ console.error('addTx error:',e); toast('保存失败：'+(e.message||e)); return false; }
@@ -4335,7 +4366,8 @@ function editLedgerRow(id,src){
 /* 编辑已存在的交易：预填 openTxModal，并将「保存」改为「先删旧再添新」 */
 function openTxEdit(t){
   // 先打开对应类型的录入弹窗
-  openTxModal(t.type==='income'?'income':t.type==='transfer'?'transfer':(t.type==='sell'?'sell':'buy'));
+  const editType=t.type==='income'?'income':t.type==='transfer'?'transfer':t.type==='manual_adjust'?'manual_adjust':(t.type==='sell'?'sell':'buy');
+  openTxModal(editType);
   // 预填字段
   const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
   setTimeout(()=>{
@@ -4351,6 +4383,12 @@ function openTxEdit(t){
       } else if(t.type==='transfer'){
         set('tx-from',t.account_from); set('tx-to',t.account_to); set('tx-amount',t.amount); set('tx-fee',t.fee||0);
         if(document.getElementById('tx-ccy-multi')) seedMultiInput('tx-ccy-multi',[t.currency||'CNY']);
+      } else if(t.type==='manual_adjust'){
+        set('tx-account',t.account); set('tx-code',t.code);
+        const catSel=document.getElementById('tx-category'); if(catSel&&t.asset_category)catSel.value=t.asset_category;
+        set('tx-qty',t.quantity); set('tx-amount',t.amount);
+        if(document.getElementById('tx-instrument')) document.getElementById('tx-instrument').value=t.asset_name||'';
+        if(document.getElementById('tx-ccy')) document.getElementById('tx-ccy').value=t.currency||'CNY';
       } else {
         set('tx-account',t.account); set('tx-code',t.code);
         const catSel=document.getElementById('tx-category'); if(catSel&&t.asset_category)catSel.value=t.asset_category;
@@ -4384,16 +4422,18 @@ function delLedgerRow(id,src){
 
 function renderTx(){
   const rows=DATA.transactions.slice().sort((a,b)=>a.date<b.date?1:-1);
-  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息'};
+  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整'};
   document.getElementById('tx-body').innerHTML=rows.map(t=>{
     let acc,dir,amt=t.amount||0,ccy=t.currency||'CNY';
     if(t.type==='transfer'){ acc=acctName(t.account_from)+' → '+acctName(t.account_to); dir='转账'; }
     else if(t.type==='income'){ acc=acctName(t.account); dir=t.income_type||''; }
     else if(t.type==='dividend'){ acc=acctName(t.account); dir=t.name||''; }
+    else if(t.type==='manual_adjust'){ acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     else { acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     const st=t.status?({received:'已到账',projected:'预计'})[t.status]||t.status:'';
     const sign=(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':'−';
-    return `<tr><td>${t.date}</td><td><span class="tag ${t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='dividend'?'t-afund':'t-afund'}">${typeLabel[t.type]}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${st}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
+    const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':'t-afund';
+    return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${st}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
   }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
   let inc=0,buy=0,sell=0,trf=0,div=0;
   DATA.transactions.forEach(t=>{
