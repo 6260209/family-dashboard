@@ -4266,6 +4266,7 @@ function txCashDelta(aid){
     else if(t.type==='transfer'){ if(t.account_from===aid)d-=v; if(t.account_to===aid)d+=v; }
     else if(t.type==='buy'&&t.account===aid) d-=(v+f);
     else if(t.type==='sell'&&t.account===aid) d+=(v-f);
+    else if(t.type==='manual_adjust'&&t.account===aid) d+=v;
   });
   return d;
 }
