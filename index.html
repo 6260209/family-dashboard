@@ -1597,7 +1597,7 @@ function bestFund(fs){
 function fmtNative(val, ccy){
   if(val==null||val===''||isNaN(Number(val))) return '\u2014';
   const v=Number(val);
-  const sym={CNY:'\u00a5',HKD:'HK$ ',USD:'$ ',USDT:'\u20bf ',USDC:'USDC '};
+  const sym={CNY:'\u00a5',HKD:'HK$ ',USD:'$ ',USDT:'$ ',USDC:'USDC '};
   const s=sym[ccy]||ccy+' ';
   if(Math.abs(v)>=1e8) return s+v.toExponential(2);
   if(Math.abs(v)>=1e4) return s+v.toLocaleString('zh-CN',{minimumFractionDigits:0,maximumFractionDigits:0});
