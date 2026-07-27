@@ -5502,10 +5502,11 @@ function applyCloudToData(snap, overwrite){
   try{
     o=JSON.parse(v1);
     if(!overwrite && localV1){
+      // 账户/持仓以本地合并为准（避免云端覆盖本机已校验的持仓）
       o.accounts=mergeV1Accounts(o.accounts||[], localV1.accounts||[]);
-      if(localV1.income) o.income=localV1.income;
-      if(localV1.transactions) o.transactions=localV1.transactions;
-      mergedLocal=(localV1.accounts||[]).length>0 || !!localV1.income || !!localV1.transactions;
+      // 交易流水与收入是跨设备共享记录：拉取时以云端为准（applyCloudToData = 应用云端），
+      // 否则本地陈旧基线会把云端已修正的流水/收入覆盖回去，导致「立即同步」无法生效。
+      mergedLocal=(localV1.accounts||[]).length>0;
     }
     if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
