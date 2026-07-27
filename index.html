@@ -5492,8 +5492,11 @@ function mergeV1Accounts(cloudAccounts, localAccounts){
   return out;
 }
 // 云端快照 famdash_v1 与本地 localStorage famdash_v1 做**合并**(默认)或**覆盖**(overwrite=true)。
-// 合并：账户按 id 对齐；同账户内各持仓数组按 symbol/name 取并集(本地独有持仓永不丢失)；本地有收入/交易则优先本地。
-// 返回 true 表示本次合并把「本地独有数据」带入(需推回云端找回)。
+// 关键原则：账户/持仓在拉取云端时以云端为准（避免本地陈旧/不完整数据把云端权威数据覆盖回去，
+// 此前已多次发生「本地只有7条持仓却把云端40条覆盖掉」的数据丢失事故）。
+// 仅当本地存在云端没有的账户时，才把这些「本地独有账户」追加到云端。
+// 交易流水与收入同样是跨设备共享记录：拉取时以云端为准。
+// 返回 true 表示本次合并把「本地独有账户」带入(需推回云端找回)。
 function applyCloudToData(snap, overwrite){
   const v1=snapGet(snap,'famdash_v1');
   if(!v1)return false;
@@ -5502,11 +5505,12 @@ function applyCloudToData(snap, overwrite){
   try{
     o=JSON.parse(v1);
     if(!overwrite && localV1){
-      // 账户/持仓以本地合并为准（避免云端覆盖本机已校验的持仓）
-      o.accounts=mergeV1Accounts(o.accounts||[], localV1.accounts||[]);
-      // 交易流水与收入是跨设备共享记录：拉取时以云端为准（applyCloudToData = 应用云端），
-      // 否则本地陈旧基线会把云端已修正的流水/收入覆盖回去，导致「立即同步」无法生效。
-      mergedLocal=(localV1.accounts||[]).length>0;
+      const cloudAcctMap={}; (o.accounts||[]).forEach(function(a){ cloudAcctMap[a.id||a.name]=a; });
+      (localV1.accounts||[]).forEach(function(a){
+        const k=a.id||a.name;
+        if(!cloudAcctMap[k]){ (o.accounts||(o.accounts=[])).push(a); cloudAcctMap[k]=a; }
+      });
+      mergedLocal=(localV1.accounts||[]).some(function(a){ return !cloudAcctMap[a.id||a.name]; });
     }
     if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
