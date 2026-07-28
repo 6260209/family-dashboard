@@ -552,6 +552,8 @@ th.sortable.desc .arrow::after{content:'▼'}
 .price-cell{font-weight:700;color:var(--accent);white-space:nowrap;cursor:default}
 .price-cell:hover{text-decoration:underline;text-decoration-style:dotted}
 .price-unit{font-size:11px;color:var(--dim);margin-left:2px;font-weight:400}
+.consol-qty{font-size:11px;color:var(--dim);white-space:nowrap;flex-shrink:0;margin-left:2px}
+.fc-base{font-size:11px;color:var(--dim);margin-left:6px;white-space:nowrap}
 #consolidated-body .edt{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#f0f9ff;border:1px solid #bae6fd;color:#0ea5e9;font-size:13px;cursor:pointer;transition:all var(--transition-fast)}
 #consolidated-body .edt:hover{background:#0ea5e9;color:#fff;border-color:#0ea5e9;transform:scale(1.1)}
 @keyframes fadeInOut{0%{opacity:0;transform:translateX(-50%) translateY(-10px)}15%{opacity:1;transform:translateX(-50%) translateY(0)}85%{opacity:1;transform:translateX(-50%) translateY(0)}100%{opacity:0;transform:translateX(-50%) translateY(-10px)}}
@@ -1325,19 +1327,24 @@ function renderConsolidated(){
   const merged=new Map();
   for(const f of filtered){
     const key=f.name||'_';
-    if(!merged.has(key)) merged.set(key,{name:f.name,code:f.code,cat:f.cat,type:f.type,qty:0,mv:0,pnl:0,pnl_pct:0,cost_price:0,price:0,currency:'',accts:new Set(),raws:[]});
+    if(!merged.has(key)) merged.set(key,{name:f.name,code:f.code,cat:f.cat,type:f.type,qty:0,mv:0,pnl:0,pnl_pct:0,cost_price:0,price:0,currency:'',market:'',accts:new Set(),raws:[]});
     const m=merged.get(key);
     m.mv+=f.mv||0; m.pnl+=f.pnl||0;
     if(typeof f.qty==='number')m.qty+=f.qty;
     if(f.cost_price)m.cost_price=f.cost_price;
     if(f.price)m.price=f.price;
     if(f.currency&&!m.currency)m.currency=f.currency;
+    if(f.market&&!m.market)m.market=f.market;
     m.accts.add(f.acct);
     m.raws.push(f); /* 保留原始引用用于编辑联动 */
   }
   for(const [,m] of merged){
     m.pnl_pct=(m.mv>0)?((m.pnl/m.mv)*100):0;
-    if(!m.price&&m.qty>0)m.price=m.mv/m.qty;
+    if(!m.price&&m.qty>0){
+      // 兜底单价：m.mv 是 CNY，需换算回原生币种，避免标签 USDT/USD 却显示 CNY 价
+      const r2c=(m.currency==='USD'||m.currency==='USDT')?(FX.USD_CNY||7.156):(m.currency==='HKD'?(1/(FX.CNY_HKD||1.09)):1);
+      m.price=(m.mv/m.qty)/r2c;
+    }
   }
   const rows=[...merged.values()].sort((a,b)=>b.mv-a.mv);
   consolRows=rows;
@@ -1359,12 +1366,18 @@ function renderConsolidated(){
     const acctBadges=[...r.accts].map(a=>`<span class="acct-badge">${escapeHtml(a)}</span>`).join('');
     const hasQty=(typeof r.qty==='number'&&r.qty>0);
     const qDisp=hasQty?(r.qty>=1e4?(r.qty/1e4).toFixed(1)+'万':r.qty.toLocaleString()):'—';
-    const priceDisp=hasQty?`${r.price.toFixed(4)} <span class="price-unit">${r.currency||''}</span>`:'—';
-    const costDisp=r.cost_price?r.cost_price.toFixed(4):'—';
+    const ccyVals=[...new Set(r.raws.map(x=>x.currency||'').filter(Boolean))];
+    const mixedCcy=ccyVals.length>1;
+    const unitLabel=mixedCcy?'多币种':(r.currency||'');
+    // 优先用实时行情价（与账户弹窗口径一致），无实时价回退存储价；避免显示陈旧/错误单价
+    let _liveP=null;
+    try{ if(r.cat==='加密货币'){ const lp=cryptoLiveUnitPrice(r); if(lp!=null)_liveP=lp; } else { const lp=secLivePrice(r); if(lp!=null)_liveP=lp; } }catch(e){}
+    const _dispPrice=_liveP!=null?_liveP:(r.price||null);
+    const priceDisp=hasQty&&_dispPrice!=null?`${_dispPrice.toFixed(4)} <span class="price-unit">${unitLabel}</span>`:'—';
+    const costDisp=r.cost_price?`${r.cost_price.toFixed(4)} <span class="price-unit">${unitLabel}</span>`:'—';
     const prjVals=[...new Set(r.raws.map(x=>x.project||'').filter(Boolean))];
     const catVals=[...new Set(r.raws.map(x=>recCatName(x)).filter(Boolean))];
     const locVals=[...new Set(r.raws.map(x=>x.loc||'').filter(Boolean))];
-    const ccyVals=[...new Set(r.raws.map(x=>x.currency||'').filter(Boolean))];
     const holderVals=[...new Set(r.raws.map(x=>x.holder||'').filter(Boolean))];
     const pnlCls=r.pnl>=0?'consol-pnl-up':'consol-pnl-down';
     // ---- 紧凑行（单行：名称 / 子账户chip / 市值 / 盈亏%）----
@@ -1372,6 +1385,7 @@ function renderConsolidated(){
       <span class="consol-arrow">&#9654;</span>
       <div class="consol-name"><b>${escapeHtml(r.name)}</b></div>
       <span class="consol-cat-chip">${escapeHtml(r.cat)}</span>
+      ${hasQty?`<span class="consol-qty" title="持仓数量（跨账户合计）">${qDisp}</span>`:''}
       <span class="consol-mv">${fmtCny(r.mv)}</span>
       <span class="consol-pnl-badge ${pnlCls}">${pctStr}</span>
     </div>`;
@@ -1393,6 +1407,7 @@ function renderConsolidated(){
         <div class="fc-foot">
           <span class="fc-accts">${acctBadges}</span>
           <span class="fc-meta">现价 ${priceDisp} · 成本 ${costDisp}</span>
+          <span class="fc-base">市值 ${fmtCny(r.mv)} <small>CNY</small></span>
           <span class="fc-pnl ${uc}">${pctStr}</span>
           ${hasQty?`<button class="fc-edit" onclick="event.stopPropagation();startEditConsolPrice(${idx})" title="修改现价（所有账户联动）" aria-label="修改现价（所有账户联动）"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`:''}
         </div>
@@ -1670,8 +1685,8 @@ function acctLiveTotalCny(a){
   });
   // 2) 现金类持仓（含券商可用资金、稳定币、债券等）
   c+=baseCashCny(a);
-  // 3) 交易流水现金影响（收入/转账/买卖差额）
-  c+=txCashDelta(a.id);
+  // 注意：交易流水现金影响(txCashDelta)不再计入账户总值/现金合计，避免与手动现金子账户重复计数。
+  // 现金合计 = 现金小计(手动现金子账户)；流水影响降级为对账信号（见账户弹窗 txNote）。
   return c;
 }
 // 初始化时把券商端「可用现金 / 结构化产品净值」种入可编辑结构，
@@ -2041,9 +2056,11 @@ function refreshCryptoQuotes(){
   fetchSecPrices(true).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
 }
 // 行情更新后重渲染：重算全局聚合（HERO总额/图表/透视全部吃实时加密币价）+ 若详情弹窗打开则重开它
+// + 重新渲染聚合(持仓)视图，使「刷新行情」后实时价在聚合页也生效（修复：刷新后聚合页仍显示陈旧价）
 function refreshCryptoViews(){
   try{ if(typeof recomputePortfolio==='function') recomputePortfolio(); }catch(e){}
   try{ const m=document.getElementById('acct-modal'); if(m && m.classList.contains('open') && typeof _openAcctId!=='undefined' && _openAcctId){ openAcct(_openAcctId); } }catch(e){}
+  try{ if(typeof renderConsolidated==='function') renderConsolidated(); }catch(e){}
 }
 
 function jGetTotalHkd(a){
@@ -2617,10 +2634,10 @@ function openAcct(aid){
   const natCCY=acctCurrency(a), natTot=acctNativeTotal(a);
   let tot = (function(){const v=accountTotalCny(a);return v>0?fmtCny(v):'—';})();
   const dc=txCashDelta(a.id);
-  const dch=baseCashCny(a)+dc;
+  const dch=baseCashCny(a);
   let txNote='';
-  if(dc!==0) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水影响：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span></div>`;
-  h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（本位币折算） <b>'+fmtCny(dch)+'</b> <small style="font-weight:400;opacity:.85">（= 现金小计 + 交易流水影响）</small> · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
+  if(dc!==0) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水净影响（买/卖/转入/转出/分红/收入，独立于上方现金小计）：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span><br><span style="color:#0e7490">现金合计已按现金子账户（现金小计）计算，不再叠加流水。如需把流水实际计入对应币种现金，请点「＋ 添加现金/债券/稳定币」手动登记。</span></div>`;
+  h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（= 现金小计，本位币折算） <b>'+fmtCny(dch)+'</b> · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
   const dsec=txSecurities(a.id);
   let dsecHtml='';
   if(dsec.length){
@@ -3720,7 +3737,8 @@ function computeIncomeAgg(){
     return {date:t.due||'',cny:Math.round(toCny(amt,ccy)||amt),status:'projected',type_label:t.type_label||'计划收入'};
   });
   const daily={},monthly={},yearly={};
-  const add=function(r){const p=(r.date||'').split('-');if(p.length<3)return;const dk=p[0]+'-'+p[1]+'-'+p[2];const mk=p[0]+'-'+p[1];const yk=p[0];
+  const normDate=function(d){if(!d)return '';let s=String(d).replace(/\//g,'-').trim();s=s.split(/[ T]/)[0];const p=s.split('-');if(p.length<3)return '';let y=p[0],m=p[1],dd=p[2];if(m.length===1)m='0'+m;if(dd.length===1)dd='0'+dd;if(!/^\d{3,4}$/.test(y))return '';return y+'-'+m+'-'+dd;};
+  const add=function(r){const dk=normDate(r.date);if(!dk)return;const p=dk.split('-');const mk=p[0]+'-'+p[1];const yk=p[0];
     daily[dk]=daily[dk]||{income_cny:0,count:0};daily[dk].income_cny+=r.cny;daily[dk].count++;
     monthly[mk]=monthly[mk]||{income_cny:0,count:0};monthly[mk].income_cny+=r.cny;monthly[mk].count++;
     yearly[yk]=yearly[yk]||{income_cny:0,count:0};yearly[yk].income_cny+=r.cny;yearly[yk].count++;};
@@ -3739,6 +3757,115 @@ function computeIncomeAgg(){
   DATA.income.ytd_cny=Math.round(ytd);DATA.income.projected_year_cny=Math.round(projYr);
   DATA.income.annual_yield_pct=DATA.total.cny?Math.round(projYr/DATA.total.cny*100*100)/100:0;
 }
+
+/* ============ 自检机制（v13 新增） ============
+ * 对当前 DATA 跑一组断言，返回结构化报告。
+ * 「运行自检」按钮与无头测试(page.evaluate) 都调用它，保证“改动可验证、不靠肉眼”。
+ */
+function _selfNonCashCny(a){
+  let c=0;
+  (a.holdings||[]).forEach(h=>{
+    if((h.source||'')==='cash') return;
+    const ccy=_ccyOfH(h);
+    let total=Number(h.value||0);
+    if(h.source==='crypto'){
+      const live=cryptoLiveUnitPrice(h);
+      const unit=(live!=null)?live:Number(h.value_usdt||h.price||0);
+      if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
+    } else if(h.source==='sec'){
+      const live=secLivePrice(h);
+      const unit=(live!=null)?live:Number(h.price||0);
+      if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
+    }
+    c+=toCny(total, ccy);
+  });
+  return c;
+}
+function runSelfCheck(){
+  const checks=[];
+  const rec=(name,pass,detail,severity)=>checks.push({name,pass:!!pass,detail:detail||'',severity:severity||(pass?'🟢':'🔴')});
+  try{
+    // 1) 现金合计不重复计入流水（回归检测 v12 双计 bug）
+    (DATA.accounts||[]).forEach(a=>{
+      const total=acctLiveTotalCny(a);
+      const cash=baseCashCny(a);
+      const nonCash=_selfNonCashCny(a);
+      const expected=cash+nonCash;
+      const ok=Math.abs(total-expected)<1;
+      rec('现金合计无流水双计 · '+acctName(a.id), ok,
+        `合计=${fmtCny(total)}，应为 现金小计(${fmtCny(cash)}) + 非现金持仓(${fmtCny(nonCash)})`+(ok?'':'（疑似仍叠加了交易流水净额）'),
+        ok?'🟢':'🔴');
+    });
+    // 2) 收入日历一致性：已到账收入记录必须出现在 calendar.daily 且按日汇总金额一致
+    computeIncomeAgg();
+    const daily=(DATA.income.calendar&&DATA.income.calendar.daily)||{};
+    const byDate={};
+    (DATA.income.records||[]).forEach(r=>{
+      if(r.status!=='received') return;
+      const dk=(r.date||'').slice(0,10);
+      if(!byDate[dk]) byDate[dk]={sum:0,count:0};
+      byDate[dk].sum+=(r.cny||0); byDate[dk].count++;
+    });
+    let missInc=0, badAmt=0, recCnt=0;
+    Object.keys(byDate).forEach(dk=>{
+      const e=daily[dk];
+      if(!e){ missInc++; }
+      else { if(Math.abs((e.income_cny||0)-byDate[dk].sum)>1) badAmt++; if(e.count!==byDate[dk].count) badAmt++; }
+    });
+    recCnt=Object.keys(byDate).reduce((s,dk)=>s+byDate[dk].count,0);
+    rec('收入日历与记录一致', missInc===0&&badAmt===0,
+      `已到账 ${recCnt} 笔：缺失 ${missInc} 天 / 金额或笔数不符 ${badAmt} 天`,
+      (missInc===0&&badAmt===0)?'🟢':'🔴');
+    // 3) 流水→现金子账户 对账（回答“钱去哪了”）
+    let txIn=0, matched=0, unmatched=[];
+    (DATA.transactions||[]).forEach(t=>{
+      if(['income','transfer_in','dividend','interest'].indexOf(t.type)>=0 && (Number(t.amount)||0)>0){
+        txIn++;
+        const ccy=(t.currency||'CNY').toUpperCase();
+        const a=DATA.accounts.find(x=>x.id===t.account);
+        const has=(a&&(a.cash_holdings||[]).some(b=>(b.currency||'CNY').toUpperCase()===ccy));
+        if(has) matched++; else unmatched.push(acctName(t.account)+' · '+t.type+' · '+t.amount+ccy);
+      }
+    });
+    rec('入账流水已登记到现金子账户', true,
+      `共 ${txIn} 笔入账流水，其中 ${matched} 笔已在对应币种现金子账户；未登记 ${unmatched.length} 笔`+(unmatched.length?('：'+unmatched.slice(0,5).join('；')):''),
+      unmatched.length? '🟡':'🟢');
+    // 4) 行情币种标签：证券持仓需有 market 才能解析实时价
+    let noMkt=0, secCnt=0, cryptoCnt=0, cryptoOk=0;
+    (DATA.accounts||[]).forEach(a=>{
+      (a.securities||[]).forEach(s=>{ secCnt++; if(!s.market) noMkt++; });
+      (a.crypto_holdings||[]).forEach(h=>{ cryptoCnt++; try{ if(cryptoLiveUnitPrice(h)!=null) cryptoOk++; }catch(e){} });
+    });
+    rec('行情可解析（证券有 market / 加密可取单价）', noMkt===0,
+      `证券 ${secCnt} 笔（缺 market ${noMkt} 笔）；加密 ${cryptoCnt} 笔（可解析 ${cryptoOk}）`,
+      noMkt===0?'🟢':'🟡');
+    // 5) 聚合视图持仓数量显示
+    try{ if(typeof renderConsolidated==='function') renderConsolidated(); }catch(e){}
+    let qtyMismatch=0;
+    (consolRows||[]).forEach(r=>{
+      const srcQty=r.raws.some(x=>(typeof x.qty==='number'&&x.qty>0));
+      if(srcQty && !(typeof r.qty==='number'&&r.qty>0)) qtyMismatch++;
+    });
+    rec('聚合视图持仓数量显示', qtyMismatch===0, `数量缺失 ${qtyMismatch} 项`, qtyMismatch===0?'🟢':'🔴');
+    // 6) 数据完整性
+    rec('数据完整性', !!(DATA.accounts&&DATA.income&&DATA.transactions),
+      `账户 ${(DATA.accounts||[]).length} · 收入记录 ${(DATA.income.records||[]).length} · 流水 ${(DATA.transactions||[]).length}`);
+  }catch(e){
+    rec('自检执行异常', false, String(e&&e.stack||e));
+  }
+  const fail=checks.filter(c=>!c.pass);
+  const warn=checks.filter(c=>c.pass&&c.severity==='🟡');
+  return {ok:fail.length===0, checks, fail, warn, total:checks.length,
+    summary:`通过 ${checks.length-fail.length}/${checks.length}，失败 ${fail.length}，警告 ${warn.length}`};
+}
+function showSelfCheck(){
+  let rep; try{ rep=runSelfCheck(); }catch(e){ rep={ok:false,checks:[],summary:'自检异常: '+e}; }
+  const rows=(rep.checks||[]).map(c=>`<tr><td>${c.severity}</td><td>${escapeHtml(c.name)}</td><td style="color:var(--dim);font-size:12px">${escapeHtml(c.detail)}</td><td>${c.pass?'✅':'❌'}</td></tr>`).join('');
+  const html=`<div class="modal open" id="selfcheck-modal" style="display:flex"><div class="box" style="max-width:720px"><div class="mhead"><h3>🔍 自检报告（v13）</h3><button class="x" onclick="document.getElementById('selfcheck-modal').remove()">×</button></div><div class="mbody"><div style="padding:8px 10px;border-radius:6px;margin-bottom:10px;font-weight:700;background:${rep.ok?'#ecfdf5':'#fef2f2'};color:${rep.ok?'#065f46':'#991b1b'}">${rep.ok?'✅ 全部通过':'⚠️ 存在失败项'} · ${rep.summary}</div><table class="mtab"><thead><tr><th>级别</th><th>检查项</th><th>说明</th><th></th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:10px;font-size:12px;color:var(--dim)">🟡 未登记的入账流水属设计预期（现金子账户为权威来源）。如需把流水实际计入对应币种现金，后续将提供「一键登记」按钮。点击外部关闭。</div></div></div></div>`;
+  const old=document.getElementById('selfcheck-modal'); if(old)old.remove();
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
 function renderInc(){
   try { computeIncomeAgg(); } catch (e) { console.error('computeIncomeAgg in renderInc', e); }
   const inc=DATA.income;
@@ -4041,6 +4168,7 @@ function setIncLegend(mode){
 }
 let calMode='day',calYr=new Date().getFullYear(),calMo=new Date().getMonth();
 function renderCalendar(){
+  try{ computeIncomeAgg(); }catch(e){ console.error('renderCalendar computeIncomeAgg', e); }
   document.getElementById('cal-tabs').innerHTML=['day','month','year'].map(m=>`<div class="tab ${calMode===m?'active':''}" onclick="setCalMode('${m}')">${m==='day'?'日':m==='month'?'月':'年'}视图</div>`).join('');
   const view=document.getElementById('cal-view');
   view.innerHTML=calMode==='day'?calDayHTML():calMode==='month'?calMonthHTML():calYearHTML();
@@ -5338,12 +5466,13 @@ function renderMine(){
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 行情源管理</div><div class="desc">A股/港股/美股/加密 行情源的启用、优先级排序与自定义 URL（带安全校验）</div></div><button class="btn ghost sm" onclick="showQuoteSourceManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 所在地</div><div class="desc">增删改资产所在地（如中国内地、香港、美国…）</div></div><button class="btn ghost sm" onclick="showLocationManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">管理入口</div><div class="desc">快速跳转账户 / 子账户 / 录入</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="switchTab('accounts')"><svg class="ic-svg" width="14" height="14"><use href="#i-wallet"/></svg> 账户</button><button class="btn ghost sm" onclick="showCategoryManager()"><svg class="ic-svg" width="14" height="14"><use href="#i-stack"/></svg> 子账户</button><button class="btn ghost sm" onclick="switchTab('trade')"><svg class="ic-svg" width="14" height="14"><use href="#i-plus"/></svg> 录入</button></div></div>`;
+  h+=`<div class="set-row"><div><div class="lbl">🔍 自检</div><div class="desc">运行完整流程自检：现金对账 / 收入日历 / 流水入账 / 行情标签 / 持仓数量</div></div><button class="btn ghost sm" onclick="showSelfCheck()">运行自检</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">数据</div><div class="desc">导出 / 重置本机改动</div></div><div style="display:flex;gap:6px"><button class="btn sm" onclick="exportData()">⤓ 导出</button><button class="btn ghost sm" onclick="resetEdits()">↺ 重置</button></div></div>`;
   el.innerHTML=h;
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-28-v12';
+const APP_VERSION='2026-07-28-v13';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
