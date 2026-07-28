@@ -1751,11 +1751,10 @@ async function fetchCryptoPrices(force){
 function refreshCryptoQuotes(){
   fetchCryptoPrices(true).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
 }
-// 行情更新后重渲染：首页账户/透视 + 若详情弹窗打开则重开它
+// 行情更新后重渲染：重算全局聚合（HERO总额/图表/透视全部吃实时加密币价）+ 若详情弹窗打开则重开它
 function refreshCryptoViews(){
-  try{ if(typeof renderAccts==='function') renderAccts(); }catch(e){}
-  try{ if(typeof renderPivot==='function') renderPivot(); }catch(e){}
-  try{ const m=document.getElementById('acct-modal'); if(m && m.classList.contains('open') && window._openAcctId){ openAcct(window._openAcctId); } }catch(e){}
+  try{ if(typeof recomputePortfolio==='function') recomputePortfolio(); }catch(e){}
+  try{ const m=document.getElementById('acct-modal'); if(m && m.classList.contains('open') && typeof _openAcctId!=='undefined' && _openAcctId){ openAcct(_openAcctId); } }catch(e){}
 }
 
 function jGetTotalHkd(a){
@@ -1934,7 +1933,10 @@ function jBuildFlat(accounts){
     for(const [i,h] of (a.holdings||[]).entries()){
       const cat=(h.cat&&String(h.cat).trim())||'未分类';
       const ccy=_ccyOfH(h);
-      const mv=toCny(h.value||0,ccy);
+      // 加密币：若实时行情缓存可用，用实时单价重算市值（与详情页/账户汇总口径一致）；否则回退 h.value(成本基数)
+      let _mvRaw=Number(h.value||0);
+      if(h.source==='crypto'){ const _lp=cryptoLiveUnitPrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; }
+      const mv=toCny(_mvRaw,ccy);
       let pnl=null; if(h.pnl!=null&&h.pnl!==''){pnl=toCny(h.pnl,ccy);}
       const name=String(h.name||'');
       const code=String(h.code||'');
