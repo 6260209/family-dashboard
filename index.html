@@ -1653,19 +1653,20 @@ function acctLiveTotalCny(a){
   // 1) 加密/通用持仓（现金类持仓不在此计，避免与 baseCashCny 重复；现金统一走 baseCashCny）
   (a.holdings||[]).forEach(h=>{
     if((h.source||'')==='cash') return;
-    const val=h.value||0;
     const ccy=_ccyOfH(h);
-    // 加密货币口径统一：value_usdt=每单位现价(单价)，value=总值(=qty×value_usdt)。
-    // 优先用 value_usdt×qty 求总值；仅当 value_usdt 缺失（旧数据）时回退到 h.value。
-    const isCrypto=(h.source==='crypto')||(String(h.cat||'').indexOf('加密')>=0)||!!h.is_cash;
-    if(isCrypto){
+    let total=Number(h.value||0);
+    if(h.source==='crypto'){
+      // 加密货币口径统一：value_usdt=每单位现价(单价)，value=总值(=qty×value_usdt)。
       const live=cryptoLiveUnitPrice(h);
       const unit=(live!=null)?live:Number(h.value_usdt||h.price||0);
-      const total=(unit>0 && h.qty!=null)? Number(h.qty)*unit : Number(h.value||0);
-      c+=toCny(total, ccy);
-    } else {
-      c+=toCny(val, ccy);
+      if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
+    } else if(h.source==='sec'){
+      // 证券：实时行情覆盖市值（无实时价则回退存储价 h.price）
+      const live=secLivePrice(h);
+      const unit=(live!=null)?live:Number(h.price||0);
+      if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
     }
+    c+=toCny(total, ccy);
   });
   // 2) 现金类持仓（含券商可用资金、稳定币、债券等）
   c+=baseCashCny(a);
@@ -1711,25 +1712,54 @@ function jToHkd(amount,ccy){ccy=(ccy||'HKD').toUpperCase();if(ccy==='HKD')return
 function jHkdToCny(h){return (h||0)/FX_CNY_HKD;}
 function jUsdToCny(u){return (u||0)*FX_USD_CNY;}
 
-/* ============ 加密货币实时行情（多源 fallback：币安 → OKX → CoinGecko；仅浏览器端缓存，绝不写回 sync.json）============
-   设计铁律：实时价是"视图层临时数据"，只存在内存 cryptoPriceCache + localStorage 缓存里。
+/* ============ 实时行情（多源 fallback，按市场分组；仅浏览器端缓存，绝不写回 sync.json）============
+   设计铁律：实时价是"视图层临时数据"，只存在内存 + localStorage 缓存里。
    sync.json 永远只保留用户录入的成本价(cost_price)。行情波动不会触发同步冲突/覆盖。
    拉取时机：① 页面加载后自动拉一次（TTL 内复用缓存）；② 手动「🔄 刷新行情」按钮强制拉。
-   多源 fallback：按 CRYPTO_SOURCES 顺序逐个尝试，某源超时/报错/解析为空 → 自动试下一个；
+   多源 fallback：按 QUOTE_SOURCES[market] 顺序逐个尝试，某源超时/报错/解析为空 → 自动试下一个；
    第一个成功解析出有效价的源即停止（首成即停）。全部失败 → 保持成本价显示（—），页面不崩。
 */
 const COIN_IDS = {BTC:'bitcoin',ETH:'ethereum',SOL:'solana',BNB:'binancecoin',USDT:'tether',USDC:'usd-coin',DOGE:'dogecoin'};
 const CRYPTO_TTL_MS = 5*60*1000; // 5 分钟
-let cryptoPriceCache = (function(){ try{ const _c=localStorage.getItem('famdash_crypto_cache'); return _c?JSON.parse(_c):{}; }catch(e){ return {}; } })();
+// 统一行情缓存：key = `${market}:${sym}`（如 'crypto:BTC' / 'astock:600519' / 'hk:00700' / 'us:AAPL'）
+// 仅存浏览器端，绝不写回 sync.json
+let quoteCache = (function(){ try{ const _c=localStorage.getItem('famdash_quote_cache')||localStorage.getItem('famdash_crypto_cache'); return _c?JSON.parse(_c):{}; }catch(e){ return {}; } })();
+// 兼容旧引用：crypto 缓存沿用同一对象
+let cryptoPriceCache = quoteCache;
 // 取某持仓的实时单价(USD)；缓存失效/无数据返回 null（调用方回退成本价）
-function cryptoLiveUnitPrice(h){
-  const c = cryptoPriceCache[h.name];
+function cryptoLiveUnitPrice(h){ return quoteLiveUnitPrice('crypto', h.name); }
+// 取某证券记录的实时单价(原生币种)：按市场分组查缓存（与 QUOTE_SOURCES 的 market key 对应：astock/hk/us）
+// 代码优先用 r.code，缺失时回退 r.asset_name（仅在智能选择器未回填代码时）
+function secLivePrice(r){
+  const mktMap = (r.market==='HK')?'hk':(r.market==='US')?'us':(r.market==='CN')?'astock':null;
+  if(!mktMap) return null;
+  const code = (r.code&&r.code.trim()) ? r.code.trim() : (r.asset_name||'');
+  if(!code) return null;
+  return quoteLiveUnitPrice(mktMap, code);
+}
+// 通用：取指定市场某代码的实时单价(USD)
+function quoteLiveUnitPrice(market, sym){
+  const c = quoteCache[market+':'+sym];
   if(c && (Date.now()-c.ts) < CRYPTO_TTL_MS) return c.usd;
   return null;
 }
+// 收集所有需要拉取实时价的加密货币符号（仅 COIN_IDS 中有映射的）
 function _allCryptoSymbols(){
   const s = new Set();
   (DATA.accounts||[]).forEach(a=>{(a.holdings||[]).forEach(h=>{ if(h.source==='crypto' && h.name && COIN_IDS[h.name]) s.add(h.name); });});
+  return [...s];
+}
+// 收集某股票市场的证券代码（从 securities 旧数组；统一 holdings 里 source==='sec' 也走此）
+function _allSecSymbols(market){
+  const s = new Set();
+  const match = function(t){
+    if(!t) return;
+    const m = (t.market==='HK')?'hk':(t.market==='US')?'us':(t.market==='CN')?'astock':null;
+    if(m!==market) return;
+    const code = (t.code&&t.code.trim()) ? t.code.trim() : (t.asset_name||'');
+    if(code) s.add(code);
+  };
+  (DATA.accounts||[]).forEach(a=>{ (a.securities||[]).forEach(match); });
   return [...s];
 }
 // 带超时(AbortController)的 JSON fetch，单源卡死不影响整体 fallback（默认 8 秒）
@@ -1743,46 +1773,255 @@ async function _fetchJson(url, timeoutMs){
     return await r.json();
   } finally { clearTimeout(tid); }
 }
-// 行情源（顺序 = 优先级）：币安 → OKX → CoinGecko
+// 行情源（按市场分组；每组顺序 = 优先级，组内首成即停）
 //   buildUrls(syms): 返回该源要请求的一个或多个 URL
-//   parse(bodies, syms): 把响应体数组解析为 { 币种: USD单价 }，解析不出返回 {}
-const CRYPTO_SOURCES = [
-  { name:'binance',
-    buildUrls: function(syms){ return ['https://api.binance.com/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms.map(function(s){ return s+'USDT'; })))]; },
-    parse: function(bodies, syms){ const arr=bodies[0]||[]; const m={}; arr.forEach(function(it){ const sym=syms.find(function(s){ return (s+'USDT')===it.symbol; }); if(sym && it.price) m[sym]=Number(it.price); }); return m; }
-  },
-  { name:'okx',
-    buildUrls: function(syms){ return syms.map(function(s){ return 'https://www.okx.com/api/v5/market/ticker?instId='+encodeURIComponent(s+'-USDT'); }); },
-    parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; if(b&&b.data&&b.data[0]&&b.data[0].last) m[sym]=Number(b.data[0].last); }); return m; }
-  },
-  { name:'coingecko',
-    buildUrls: function(syms){ return ['https://api.coingecko.com/api/v3/simple/price?ids='+encodeURIComponent(syms.map(function(s){ return COIN_IDS[s]; }).join(','))+'&vs_currencies=usd']; },
-    parse: function(bodies, syms){ const j=bodies[0]||{}; const m={}; syms.forEach(function(s){ const v=j[COIN_IDS[s]]; if(v&&v.usd) m[s]=Number(v.usd); }); return m; }
-  }
-];
-async function fetchCryptoPrices(force){
-  const syms = _allCryptoSymbols();
-  if(!syms.length) return false;
+//   parse(bodies, syms): 把响应体数组解析为 { 代码: USD单价 }，解析不出返回 {}
+// 证券市场代码 → 东方财富 secid 前缀：A股 1=沪(6开头)/0=深，港股 116，美股 105
+function _emSecid(market, code){
+  if(market==='astock'){ return (code[0]==='6'||code[0]==='9')?'1.'+code:'0.'+code; }
+  if(market==='hk'){ return '116.'+code; }
+  if(market==='us'){ return '105.'+code; }
+  return code;
+}
+const QUOTE_SOURCES = {
+  crypto: [
+    { name:'binance',
+      buildUrls: function(syms){ return ['https://api.binance.com/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms.map(function(s){ return s+'USDT'; })))]; },
+      parse: function(bodies, syms){ const arr=bodies[0]||[]; const m={}; arr.forEach(function(it){ const sym=syms.find(function(s){ return (s+'USDT')===it.symbol; }); if(sym && it.price) m[sym]=Number(it.price); }); return m; }
+    },
+    { name:'okx',
+      buildUrls: function(syms){ return syms.map(function(s){ return 'https://www.okx.com/api/v5/market/ticker?instId='+encodeURIComponent(s+'-USDT'); }); },
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; if(b&&b.data&&b.data[0]&&b.data[0].last) m[sym]=Number(b.data[0].last); }); return m; }
+    },
+    { name:'coingecko',
+      buildUrls: function(syms){ return ['https://api.coingecko.com/api/v3/simple/price?ids='+encodeURIComponent(syms.map(function(s){ return COIN_IDS[s]; }).join(','))+'&vs_currencies=usd']; },
+      parse: function(bodies, syms){ const j=bodies[0]||{}; const m={}; syms.forEach(function(s){ const v=j[COIN_IDS[s]]; if(v&&v.usd) m[s]=Number(v.usd); }); return m; }
+    }
+  ],
+  astock: [
+    { name:'eastmoney',
+      buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('astock',s)+'&fields=f43,f57,f58,f60,f168,f169,f170'; }); },
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43); }); return m; }
+    },
+    { name:'sina',
+      buildUrls: function(syms){ return ['https://hq.sinajs.com.cn/list='+syms.map(function(s){ return (s[0]==='6'||s[0]==='9'?'sh':'sz')+s; }).join(',')]; },
+      parse: function(bodies, syms){ const m={}; /* 新浪返回 GBK 文本，前端直连常因 CORS/编码失败 → 解析不出则自动 fallback 下一源 */ return m; }
+    },
+    { name:'tencent',
+      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return (s[0]==='6'||s[0]==='9'?'sh':'sz')+s; }).join(',')]; },
+      parse: function(bodies, syms){ const m={}; /* 腾讯返回 GBK 文本，同样可能编码失败 → 自动 fallback */ return m; }
+    }
+  ],
+  hk: [
+    { name:'eastmoney',
+      buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('hk',s)+'&fields=f43,f57,f58,f60'; }); },
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43); }); return m; }
+    },
+    { name:'sina',
+      buildUrls: function(syms){ return ['https://hq.sinajs.com.cn/list='+syms.map(function(s){ return 'hk'+s; }).join(',')]; },
+      parse: function(bodies, syms){ const m={}; return m; }
+    },
+    { name:'tencent',
+      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return 'hk'+s; }).join(',')]; },
+      parse: function(bodies, syms){ const m={}; return m; }
+    }
+  ],
+  us: [
+    { name:'yahoo',
+      buildUrls: function(syms){ return syms.map(function(s){ return 'https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(s)+'?range=1d&interval=1d'; }); },
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; try{ const r=b&&b.chart&&b.chart.result&&b.chart.result[0]; const p=r&&r.meta&&r.meta.regularMarketPrice; if(p) m[sym]=Number(p); }catch(e){} }); return m; }
+    },
+    { name:'alphavantage',
+      buildUrls: function(syms){ return syms.map(function(s){ return 'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol='+encodeURIComponent(s)+'&apikey=demo'; }); },
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; try{ const g=b&&b['Global Quote']; const p=g&&g['05. price']; if(p) m[sym]=Number(p); }catch(e){} }); return m; }
+    },
+    { name:'eastmoney',
+      buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('us',s)+'&fields=f43,f57,f58,f60'; }); },
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43); }); return m; }
+    }
+  ]
+};
+// 通用抓取：按市场拉取 syms 的实时价，多源 fallback，首成即停；不写 sync.json
+async function fetchQuotes(market, syms, force){
+  if(!syms || !syms.length) return false;
   const now = Date.now();
-  const fresh = syms.every(function(s){ const c=cryptoPriceCache[s]; return c && (now-c.ts)<CRYPTO_TTL_MS; });
+  const fresh = syms.every(function(s){ const c=quoteCache[market+':'+s]; return c && (now-c.ts)<CRYPTO_TTL_MS; });
   if(!force && fresh) return false; // TTL 内直接复用，不发请求
-  for(const src of CRYPTO_SOURCES){
+  // 合并用户配置（启停 + 优先级排序 + 可选 URL 覆盖），保证首成即停 + 优先级生效
+  const sources = buildQuoteSourceList(market);
+  for(const src of sources){
     try{
       const urls = src.buildUrls(syms);
       const bodies = await Promise.all(urls.map(function(u){ return _fetchJson(u, 8000); }));
       const map = src.parse(bodies, syms);
       const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0; });
       if(valid.length){
-        valid.forEach(function(s){ cryptoPriceCache[s]={usd:map[s], ts:now, src:src.name}; });
-        try{ localStorage.setItem('famdash_crypto_cache', JSON.stringify(cryptoPriceCache)); }catch(e){}
-        console.info('[行情] 源 '+src.name+' 成功，更新 '+valid.length+'/'+syms.length+' 个币种');
+        valid.forEach(function(s){ quoteCache[market+':'+s]={usd:map[s], ts:now, src:src.name}; });
+        try{ localStorage.setItem('famdash_quote_cache', JSON.stringify(quoteCache)); }catch(e){}
+        console.info('[行情] '+market+' 源 '+src.name+' 成功，更新 '+valid.length+'/'+syms.length);
         return true;
       }
-      console.warn('[行情] 源 '+src.name+' 未返回有效价，尝试下一个');
-    }catch(e){ console.warn('[行情] 源 '+src.name+' 失败，尝试下一个:', e.message); }
+      console.warn('[行情] '+market+' 源 '+src.name+' 未返回有效价，尝试下一个');
+    }catch(e){ console.warn('[行情] '+market+' 源 '+src.name+' 失败:', e.message); }
   }
-  console.warn('[行情] 所有行情源均失败，保持成本价显示');
+  console.warn('[行情] '+market+' 所有行情源均失败，保持成本价显示');
   return false;
+}
+// 合并「用户行情源配置」与「内置源」：返回按优先级排序、已启用、应用了 URL 覆盖的源列表
+function buildQuoteSourceList(market){
+  const builtin = QUOTE_SOURCES[market]||[];
+  const cfg = (getSettings().quoteSources && getSettings().quoteSources[market]) || null;
+  if(cfg && cfg.length){
+    const list = cfg.map(function(c){
+      const d = builtin.find(function(x){ return x.name===c.name; });
+      if(!d) return null;
+      if(c.enabled===false) return null; // 已停用
+      if(c.urlOverride){ // 自定义 URL：保留原 parse，URL 由占位符模板生成（经安全校验）
+        return { name:d.name, buildUrls:function(syms){ return _expandUrls(c.urlOverride, market, syms); }, parse:d.parse };
+      }
+      return d;
+    }).filter(Boolean);
+    return list.length ? list : builtin.slice();
+  }
+  return builtin.slice();
+}
+// 把 URL 模板占位符展开为实际请求 URL：
+//   list 类（{syms}/{ids}/{sina_list}/{tencent_list}）→ 1 个 URL；per-symbol 类（{secid}/{symbol}/{code}）→ 每代码 1 个 URL
+function _expandUrls(tpl, market, syms){
+  const listPh = /\{syms\}|\{ids\}|\{sina_list\}|\{tencent_list\}/.test(tpl);
+  if(listPh){
+    const symsJson = encodeURIComponent(JSON.stringify(syms.map(function(s){ return s+'USDT'; })));
+    const ids = encodeURIComponent(syms.map(function(s){ return COIN_IDS[s]||s; }).join(','));
+    const sina = syms.map(function(s){ return (market==='hk'?'hk':((s[0]==='6'||s[0]==='9'?'sh':'sz')))+s; }).join(',');
+    return [tpl.replace(/\{syms\}/g,symsJson).replace(/\{ids\}/g,ids).replace(/\{sina_list\}/g,sina).replace(/\{tencent_list\}/g,sina)];
+  }
+  return syms.map(function(s){
+    const secid=_emSecid(market,s);
+    return tpl.replace(/\{secid\}/g,secid).replace(/\{symbol\}/g,s).replace(/\{code\}/g,s);
+  });
+}
+// ===== 行情源安全校验（「修改源」按钮专用）：仅 https、禁内网、禁危险字符、仅允许已知占位符 =====
+function validateQuoteSourceUrl(url){
+  if(!url || !/^https:\/\//i.test(url)) return '只允许 https 链接';
+  let u; try{ u=new URL(url); }catch(e){ return 'URL 格式不合法'; }
+  const host=(u.hostname||'').toLowerCase();
+  if(/^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/.test(host)) return '不允许内网/私有地址';
+  if(host==='localhost'||host.endsWith('.local')||host.endsWith('.internal')) return '不允许本地/内网地址';
+  if(/[\s'"]/.test(url)) return 'URL 含非法字符（空格/引号）';
+  const allowed=['{secid}','{symbol}','{code}','{syms}','{ids}','{sina_list}','{tencent_list}'];
+  const phs=url.match(/\{[^}]+\}/g)||[];
+  for(const ph of phs){ if(allowed.indexOf(ph)<0) return '含未知占位符 '+ph+'（仅允许 '+allowed.join(' / ')+'）'; }
+  return null; // 通过
+}
+// ===== 行情源配置读写 =====
+function qsGetCfg(market){
+  const s=getSettings(); s.quoteSources=s.quoteSources||{}; return s.quoteSources[market]||[];
+}
+function qsSetCfg(market, arr){ const s=getSettings(); s.quoteSources=s.quoteSources||{}; s.quoteSources[market]=arr; saveSetting('quoteSources', s.quoteSources); }
+function qsInitArr(market){
+  const arr=qsGetCfg(market);
+  if(arr.length) return arr;
+  return QUOTE_SOURCES[market].map(function(d){ return {name:d.name, enabled:true, urlOverride:''}; });
+}
+function qsMove(market, name, dir){
+  let arr=qsInitArr(market);
+  const i=arr.findIndex(function(x){ return x.name===name; }); if(i<0)return;
+  const j=i+dir; if(j<0||j>=arr.length)return;
+  const it=arr.splice(i,1)[0]; arr.splice(j,0,it); qsSetCfg(market,arr); showQuoteSourceManager();
+}
+function qsSetEnabled(market, name, enabled){
+  let arr=qsInitArr(market);
+  let c=arr.find(function(x){ return x.name===name; });
+  if(!c){ c={name:name, enabled:true, urlOverride:''}; arr.push(c); }
+  c.enabled=enabled; qsSetCfg(market,arr);
+}
+function qsReset(){ const s=getSettings(); s.quoteSources={}; saveSetting('quoteSources',{}); toast('行情源已恢复默认'); showQuoteSourceManager(); }
+function qsSaveAndClose(){ const m=document.getElementById('qs-modal'); if(m)m.remove(); toast('行情源设置已保存'); }
+// ===== 行情源管理弹窗 =====
+function showQuoteSourceManager(){
+  const old=document.getElementById('qs-modal');if(old)old.remove();
+  const markets=[['crypto','加密货币'],['astock','A股'],['hk','港股'],['us','美股']];
+  let body='';
+  markets.forEach(function(mk){
+    const market=mk[0], label=mk[1];
+    const cfg=qsGetCfg(market);
+    const defs=QUOTE_SOURCES[market]||[];
+    const items=defs.map(function(d,idx){
+      const c=cfg.find(function(x){ return x.name===d.name; });
+      const enabled=(c?c.enabled!==false:true);
+      const ord=cfg.findIndex(function(x){ return x.name===d.name; });
+      return {d:d, enabled:enabled, ord:(ord>=0?ord:idx)};
+    }).sort(function(a,b){ return a.ord-b.ord; });
+    const rows=items.map(function(it){
+      const d=it.d;
+      return `<div class="mgr-item" data-name="${escapeAttr(d.name)}" data-market="${market}">`
+        +`<input type="checkbox" class="qs-enable" ${it.enabled?'checked':''} data-name="${escapeAttr(d.name)}" data-market="${market}" title="启用/停用">`
+        +`<span class="mgr-name">${escapeHtml(d.name)}</span>`
+        +`<span style="display:flex;gap:6px;margin-left:auto">`
+        +`<button class="mgr-move" onclick="qsMove('${market}','${escapeAttr(d.name)}',-1)" title="上移">▲</button>`
+        +`<button class="mgr-move" onclick="qsMove('${market}','${escapeAttr(d.name)}',1)" title="下移">▼</button>`
+        +`<button class="mgr-edit" onclick="showQuoteSourceEdit('${market}','${escapeAttr(d.name)}')" title="修改源"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`
+        +`</span></div>`;
+    }).join('');
+    body+=`<div class="mgr-sec"><div class="mgr-title">${label} 行情源</div><div class="mgr-tip">勾选=启用 · ▲▼=优先级（靠上优先）· 修改=自定义 URL</div><div class="mgr-list">${rows||'<div class="mgr-empty">暂无</div>'}</div></div>`;
+  });
+  const html=`<div class="modal open" id="qs-modal" style="display:flex"><div class="box" style="max-width:540px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 行情源管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('qs-modal').remove()">×</button></div><div class="mbody">${body}<div class="mgr-foot"><button class="btn ghost" onclick="qsReset()">↺ 恢复默认</button><button class="btn" onclick="qsSaveAndClose()">完成</button></div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  document.querySelectorAll('#qs-modal .qs-enable').forEach(function(cb){
+    cb.addEventListener('change',function(){ qsSetEnabled(this.dataset.market, this.dataset.name, this.checked); });
+  });
+}
+function qsDefaultUrl(market, name){
+  const map={
+    crypto:{binance:'https://api.binance.com/api/v3/ticker/price?symbols={syms}',okx:'https://www.okx.com/api/v5/market/ticker?instId={symbol}-USDT',coingecko:'https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd'},
+    astock:{eastmoney:'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f57,f58,f60,f168,f169,f170',sina:'https://hq.sinajs.com.cn/list={sina_list}',tencent:'https://qt.gtimg.cn/q={tencent_list}'},
+    hk:{eastmoney:'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f57,f58,f60',sina:'https://hq.sinajs.com.cn/list={sina_list}',tencent:'https://qt.gtimg.cn/q={tencent_list}'},
+    us:{yahoo:'https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d',alphavantage:'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey=demo',eastmoney:'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f57,f58,f60'}
+  };
+  return (map[market]&&map[market][name])||'https://';
+}
+function showQuoteSourceEdit(market, name){
+  const def=QUOTE_SOURCES[market].find(function(d){ return d.name===name; }); if(!def)return;
+  const cfg=qsGetCfg(market).find(function(x){ return x.name===name; })||{};
+  const cur=def.urlOverride|| qsDefaultUrl(market,name);
+  const old=document.getElementById('qse-modal');if(old)old.remove();
+  const html=`<div class="modal open" id="qse-modal" style="display:flex"><div class="box" style="max-width:540px"><div class="mhead"><h3>修改行情源 · ${escapeHtml(name)}</h3><button class="x" aria-label="关闭" onclick="document.getElementById('qse-modal').remove()">×</button></div><div class="mbody"><div class="tx-form">
+    <div class="row" style="flex-direction:column;align-items:stretch"><label>请求 URL 模板</label><textarea id="qse-url" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:12px;font-family:monospace">${escapeHtml(cur)}</textarea></div>
+    <div class="mgr-tip">可用占位符：证券 <code>{secid}</code>；加密 <code>{symbol}</code>(代码) / <code>{syms}</code>(JSON数组) / <code>{ids}</code>(CoinGecko id)；新浪/腾讯 <code>{sina_list}</code>/<code>{tencent_list}</code>。必须 https，禁止内网地址。</div>
+    <div id="qse-err" style="color:#dc2626;font-size:12px;min-height:16px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="document.getElementById('qse-modal').remove()">取消</button><button class="btn" onclick="qsSaveEdit('${market}','${escapeAttr(name)}')">保存</button></div>
+  </div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function qsSaveEdit(market, name){
+  const url=(document.getElementById('qse-url').value||'').trim();
+  const err=validateQuoteSourceUrl(url);
+  const errEl=document.getElementById('qse-err');
+  if(err){ if(errEl)errEl.textContent='✗ '+err; return; }
+  let arr=qsInitArr(market);
+  let c=arr.find(function(x){ return x.name===name; }); if(!c){ c={name:name, enabled:true, urlOverride:''}; arr.push(c); }
+  c.urlOverride=url; qsSetCfg(market,arr);
+  const m=document.getElementById('qse-modal'); if(m)m.remove();
+  toast('已更新源：'+name);
+}
+// 兼容：加密货币抓取（内部走通用 fetchQuotes）
+async function fetchCryptoPrices(force){ return fetchQuotes('crypto', _allCryptoSymbols(), force); }
+// 证券实时行情：A股/港股/美股 各市场分别走 QUOTE_SOURCES 的多源 fallback（首成即停）
+async function fetchSecPrices(force){
+  let any=false;
+  for(const m of ['astock','hk','us']){
+    try{ if(await fetchQuotes(m, _allSecSymbols(m), force)) any=true; }catch(e){}
+  }
+  return any;
+}
+// 等数据就绪再拉证券行情（与 fetchCryptoWhenReady 同理：云端合并完成、本地已含证券持仓后才拉，避免空拉）
+function fetchSecWhenReady(attempt){
+  attempt=attempt||0;
+  try{
+    const has=(_allSecSymbols('astock').length+_allSecSymbols('hk').length+_allSecSymbols('us').length)>0;
+    if(!has){ if(attempt<6){ setTimeout(function(){ try{fetchSecWhenReady(attempt+1);}catch(_){} }, 800); } return; }
+    fetchSecPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
+  }catch(e){ console.warn('fetchSecWhenReady:', e.message); }
 }
 // 等数据就绪再拉行情：云拉取(syncPullOnLoad)是异步的，启动时本地可能尚未含云端加密币持仓。
 // 轮询 _allCryptoSymbols() 直到非空（本地或云端已载入），再拉一次；最多重试 6 次(约 5s) 兜底。
@@ -1796,9 +2035,10 @@ function fetchCryptoWhenReady(attempt){
     fetchCryptoPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
   }catch(e){ console.warn('fetchCryptoWhenReady:', e.message); }
 }
-// 强制刷新（手动按钮）：拉最新 → 重渲染相关视图
+// 强制刷新（手动按钮）：拉最新 → 重渲染相关视图（加密 + 证券全市场）
 function refreshCryptoQuotes(){
   fetchCryptoPrices(true).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
+  fetchSecPrices(true).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
 }
 // 行情更新后重渲染：重算全局聚合（HERO总额/图表/透视全部吃实时加密币价）+ 若详情弹窗打开则重开它
 function refreshCryptoViews(){
@@ -1985,6 +2225,7 @@ function jBuildFlat(accounts){
       // 加密币：若实时行情缓存可用，用实时单价重算市值（与详情页/账户汇总口径一致）；否则回退 h.value(成本基数)
       let _mvRaw=Number(h.value||0);
       if(h.source==='crypto'){ const _lp=cryptoLiveUnitPrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; }
+      else if(h.source==='sec'){ const _lp=secLivePrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; }
       const mv=toCny(_mvRaw,ccy);
       let pnl=null; if(h.pnl!=null&&h.pnl!==''){pnl=toCny(h.pnl,ccy);}
       const name=String(h.name||'');
@@ -2270,13 +2511,21 @@ function openAcct(aid){
     let type='',name='',proj='',qty='',cost='',price='',mv='',mvCny=0,pnl='',pnlCls='',pct='',pctCls='',ccy='',cat='',loc='',notes='',edt='',del='';
     if(sec==='securities'){
       ccy=r.currency||'CNY';
-      name=r.asset_name||''; qty=r.quantity||''; cost=r.cost_price||''; price=r.price||'';
-      mv=fmtNative(secValRaw(r),ccy);
-      const p=r.pnl_amount||0;
-      mvCny=jSecValueCny(r);
-      pnl=(p>=0?'+':'')+fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
-      const pp=r.pnl_pct;
-      pct=pp!=null?((pp>=0?'+':'')+pp+'%'):''; pctCls=pp>=0?'gn':'rd';
+      name=r.asset_name||''; qty=r.quantity||'';
+      const qtyN=(r.quantity!=null)?Number(r.quantity):null;
+      const costN=(r.cost_price!=null)?Number(r.cost_price):null;
+      // 实时行情覆盖：缓存有该证券实时价则用它重算 现价/市值/盈亏；否则回退存储价(r.price) → 成本价
+      const lp=secLivePrice(r);
+      const livePrice=(lp!=null)?lp:(r.price?Number(r.price):(costN!=null?costN:null));
+      const totalMv=(livePrice!=null && qtyN!=null)? qtyN*livePrice : secValRaw(r);
+      cost=(costN!=null)?fmtNative(costN,ccy):'—';
+      price=(livePrice!=null)?fmtNative(livePrice,ccy):'—';
+      mv=fmtNative(totalMv,ccy);
+      mvCny=toCny(totalMv,ccy);
+      let p=null; if(livePrice!=null && costN!=null && qtyN!=null) p=(livePrice-costN)*qtyN;
+      pnl=(p!=null)?((p>=0?'+':'')+fmtNative(p,ccy)):'—'; pnlCls=(p!=null&&p>=0)?'gn':'rd';
+      let pp=null; if(p!=null && costN!=null && qtyN!=null && (costN*qtyN)!==0) pp=(p/(costN*qtyN))*100;
+      pct=(pp!=null)?((pp>=0?'+':'')+pp.toFixed(2)+'%'):''; pctCls=(pp!=null&&pp>=0)?'gn':'rd';
       proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
       edt=editBtn('securities',it.idx); del=delBtn('securities',it.idx);
     } else if(sec==='fund_holdings'){
@@ -2539,6 +2788,7 @@ function commitNewAccount(){
     platform:platform+' · '+holder,
     holder:holder,
     account_type:typeStr,
+    account_category:typeStr,
     summary_cny:{total_asset_cny:amount},
     securities:[],fund_holdings:[],holdings:[],
     cash_holdings: amount>0 ? [{name:'初始现金',amount:amount,currency:'CNY',type:'现金',profit:0,return_pct:0}] : []
@@ -2685,7 +2935,7 @@ const SEC_SCHEMA={
     {k:'location',l:'所在地',t:'select',options:[]},       // 动态填充
     {k:'buy_date',l:'买入日期',t:'text',ph:'2026-01-01'},
     {k:'quantity',l:'数量',t:'number'},
-    {k:'price',l:'现价',t:'number'},
+    {k:'price',l:'现价',t:'number',hideInForm:true},
     {k:'mv',l:'市值',t:'number',readOnly:true},
     {k:'cost_price',l:'成本价',t:'number'},
     {k:'pnl_amount',l:'盈亏金额',t:'number',readOnly:true},
@@ -2709,7 +2959,7 @@ const SEC_SCHEMA={
     {k:'asset_category',l:'子账户',t:'select',options:[]},
     {k:'location',l:'所在地',t:'select',options:[]},
     {k:'amount',l:'数量',t:'number'},
-    {k:'value_usdt',l:'现价(USDT)',t:'number'},
+    {k:'value_usdt',l:'现价(USDT)',t:'number',hideInForm:true},
     {k:'cost_price',l:'成本价(USDT)',t:'number'},
     {k:'pnl_pct',l:'收益率%',t:'number',readOnly:true},
     {k:'notes',l:'备注',t:'text',ph:'可选'}
@@ -2717,7 +2967,7 @@ const SEC_SCHEMA={
   crypto:{label:'加密/代币',fields:[
     {k:'name',l:'名称',t:'text'},
     {k:'amount',l:'数量',t:'number'},
-    {k:'value_usdt',l:'现价(USDT)',t:'number'},
+    {k:'value_usdt',l:'现价(USDT)',t:'number',hideInForm:true},
     {k:'cost_price',l:'成本价(USDT)',t:'number'},
     {k:'pnl_pct',l:'收益率%',t:'number',readOnly:true},
     {k:'currency',l:'货币单位',t:'select',options:[]},
@@ -2890,9 +3140,11 @@ function enrichExistingAssets(){
 }
 const acct=aid=>DATA.accounts.find(x=>x.id===aid);
 function toast(msg){const t=document.getElementById('toast');if(!t)return;t.innerHTML=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
-function saveEditsLocal(){try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}}
+function saveEditsLocal(){
+  try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
   try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));scheduleSyncPush();}}catch(e){}
+}
 function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv); DATA.accounts.forEach(normalizeSecPnl);}if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
 function afterEdit(aid){
   const a=acct(aid);
@@ -2954,6 +3206,7 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
     return Array.from(s);
   };
   const flds=sc.fields.map(f=>{
+    if(f.hideInForm) return ''; // 隐藏字段（如已取消手动录入的「现价」）不渲染
     const _ccy=(cur&&cur.currency)||'CNY';
     let _lbl=f.l||'';
     if(_lbl.indexOf('(CNY)')>=0) _lbl=_lbl.replace('(CNY)','('+_ccy+')');
@@ -3028,21 +3281,31 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
   }
   if(sec==='securities'){
     const q=document.getElementById('af-securities-quantity');
-    const priceEl=document.getElementById('af-securities-price');
+    const priceEl=document.getElementById('af-securities-price'); // 现价输入框可能已隐藏(hideInForm)
     const cp=document.getElementById('af-securities-cost_price');
     const mv=document.getElementById('af-securities-mv');
     const pa=document.getElementById('af-securities-pnl_amount');
     const pp=document.getElementById('af-securities-pnl_pct');
     const ccyEl=document.getElementById('af-securities-currency');
+    // 现价输入框隐藏时：用实时行情(若有)或成本价近似 计算市值/盈亏（保存后详情页以实时价为准）
+    const _formLivePrice=()=>{
+      try{
+        const mktEl=document.getElementById('af-securities-market'); const mkt=mktEl?mktEl.value:'';
+        const mktMap=(mkt==='HK')?'hk':(mkt==='US')?'us':(mkt==='CN')?'astock':null; if(!mktMap) return null;
+        const codeEl=document.getElementById('af-securities-code'); const nameEl=document.getElementById('af-securities-asset_name');
+        const code=(codeEl&&codeEl.value&&codeEl.value.trim())?codeEl.value.trim():(nameEl?nameEl.value.trim():''); if(!code) return null;
+        return quoteLiveUnitPrice(mktMap, code);
+      }catch(e){ return null; }
+    };
     const calc=()=>{
-      const Q=Number(q.value)||0, P=Number(priceEl.value)||0, CP=Number(cp.value)||0;
+      const Q=Number(q.value)||0, CP=Number(cp.value)||0;
       const ccy=ccyEl?ccyEl.value:'CNY';
-      // 市值 = 数量 × 现价（原生币种），折 CNY 显示
+      // 现价 P：隐藏输入框时取实时行情，否则取成本价近似（保存后详情页以实时价覆盖）
+      const P = priceEl ? (Number(priceEl.value)||0) : (function(){ const _lp=_formLivePrice(); return (_lp!=null)?_lp:CP; })();
       let mvNative=Q*P, mvCny=mvNative;
-      if(ccy==='HKD') mvCny=mvNative/1.09;
-      else if(ccy==='USD'||ccy==='USDT') mvCny=mvNative*7.155;
+      if(ccy==='HKD') mvCny=mvNative/FX_CNY_HKD;
+      else if(ccy==='USD'||ccy==='USDT') mvCny=mvNative*FX_USD_CNY;
       if(mv) mv.value=Math.round(mvCny);
-      // 盈亏 = 市值(CNY) - 数量×成本价(按币种折CNY)
       if(Q>0&&mvCny>0){
         let costTotal=Q*CP;
         if(ccy==='HKD') costTotal=costTotal/FX_CNY_HKD;
@@ -3050,10 +3313,7 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
         const pnl=Math.round(mvCny-costTotal);
         if(pa) pa.value=pnl;
         if(pp) pp.value=+(pnl/mvCny*100).toFixed(2);
-      } else {
-        if(pa) pa.value='';
-        if(pp) pp.value='';
-      }
+      } else { if(pa) pa.value=''; if(pp) pp.value=''; }
     };
     [q,priceEl,cp].forEach(el=>el&&el.addEventListener('input',calc));
     setTimeout(calc,30);
@@ -3117,11 +3377,12 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
   }
   // 加密代币(crypto/holdings)：成本(USDT) + 现价(USDT) → 自动算收益率%
   if(sec==='crypto'||sec==='holdings'){
-    const hPrice=document.getElementById('af-'+sec+'-value_usdt');
+    const hPrice=document.getElementById('af-'+sec+'-value_usdt'); // 现价输入框可能已隐藏(hideInForm)
     const hCost=document.getElementById('af-'+sec+'-cost_price');
     const hPct=document.getElementById('af-'+sec+'-pnl_pct');
     const _hcalc=()=>{
-      const C=Number(hCost?hCost.value:0)||0, V=Number(hPrice?hPrice.value:0)||0;
+      if(!hPrice){ if(hPct) hPct.value=''; return; } // 现价自动取实时行情，表单内不反算收益率%
+      const C=Number(hCost?hCost.value:0)||0, V=Number(hPrice.value)||0;
       if(hPct){ hPct.value = (C>0) ? +((V-C)/C*100).toFixed(2) : ''; }
     };
     [hCost,hPrice].forEach(el=>el&&el.addEventListener('input',_hcalc));
@@ -3145,7 +3406,10 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
     // 先从 DOM 读取所有字段值（此时 modal 还在）
     const preVals={};
     let ok=true;
-    sc.fields.forEach(f=>{ const el=document.getElementById('af-'+sec+'-'+f.k); if(!el){ok=false;} else{preVals[f.k]=el.value;} });
+    sc.fields.forEach(f=>{
+      if(f.hideInForm){ preVals[f.k]=(cur&&cur[f.k]!=null)?cur[f.k]:''; return; } // 隐藏字段：保留原值（不阻塞保存、不丢失已有现价）
+      const el=document.getElementById('af-'+sec+'-'+f.k); if(!el){ok=false;} else{preVals[f.k]=el.value;}
+    });
     // 额外读取 hidden code 字段（Schema 已移除可见 code，但数据仍需保留）
     const _hc=document.getElementById('af-'+sec+'-code');
     if(_hc && (_hc.value||'').trim()) preVals.code=_hc.value.trim();
@@ -3159,7 +3423,7 @@ function closeAdd(sec){const el=document.getElementById('af-'+sec);if(el)el.remo
 function commitAdd(aid,sec,idx,preVals){
   const sc=SEC_SCHEMA[sec];
   const vals=preVals||{};
-  if(!preVals) sc.fields.forEach(f=>{vals[f.k]=document.getElementById('af-'+sec+'-'+f.k).value;});
+  if(!preVals) sc.fields.forEach(f=>{ if(f.hideInForm) return; vals[f.k]=document.getElementById('af-'+sec+'-'+f.k).value; });
   const isEdit=idx!=null;
   if(sec==='structured_products'){addStruct(aid,vals,isEdit?idx:null);}
   else{addHolding(aid,sec,vals,idx==null?null:idx);}
@@ -3202,6 +3466,7 @@ function addHolding(aid,sec,vals,idx){
   a[sec]=a[sec]||[];
   const o={};
   SEC_SCHEMA[sec].fields.forEach(f=>{o[f.k]=(f.t==='number')?(Number(vals[f.k])||0):(vals[f.k]||'');});
+  if(vals.code!=null) o.code=vals.code; // 保留隐藏的 code 字段（智能选择器回填，用于实时行情解析）
   if(sec==='securities'){const _mv=secMvFields(o.quantity,o.price,o.currency||'CNY');o.market_value_cny=_mv.market_value_cny;o.market_value_hkd=_mv.market_value_hkd;o.market_value_usd=_mv.market_value_usd;delete o.mv;calcSecPnl(o);}
   if(sec==='fund_holdings'){o.profit=o.profit||0; o.pct=(o.amount>0)?+((o.profit/o.amount)*100).toFixed(2):(o.pct||0);}
   if(sec==='cash_holdings'){o.profit=o.profit||0; o.return_pct=(o.amount>0)?+((o.profit/o.amount)*100).toFixed(2):(o.return_pct||0);}
@@ -3262,7 +3527,7 @@ function editSecInline(aid,idx){
     '<td><select id="sec-loc-'+idx+'" style="width:70px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:11px">'+locOpts+'</select></td>'+
     '<td><b>'+escapeHtml(t.asset_name)+'</b></td>'+
     '<td><input id="sec-qty-'+idx+'" value="'+(t.quantity!=null?t.quantity:'')+'" style="width:60px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:12px"></td>'+
-    '<td><input id="sec-price-'+idx+'" value="'+(t.price||'')+'" style="width:60px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:12px"></td>'+
+    '<td><input id="sec-price-'+idx+'" value="'+((secLivePrice(t)!=null?secLivePrice(t):(t.price||'')))+'" readonly style="width:60px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#f8fafc;color:var(--dim)"></td>'+
     '<td><input id="sec-mv-'+idx+'" value="'+(t.market_value_cny!=null?t.market_value_cny:'')+'" readonly style="width:70px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#f8fafc;color:var(--dim)"></td>'+
     '<td><input id="sec-cost-'+idx+'" value="'+(t.cost_price||'')+'" style="width:60px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:12px"></td>'+
     '<td><input id="sec-pnl-'+idx+'" value="'+(t.pnl_amount||'')+'" readonly style="width:60px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#f8fafc;color:var(--dim)"></td>'+
@@ -4075,7 +4340,7 @@ function openTxModal(type){ txCur=type;
       </div></div>
       <div class="row"><label>子账户</label><select id="tx-category">${catOpts}</select></div>
       <div class="row"><label>数量</label><input id="tx-qty" type="number" placeholder="股数"></div>
-      <div class="row"><label>现价</label><input id="tx-price" type="number" placeholder="现价"></div>
+      <div class="row"><label>买入价</label><input id="tx-price" type="number" placeholder="买入价（成交价）"></div>
       <div class="row"><label>币种</label><select id="tx-ccy">${ccySug.map(c=>`<option>${c}</option>`).join('')}</select></div>
       <div class="row"><label>手续费</label><input id="tx-fee" type="number" placeholder="可选" value="0"></div>
       <div class="row"><label>备注</label><input id="tx-note" placeholder="可选" style="min-width:160px"></div>`;
@@ -4189,7 +4454,7 @@ function tradeFormBuySell(){
     <div class="row"><label>子账户</label><select id="tr-category">${catOpts}</select></div>
     <div class="row"><label>所在地</label><select id="tr-location">${locOpts}</select></div>
     <div class="row"><label>数量</label><input id="tr-qty" type="number" placeholder="股数"></div>
-    <div class="row"><label>现价</label><input id="tr-price" type="number" placeholder="现价"></div>
+    <div class="row"><label>买入价</label><input id="tr-price" type="number" placeholder="买入价（成交价）"></div>
     <div class="row" style="align-items:flex-start"><label>币种</label><div id="tr-ccy-multi" style="flex:1"></div></div>
     <div class="row"><label>手续费</label><input id="tr-fee" type="number" placeholder="可选" value="0"></div>
     <div class="row"><label>备注</label><input id="tr-note" placeholder="可选" style="min-width:160px"></div>
@@ -4247,7 +4512,7 @@ function saveTrade(){
     tx.fee=Number(document.getElementById('tr-fee').value)||0;
     tx.amount=+(tx.quantity*price).toFixed(2);
     if(!tx.account||!tx.asset_name){toast('请填写账户与标的');return;}
-    if(tx.quantity<=0||price<=0){toast('数量与现价需大于0');return;}
+    if(tx.quantity<=0||price<=0){toast('数量与买入价需大于0');return;}
     if(tab==='sell'){
       const _a=acct(tx.account); const _s=_a&&_a.securities&&_a.securities.find(s=>s.asset_name===tx.asset_name);
       if(!_s){toast('未找到对应持仓，无法卖出');return;}
@@ -4333,7 +4598,7 @@ function addTx(){
     tx.fee=Number(document.getElementById('tx-fee').value)||0;
     tx.amount=+(tx.quantity*price).toFixed(2);
     if(!tx.account||!tx.asset_name){toast('请填写账户与标的');return;}
-    if(tx.quantity<=0||price<=0){toast('数量与现价需大于0');return;}
+    if(tx.quantity<=0||price<=0){toast('数量与买入价需大于0');return;}
     if(type==='sell'){
       const _a=acct(tx.account); const _s=_a&&_a.securities&&_a.securities.find(s=>s.asset_name===tx.asset_name);
       if(!_s){toast('未找到对应持仓，无法卖出');return;}
@@ -5067,7 +5332,8 @@ function renderMine(){
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-user"/></svg> 持有人</div><div class="desc">维护子账户分类与持有人标签</div></div><div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="showCategoryManager()">子账户</button><button class="btn ghost sm" onclick="showHolderManager()">持有人</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 账户标签</div><div class="desc">增删改账户标签（境外券商 / A股 / 基金…）</div></div><button class="btn ghost sm" onclick="showAccountTypeManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-chart"/></svg> 投资项目</div><div class="desc">增删改投资项目分类（如纳斯达克100、黄金、REITs…）</div></div><button class="btn ghost sm" onclick="showProjectManager()">管理</button></div>`;
-  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 子账户</div><div class="desc">增删改子账户分类（如场内ETF、场外基金、债券…）</div></div><button class="btn ghost sm" onclick="showCategoryManager()">管理</button></div>`;
+  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 子账户排序</div><div class="desc">增删改、拖拽或 ▲▼ 调整子账户显示顺序（如场内ETF、场外基金、债券…）</div></div><button class="btn ghost sm" onclick="showCategoryManager()">排序</button></div>`;
+  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 行情源管理</div><div class="desc">A股/港股/美股/加密 行情源的启用、优先级排序与自定义 URL（带安全校验）</div></div><button class="btn ghost sm" onclick="showQuoteSourceManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 所在地</div><div class="desc">增删改资产所在地（如中国内地、香港、美国…）</div></div><button class="btn ghost sm" onclick="showLocationManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">管理入口</div><div class="desc">快速跳转账户 / 子账户 / 录入</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="switchTab('accounts')"><svg class="ic-svg" width="14" height="14"><use href="#i-wallet"/></svg> 账户</button><button class="btn ghost sm" onclick="showCategoryManager()"><svg class="ic-svg" width="14" height="14"><use href="#i-stack"/></svg> 子账户</button><button class="btn ghost sm" onclick="switchTab('trade')"><svg class="ic-svg" width="14" height="14"><use href="#i-plus"/></svg> 录入</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl">数据</div><div class="desc">导出 / 重置本机改动</div></div><div style="display:flex;gap:6px"><button class="btn sm" onclick="exportData()">⤓ 导出</button><button class="btn ghost sm" onclick="resetEdits()">↺ 重置</button></div></div>`;
@@ -5079,7 +5345,8 @@ const APP_VERSION='2026-07-11-v10';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
-    try{localStorage.removeItem('famdash_v1');}catch(e){}
+    // 版本升级时不再删除 famdash_v1：本地未推送的改动比部署基线更珍贵，
+    // 同步逻辑会通过时间戳/内容差异自动合并或覆盖；删除会导致新建账户/未同步交易丢失。
     localStorage.setItem('famdash_app_version',APP_VERSION);
   }
 }
@@ -5969,6 +6236,7 @@ try{checkCache();}catch(e){}
 try{syncPullOnLoad();}catch(e){console.error('syncPullOnLoad:',e)}
 /* 加密货币实时行情：数据就绪后自动拉一次（fetchCryptoWhenReady 轮询等云端合并完成，TTL 5 分钟，失败静默降级，绝不阻塞渲染）*/
 try{ fetchCryptoWhenReady(0); }catch(e){}
+try{ fetchSecWhenReady(0); }catch(e){}
 window.addEventListener('resize',function(){try{charts.forEach(function(c){c.resize()});}catch(_){}});
 }  // ← 闭合 function startApp()
 /* ============ 方案 B：数据解密与解锁 ============ */
