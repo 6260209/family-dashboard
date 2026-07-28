@@ -5341,7 +5341,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-11-v10';
+const APP_VERSION='2026-07-28-v11';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -5964,6 +5964,46 @@ function getDeviceLabel(){
 function fmtSyncTime(iso){ try{const d=new Date(iso);if(isNaN(d.getTime()))return ''+iso;const p=function(n){return (''+n).padStart(2,'0');};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());}catch(e){return ''+iso;} }
 function _b64encode(str){return btoa(unescape(encodeURIComponent(str)));}
 function _b64decode(b64){return decodeURIComponent(escape(atob(b64.replace(/\s/g,''))));}
+// 把一个同步快照里的 famdash_v1 还原成对象
+function snapV1(snap){ const e=snap&&snap.keys&&snap.keys.famdash_v1; if(!e)return null; const v=(e&&e.value!=null)?e.value:e; return (typeof v==='string')?JSON.parse(v):v; }
+// 推送前合并云端账户：本地优先，但保留云端独有账户；匹配账户的持仓/子账户做并集，避免云端持仓被整体覆盖。
+function mergeAccountsForPush(localAcc, cloudAcc){
+  localAcc=localAcc||[]; cloudAcc=cloudAcc||[];
+  const cMap={}; cloudAcc.forEach(function(a){cMap[a.id||a.name]=a;});
+  const out=[]; const seen={};
+  localAcc.forEach(function(a){
+    const k=a.id||a.name; if(k)seen[k]=true;
+    const c=cMap[k];
+    if(c){
+      const m=Object.assign({},a);
+      ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
+        m[key]=unionHoldings(a[key]||[], c[key]||[], function(x){return (x.symbol||x.name||x.id||'');});
+      });
+      out.push(m);
+    } else out.push(a);
+  });
+  cloudAcc.forEach(function(a){ const k=a.id||a.name; if(!(k in seen)) out.push(a); });
+  return out;
+}
+// 构造「推送到云端」的快照：把云端数据合并进本地，保证云端独有账户/流水/收入不被覆盖。
+// famdash_v1 走账户并集 + 流水/收入按 id 合并（云端优先、本地覆盖同名 → 本地改动不丢）；
+// 其余同步键按 updatedAt 取较新一方，避免把云端更新的设置/持有人等回退成旧值。
+function buildPushSnapshot(localSnap, cloudSnap){
+  const lv1=snapV1(localSnap)||{}; const cv1=snapV1(cloudSnap)||{};
+  const mergedV1={
+    accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts),
+    transactions: mergeRecordsById(cv1.transactions||[], lv1.transactions||[], function(x){return x.id;}),
+    income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;})}
+  };
+  const out={ syncedAt: localSnap.syncedAt, version: localSnap.version, keys:{} };
+  SYNC_KEYS.forEach(function(k){
+    if(k==='famdash_v1'){ out.keys[k]={updatedAt:Date.now(), value:JSON.stringify(mergedV1)}; return; }
+    const lk=localSnap.keys?localSnap.keys[k]:null; const ck=cloudSnap&&cloudSnap.keys?cloudSnap.keys[k]:null;
+    const lu=lk&&lk.updatedAt?Number(lk.updatedAt):0; const cu=ck&&ck.updatedAt?Number(ck.updatedAt):0;
+    out.keys[k]=(cu>=lu)?ck:lk;
+  });
+  return out;
+}
 let _syncLock=null;
 function syncPush(){
   const tok=getSyncToken();if(!tok){toast('未配置同步令牌，请到「我的 → <svg class="ic-svg" width="14" height="14"><use href="#i-gear"/></svg> 配置」填入');return Promise.resolve(false);}
@@ -5974,21 +6014,16 @@ function syncPush(){
   return run;
 }
 function _doSyncPush(tok,attempt){
-  const snap=syncCollect();const content=_b64encode(JSON.stringify(snap));
+  const snap=syncCollect();
   return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{headers:{'Authorization':'token '+tok}})
     .then(function(r){return r.ok?r.json():null;})
     .then(function(meta){
-      // 防覆盖：若云端快照比本地最后改动更新，说明云端有别人/其他设备刚同步的好数据，
-      // 放弃本次推送，改为本地采用云端（避免把陈旧本地基线推回云端覆盖手机数据）。
-      let cloudT=0;
-      try{ if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); cloudT=new Date(cs.syncedAt).getTime()||0; } }catch(e){}
-      const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
-      if(cloudT && cloudT>localMod){
-        return syncPull().then(function(res){
-          if(res.snap && _syncShouldApply(res.snap)){ syncApply(res.snap); applyCloudToData(res.snap); localStorage.setItem('famdash_sync_lastpull',String(cloudT)); localStorage.setItem('famdash_sync_localmod','0'); }
-          toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 云端有更新，已采用云端（未覆盖）'); return false;
-        });
-      }
+      // 合并云端数据后再上传：避免「本地未拉取过的云端账户/流水/收入」被整体覆盖（此前多设备竞态会丢数据）。
+      // 旧逻辑用 cloudT>localMod 直接放弃推送并改用云端，但漏掉了「本地比云端新、却从未拉取云端独有数据」的情况，
+      // 导致本地整体覆盖云端、云端独有账户丢失。改为永远把云端合并进上传快照。
+      let snapToPush=snap;
+      try{ if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); snapToPush=buildPushSnapshot(snap, cs); } }catch(e){ snapToPush=snap; }
+      const content=_b64encode(JSON.stringify(snapToPush));
       const body={message:'sync: '+fmtSyncTime(snap.syncedAt)+' · '+getDeviceLabel(),content:content};
       if(meta&&meta.sha)body.sha=meta.sha;
       return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{
@@ -5998,7 +6033,12 @@ function _doSyncPush(tok,attempt){
           if(r.status===409 && attempt<2){ return _doSyncPush(tok,attempt+1); } // 冲突：重新取 sha 后重试
           throw new Error('push '+r.status);
         }
-        try{localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));}catch(e){}
+        try{
+          // 让本地与「合并后上传」的云端保持一致（本地 = 云端，避免下次拉取又出现分歧）
+          const mv=snapV1(snapToPush);
+          if(mv){ localStorage.setItem('famdash_v1', JSON.stringify(mv)); applyCloudToData(snapToPush); }
+          localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));
+        }catch(e){}
         toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 已同步到云端'); return true;
       });
     })
@@ -6153,6 +6193,7 @@ function syncPullOnLoad(){
 }
 let _syncTimer=null;
 function scheduleSyncPush(){
+  if(_syncLock)return; // 推送进行中不再重复排程，避免 saveEditsLocal→scheduleSyncPush 死循环
   if(_syncTimer)clearTimeout(_syncTimer);
   _syncTimer=setTimeout(function(){const s=getSettings();if(s.syncEnabled===false)return;syncPush();},1500);
 }
