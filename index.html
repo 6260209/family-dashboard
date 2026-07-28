@@ -1784,6 +1784,18 @@ async function fetchCryptoPrices(force){
   console.warn('[行情] 所有行情源均失败，保持成本价显示');
   return false;
 }
+// 等数据就绪再拉行情：云拉取(syncPullOnLoad)是异步的，启动时本地可能尚未含云端加密币持仓。
+// 轮询 _allCryptoSymbols() 直到非空（本地或云端已载入），再拉一次；最多重试 6 次(约 5s) 兜底。
+function fetchCryptoWhenReady(attempt){
+  attempt = attempt||0;
+  try{
+    if(_allCryptoSymbols().length===0){
+      if(attempt<6){ setTimeout(function(){ try{fetchCryptoWhenReady(attempt+1);}catch(_){} }, 800); }
+      return;
+    }
+    fetchCryptoPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
+  }catch(e){ console.warn('fetchCryptoWhenReady:', e.message); }
+}
 // 强制刷新（手动按钮）：拉最新 → 重渲染相关视图
 function refreshCryptoQuotes(){
   fetchCryptoPrices(true).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
@@ -5955,8 +5967,8 @@ try{initSortable();}catch(e){}
 try{applySettings();}catch(e){}
 try{checkCache();}catch(e){}
 try{syncPullOnLoad();}catch(e){console.error('syncPullOnLoad:',e)}
-/* 加密货币实时行情：页面加载后自动拉一次（TTL 5 分钟，失败静默降级，绝不阻塞渲染）*/
-try{ fetchCryptoPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){}); }catch(e){}
+/* 加密货币实时行情：数据就绪后自动拉一次（fetchCryptoWhenReady 轮询等云端合并完成，TTL 5 分钟，失败静默降级，绝不阻塞渲染）*/
+try{ fetchCryptoWhenReady(0); }catch(e){}
 window.addEventListener('resize',function(){try{charts.forEach(function(c){c.resize()});}catch(_){}});
 }  // ← 闭合 function startApp()
 /* ============ 方案 B：数据解密与解锁 ============ */
