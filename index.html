@@ -1711,10 +1711,12 @@ function jToHkd(amount,ccy){ccy=(ccy||'HKD').toUpperCase();if(ccy==='HKD')return
 function jHkdToCny(h){return (h||0)/FX_CNY_HKD;}
 function jUsdToCny(u){return (u||0)*FX_USD_CNY;}
 
-/* ============ 加密货币实时行情（CoinGecko，仅浏览器端缓存，绝不写回 sync.json）============
+/* ============ 加密货币实时行情（多源 fallback：币安 → OKX → CoinGecko；仅浏览器端缓存，绝不写回 sync.json）============
    设计铁律：实时价是"视图层临时数据"，只存在内存 cryptoPriceCache + localStorage 缓存里。
    sync.json 永远只保留用户录入的成本价(cost_price)。行情波动不会触发同步冲突/覆盖。
    拉取时机：① 页面加载后自动拉一次（TTL 内复用缓存）；② 手动「🔄 刷新行情」按钮强制拉。
+   多源 fallback：按 CRYPTO_SOURCES 顺序逐个尝试，某源超时/报错/解析为空 → 自动试下一个；
+   第一个成功解析出有效价的源即停止（首成即停）。全部失败 → 保持成本价显示（—），页面不崩。
 */
 const COIN_IDS = {BTC:'bitcoin',ETH:'ethereum',SOL:'solana',BNB:'binancecoin',USDT:'tether',USDC:'usd-coin',DOGE:'dogecoin'};
 const CRYPTO_TTL_MS = 5*60*1000; // 5 分钟
@@ -1730,22 +1732,57 @@ function _allCryptoSymbols(){
   (DATA.accounts||[]).forEach(a=>{(a.holdings||[]).forEach(h=>{ if(h.source==='crypto' && h.name && COIN_IDS[h.name]) s.add(h.name); });});
   return [...s];
 }
+// 带超时(AbortController)的 JSON fetch，单源卡死不影响整体 fallback（默认 8 秒）
+async function _fetchJson(url, timeoutMs){
+  timeoutMs = timeoutMs || 8000;
+  const ctrl = new AbortController();
+  const tid = setTimeout(function(){ try{ ctrl.abort(); }catch(_){} }, timeoutMs);
+  try{
+    const r = await fetch(url, {cache:'no-store', signal:ctrl.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  } finally { clearTimeout(tid); }
+}
+// 行情源（顺序 = 优先级）：币安 → OKX → CoinGecko
+//   buildUrls(syms): 返回该源要请求的一个或多个 URL
+//   parse(bodies, syms): 把响应体数组解析为 { 币种: USD单价 }，解析不出返回 {}
+const CRYPTO_SOURCES = [
+  { name:'binance',
+    buildUrls: function(syms){ return ['https://api.binance.com/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms.map(function(s){ return s+'USDT'; })))]; },
+    parse: function(bodies, syms){ const arr=bodies[0]||[]; const m={}; arr.forEach(function(it){ const sym=syms.find(function(s){ return (s+'USDT')===it.symbol; }); if(sym && it.price) m[sym]=Number(it.price); }); return m; }
+  },
+  { name:'okx',
+    buildUrls: function(syms){ return syms.map(function(s){ return 'https://www.okx.com/api/v5/market/ticker?instId='+encodeURIComponent(s+'-USDT'); }); },
+    parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; if(b&&b.data&&b.data[0]&&b.data[0].last) m[sym]=Number(b.data[0].last); }); return m; }
+  },
+  { name:'coingecko',
+    buildUrls: function(syms){ return ['https://api.coingecko.com/api/v3/simple/price?ids='+encodeURIComponent(syms.map(function(s){ return COIN_IDS[s]; }).join(','))+'&vs_currencies=usd']; },
+    parse: function(bodies, syms){ const j=bodies[0]||{}; const m={}; syms.forEach(function(s){ const v=j[COIN_IDS[s]]; if(v&&v.usd) m[s]=Number(v.usd); }); return m; }
+  }
+];
 async function fetchCryptoPrices(force){
   const syms = _allCryptoSymbols();
   if(!syms.length) return false;
   const now = Date.now();
-  const fresh = syms.every(s=>{ const c=cryptoPriceCache[s]; return c && (now-c.ts)<CRYPTO_TTL_MS; });
+  const fresh = syms.every(function(s){ const c=cryptoPriceCache[s]; return c && (now-c.ts)<CRYPTO_TTL_MS; });
   if(!force && fresh) return false; // TTL 内直接复用，不发请求
-  const ids = syms.map(s=>COIN_IDS[s]).join(',');
-  try{
-    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+encodeURIComponent(ids)+'&vs_currencies=usd', {cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const j = await r.json();
-    let changed=false;
-    syms.forEach(s=>{ const v=j[COIN_IDS[s]]; if(v && v.usd){ cryptoPriceCache[s]={usd:v.usd, ts:now}; changed=true; } });
-    if(changed){ try{ localStorage.setItem('famdash_crypto_cache', JSON.stringify(cryptoPriceCache)); }catch(e){} }
-    return changed;
-  }catch(e){ console.warn('fetchCryptoPrices 失败（行情暂不可用，保持成本价显示）:', e.message); return false; }
+  for(const src of CRYPTO_SOURCES){
+    try{
+      const urls = src.buildUrls(syms);
+      const bodies = await Promise.all(urls.map(function(u){ return _fetchJson(u, 8000); }));
+      const map = src.parse(bodies, syms);
+      const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0; });
+      if(valid.length){
+        valid.forEach(function(s){ cryptoPriceCache[s]={usd:map[s], ts:now, src:src.name}; });
+        try{ localStorage.setItem('famdash_crypto_cache', JSON.stringify(cryptoPriceCache)); }catch(e){}
+        console.info('[行情] 源 '+src.name+' 成功，更新 '+valid.length+'/'+syms.length+' 个币种');
+        return true;
+      }
+      console.warn('[行情] 源 '+src.name+' 未返回有效价，尝试下一个');
+    }catch(e){ console.warn('[行情] 源 '+src.name+' 失败，尝试下一个:', e.message); }
+  }
+  console.warn('[行情] 所有行情源均失败，保持成本价显示');
+  return false;
 }
 // 强制刷新（手动按钮）：拉最新 → 重渲染相关视图
 function refreshCryptoQuotes(){
