@@ -3784,6 +3784,8 @@ function _selfNonCashCny(a){
 function runSelfCheck(){
   const checks=[];
   const rec=(name,pass,detail,severity)=>checks.push({name,pass:!!pass,detail:detail||'',severity:severity||(pass?'🟢':'🔴')});
+  // 与 computeIncomeAgg 口径一致的日期归一化，避免 slash 格式日期在自检中误报
+  const normDate=function(d){if(!d)return '';let s=String(d).replace(/\//g,'-').trim();s=s.split(/[ T]/)[0];const p=s.split('-');if(p.length<3)return '';let y=p[0],m=p[1],dd=p[2];if(m.length===1)m='0'+m;if(dd.length===1)dd='0'+dd;if(!/^\d{3,4}$/.test(y))return '';return y+'-'+m+'-'+dd;};
   try{
     // 1) 现金合计不重复计入流水（回归检测 v12 双计 bug）
     (DATA.accounts||[]).forEach(a=>{
@@ -3802,7 +3804,7 @@ function runSelfCheck(){
     const byDate={};
     (DATA.income.records||[]).forEach(r=>{
       if(r.status!=='received') return;
-      const dk=(r.date||'').slice(0,10);
+      const dk=normDate(r.date);
       if(!byDate[dk]) byDate[dk]={sum:0,count:0};
       byDate[dk].sum+=(r.cny||0); byDate[dk].count++;
     });
@@ -5472,7 +5474,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-28-v13';
+const APP_VERSION='2026-07-28-v14';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
