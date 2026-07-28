@@ -4508,6 +4508,7 @@ function saveTrade(){
     tx.location=document.getElementById('tr-location').value||'';
     tx.quantity=Number(document.getElementById('tr-qty').value)||0;
     const price=Number(document.getElementById('tr-price').value)||0;
+    tx.price=price;
     const _ccyB=(document.getElementById('tr-ccy-multi')._getValues()||[]); tx.currency=_ccyB[0]||'CNY';
     tx.fee=Number(document.getElementById('tr-fee').value)||0;
     tx.amount=+(tx.quantity*price).toFixed(2);
@@ -4594,6 +4595,7 @@ function addTx(){
     tx.market=catToMarket(tx.asset_category)||'';
     tx.quantity=Number(document.getElementById('tx-qty').value)||0;
     const price=Number(document.getElementById('tx-price').value)||0;
+    tx.price=price;
     tx.currency=document.getElementById('tx-ccy').value||'CNY';
     tx.fee=Number(document.getElementById('tx-fee').value)||0;
     tx.amount=+(tx.quantity*price).toFixed(2);
@@ -5341,7 +5343,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-28-v11';
+const APP_VERSION='2026-07-28-v12';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
