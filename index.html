@@ -5543,7 +5543,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-29-v16';
+const APP_VERSION='2026-07-29-v17';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6130,11 +6130,16 @@ function mergeV1Accounts(cloudAccounts, localAccounts){
   return out;
 }
 // 按 id 合并两个数组：云端优先，但保留本地独有的记录（防止刚录入尚未推送的内容被覆盖）。
-function mergeRecordsById(cloudArr, localArr, idFn){
+function mergeRecordsById(cloudArr, localArr, idFn, localWins){
   idFn=idFn||function(x){return x.id||x.name||x._id||('k-'+(x.date||''));};
   const map={};
-  (localArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
-  (cloudArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+  if(localWins){
+    (cloudArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+    (localArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+  } else {
+    (localArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+    (cloudArr||[]).forEach(function(x){const k=idFn(x); if(k) map[k]=x;});
+  }
   return Object.values(map);
 }
 // 云端快照 famdash_v1 与本地 localStorage famdash_v1 做**合并**(默认)或**覆盖**(overwrite=true)。
@@ -6212,8 +6217,8 @@ function buildPushSnapshot(localSnap, cloudSnap){
   const lv1=snapV1(localSnap)||{}; const cv1=snapV1(cloudSnap)||{};
   const mergedV1={
     accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts),
-    transactions: mergeRecordsById(cv1.transactions||[], lv1.transactions||[], function(x){return x.id;}),
-    income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;})}
+    transactions: mergeRecordsById(cv1.transactions||[], lv1.transactions||[], function(x){return x.id;}, true),
+    income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;}, true)}
   };
   const out={ syncedAt: localSnap.syncedAt, version: localSnap.version, keys:{} };
   SYNC_KEYS.forEach(function(k){
