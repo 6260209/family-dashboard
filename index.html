@@ -1816,7 +1816,7 @@ const QUOTE_SOURCES = {
   astock: [
     { name:'eastmoney',
       buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('astock',s)+'&fields=f43,f57,f58,f60,f168,f169,f170'; }); },
-      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43); }); return m; }
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43)/100; }); return m; }
     },
     { name:'sina',
       buildUrls: function(syms){ return ['https://hq.sinajs.com.cn/list='+syms.map(function(s){ return (s[0]==='6'||s[0]==='9'?'sh':'sz')+s; }).join(',')]; },
@@ -1830,7 +1830,7 @@ const QUOTE_SOURCES = {
   hk: [
     { name:'eastmoney',
       buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('hk',s)+'&fields=f43,f57,f58,f60'; }); },
-      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43); }); return m; }
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43)/1000; }); return m; }
     },
     { name:'sina',
       buildUrls: function(syms){ return ['https://hq.sinajs.com.cn/list='+syms.map(function(s){ return 'hk'+s; }).join(',')]; },
@@ -1852,7 +1852,7 @@ const QUOTE_SOURCES = {
     },
     { name:'eastmoney',
       buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('us',s)+'&fields=f43,f57,f58,f60'; }); },
-      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43); }); return m; }
+      parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43)/1000; }); return m; }
     }
   ]
 };
@@ -4319,7 +4319,7 @@ function editInc(id){
     if(document.getElementById('inc-location')) document.getElementById('inc-location').value=r.location||'';
     if(document.getElementById('inc-status')) document.getElementById('inc-status').value=r.status||'received';
     if(document.getElementById('inc-note')) document.getElementById('inc-note').value=r.note||'';
-    var h3=document.querySelector('#inc-modal h3');if(h3) h3.textContent='<svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑收入';
+    var h3=document.querySelector('#inc-modal h3');if(h3) h3.innerHTML='<svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑收入';
     var btn=document.querySelector('#inc-modal .btn:not(.ghost)');if(btn) btn.textContent='保存修改';
   },50);
 }
@@ -4905,7 +4905,7 @@ function creditIncomeToCash(aid, inc){
     if(old._auto_credit && Math.abs(old.amount)<1e-6 && Object.keys(old._credits).length===0) a.cash_holdings=a.cash_holdings.filter(x=>x!==old); }
   // 2) 入账新金额
   let ch=a.cash_holdings.find(x=>(x.currency||'CNY').toUpperCase()===ccy);
-  if(!ch){ ch={name:ccy+' 现金(分红入账)',amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_auto_credit:true,_credits:{}}; a.cash_holdings.push(ch); }
+  if(!ch){ const _ccyName={USD:'美金',HKD:'港币',CNY:'人民币',USDT:'USDT',EUR:'欧元',JPY:'日元',GBP:'英镑'}[ccy]||ccy; ch={name:_ccyName,amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_auto_credit:true,_credits:{}}; a.cash_holdings.push(ch); }
   ch._credits=ch._credits||{};
   ch.amount=+(Number(ch.amount)+amt).toFixed(2);
   ch._credits[id]=amt;
@@ -5543,7 +5543,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-29-v15';
+const APP_VERSION='2026-07-29-v16';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
