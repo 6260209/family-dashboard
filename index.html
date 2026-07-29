@@ -2496,16 +2496,47 @@ function openAcct(aid){
   const editBtn=(sec,idx)=>`<button class="edt" title="编辑" onclick="showAddForm('${aid}','${sec}',${idx})" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`;
   const addBtn=(sec)=>`<span class="addsec" onclick="showAddForm('${aid}','${sec}')">＋ 添加</span>`;
 
-  // ===== 按子账户分类收集所有持仓 =====
+  // ===== 按子账户分类收集所有持仓（同币种现金、同标的证券合并显示） =====
   const catItems={}; // catName -> [{section, record, idx}]
   function _addCatItem(sec, record, idx){
     const cat=recCatName(record)||'其他';
     if(!catItems[cat]) catItems[cat]=[];
     catItems[cat].push({section:sec, record, idx});
   }
-  (a.securities||[]).forEach((t,i)=>_addCatItem('securities',t,i));
+  // 合并同币种现金（金额相加，编辑/删除指向第一条原始记录）
+  const cashMerged=(function(){
+    const arr=a.cash_holdings||[], map={};
+    arr.forEach((c,i)=>{
+      const ccy=(c.currency||'CNY').toUpperCase();
+      if(!map[ccy]){ map[ccy]={rec:Object.assign({},c), idx:i, amount:0}; }
+      map[ccy].amount+=Number(c.amount||0);
+      map[ccy].rec._merged=(map[ccy].rec._merged||[]).concat(i);
+    });
+    return Object.values(map).map(x=>{ x.rec.amount=+(x.amount.toFixed(2)); return {rec:x.rec, idx:x.idx}; });
+  })();
+  // 合并同标的证券（数量相加，加权成本，编辑/删除指向第一条原始记录）
+  const secMerged=(function(){
+    const arr=a.securities||[], map={};
+    arr.forEach((s,i)=>{
+      const key=(s.asset_name||'').trim().toUpperCase();
+      if(!key) return;
+      if(!map[key]){ map[key]={rec:Object.assign({},s), idx:i, qty:0, costSum:0, mvSum:0}; }
+      const q=Number(s.quantity||0), c=Number(s.cost_price||0);
+      map[key].qty+=q;
+      map[key].costSum+=q*c;
+      map[key].mvSum+=Number(s.market_value_cny||0);
+      map[key].rec._merged=(map[key].rec._merged||[]).concat(i);
+    });
+    return Object.values(map).map(x=>{
+      x.rec.quantity=+(x.qty.toFixed(6));
+      x.rec.cost_price=x.qty?+(x.costSum/x.qty).toFixed(6):0;
+      x.rec.market_value_cny=+(x.mvSum.toFixed(2));
+      return {rec:x.rec, idx:x.idx};
+    });
+  })();
+  secMerged.forEach(x=>_addCatItem('securities',x.rec,x.idx));
   (a.fund_holdings||[]).forEach((f,i)=>_addCatItem('fund_holdings',f,i));
-  (a.cash_holdings||[]).forEach((c,i)=>_addCatItem('cash_holdings',c,i));
+  cashMerged.forEach(x=>_addCatItem('cash_holdings',x.rec,x.idx));
   // 加密货币统一走 a.holdings（source==='crypto'），a.crypto 已在 syncHoldingsFromLegacy 中合并并清空
   (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto')_addCatItem('holdings',h,i);});
   if(a.structured_products){
@@ -4716,12 +4747,42 @@ function applyTxToHolding(tx, actionType){
     const costCny=toCny(tx.amount,tx.currency||'CNY');
     if(t==='buy'){
       if(!a.securities)a.securities=[];
-      a.securities.push({asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||''),location:tx.location||'',notes:tx.note||''});
+      const name=(tx.asset_name||'').trim();
+      const existing=a.securities.find(s=>(s.asset_name||'').trim().toUpperCase()===name.toUpperCase());
+      if(existing){
+        const q1=Number(existing.quantity||0), c1=Number(existing.cost_price||0);
+        const q2=Number(tx.quantity||0), c2=Number(tx.price||0);
+        const totalQty=q1+q2;
+        existing.quantity=+(totalQty.toFixed(6));
+        existing.cost_price=totalQty?+((q1*c1+q2*c2)/totalQty).toFixed(6):0;
+        if(existing.price==null) existing.price=existing.cost_price;
+        existing.market_value_cny=(existing.market_value_cny||0)+costCny;
+      } else {
+        a.securities.push({asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||''),location:tx.location||'',notes:tx.note||''});
+      }
       if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny+=costCny;
     } else {
-      if(a.securities){const s=a.securities.find(s=>s.asset_name===(tx.asset_name||''));
-        if(s){s.quantity=Math.max(0,(s.quantity||0)-tx.quantity);if(s.market_value_cny)s.market_value_cny=Math.max(0,s.market_value_cny-costCny);if(s.quantity<=0)a.securities=a.securities.filter(x=>x!==s);}}
-      if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny=Math.max(0,(a.summary_cny.total_asset_cny||0)-costCny);
+      if(a.securities){
+        let remaining=Number(tx.quantity||0);
+        const costCnyTotal=toCny(tx.amount||0,tx.currency||'CNY');
+        let costRemoved=0;
+        a.securities=a.securities.filter(s=>{
+          if(remaining<=0) return true;
+          if((s.asset_name||'').trim().toUpperCase()!==(tx.asset_name||'').trim().toUpperCase()) return true;
+          const q=Number(s.quantity||0);
+          if(q<=remaining){
+            remaining-=q;
+            costRemoved+=(s.market_value_cny||0);
+            return false;
+          } else {
+            s.quantity=+(q-remaining).toFixed(6);
+            if(s.market_value_cny){ const ratio=remaining/q; costRemoved+=s.market_value_cny*ratio; s.market_value_cny=s.market_value_cny*(1-ratio); }
+            remaining=0;
+            return true;
+          }
+        });
+        if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny=Math.max(0,(a.summary_cny.total_asset_cny||0)-(costRemoved||costCnyTotal));
+      }
     }
   }
   if((t==='buy'||t==='sell')&&tx.account){ const _aa=acct(tx.account); if(_aa){ syncHoldingsFromLegacy(_aa); jRecomputeSummary(_aa); } }
@@ -5585,7 +5646,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-29-v19';
+const APP_VERSION='2026-07-29-v20';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
