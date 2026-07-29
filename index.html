@@ -1196,7 +1196,7 @@ function renderAccts(){
     const liveCny=accountTotalCny(a);
     const natCCY=acctCurrency(a);
     let av, asub;
-    if(liveCny>0){ av=fmtCny(liveCny); asub=natCCY+'账户'; }
+    if(liveCny>0){ av=fmtCny(liveCny); asub=acctCcys(a).join('/')+'账户'; }
     else if(sc.total_asset_hkd){av=fmtCny(cny(sc.total_asset_hkd)/1.09);asub='HKD账户';}
     else if(scny.total_asset_cny){av=fmtCny(scny.total_asset_cny);asub='CNY账户';}
     else if(asm.total_asset_usdt){av=fmtCny(cny(asm.total_asset_usdt)*7.155);asub='USDT账户';}
@@ -1633,6 +1633,14 @@ function acctCurrency(a){
     '\u7f8e\u5143\u7ed3\u6784\u6027\u4ea7\u54c1':'USD','\u6e2f\u5143\u7ed3\u6784\u6027\u4ea7\u54c1':'HKD','\u52a0\u5bc6\u5e01\u8d26\u6237':'USDT','\u73b0\u91d1\u8d26\u6237':'CNY'};
   if(a.account_category&&catMap[a.account_category]) return catMap[a.account_category];
   return (a.currency||'CNY').split('/')[0];
+}
+function acctCcys(a){
+  const catMap={'美股账户':'USD','港股账户':'HKD','A股账户':'CNY','美元基金':'USD','港元基金':'HKD','人民币基金':'CNY','美元结构性产品':'USD','港元结构性产品':'HKD','加密货币账户':'USDT','现金账户':'CNY'};
+  const set=new Set();
+  (a.cash_holdings||[]).forEach(function(c){ if(c.currency) set.add(c.currency); });
+  if(!set.size && a.account_category && catMap[a.account_category]) set.add(catMap[a.account_category]);
+  if(!set.size) set.add((a.currency||'CNY').split('/')[0]);
+  return Array.from(set);
 }
 function acctNativeTotal(a){
   const nat=acctCurrency(a); let total=0;
@@ -5543,7 +5551,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-29-v17';
+const APP_VERSION='2026-07-29-v18';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
