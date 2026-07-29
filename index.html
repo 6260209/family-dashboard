@@ -3821,9 +3821,7 @@ function runSelfCheck(){
       const total=acctLiveTotalCny(a);
       const cash=baseCashCny(a);
       const nonCash=_selfNonCashCny(a);
-      let calib=0;
-      if((a.cash_holdings||[]).some(c=>c._calibrated)) calib=txCashDelta(a.id);
-      const expected=cash+nonCash+calib;
+      const expected=cash+nonCash;
       const ok=Math.abs(total-expected)<1;
       rec('现金合计无流水双计 · '+acctName(a.id), ok,
         `合计=${fmtCny(total)}，应为 现金小计(${fmtCny(cash)}) + 非现金持仓(${fmtCny(nonCash)})`+(ok?'':'（疑似仍叠加了交易流水净额）'),
@@ -4922,14 +4920,19 @@ function creditIncomeToCash(aid, inc){
 }
 
 function txCashDeltaByCcy(aid){
+  const a=DATA.accounts.find(x=>x.id===aid);
   const m={};
   (DATA.transactions||[]).forEach(t=>{
     if(!t) return;
+    if(t.account!==aid && t.type!=='transfer') return;
     const ccy=(t.currency||'CNY').toUpperCase(), v=Number(t.amount||0), f=Number(t.fee||0);
-    if(t.type==='income' && t.account===aid) m[ccy]=(m[ccy]||0)+v;
+    // 与 txCashDelta 口径一致：已有同币种同金额的现金子账户则视为已计入，避免重复。
+    const dupInCash=(a&&a.cash_holdings||[]).some(function(ch){ return (ch.currency||'CNY')===(t.currency||'CNY') && Math.abs(Number(ch.amount||0)-v)<1e-6; });
+    if(t.type==='income'&&t.account===aid){ if(!dupInCash) m[ccy]=(m[ccy]||0)+v; }
     else if(t.type==='transfer'){ if(t.account_from===aid) m[ccy]=(m[ccy]||0)-v; if(t.account_to===aid) m[ccy]=(m[ccy]||0)+v; }
-    else if(t.type==='buy' && t.account===aid) m[ccy]=(m[ccy]||0)-(v+f);
-    else if(t.type==='sell' && t.account===aid) m[ccy]=(m[ccy]||0)+(v-f);
+    else if(t.type==='buy'&&t.account===aid) m[ccy]=(m[ccy]||0)-(v+f);
+    else if(t.type==='sell'&&t.account===aid) m[ccy]=(m[ccy]||0)+(v-f);
+    else if(t.type==='manual_adjust'&&t.account===aid){ if(!dupInCash) m[ccy]=(m[ccy]||0)+v; }
   });
   return m;
 }
