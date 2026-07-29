@@ -3532,6 +3532,7 @@ function addHolding(aid,sec,vals,idx){
 }
 function editSecInline(aid,idx){
   const a=acct(aid); const t=a.securities[idx]; if(!t)return;
+  t._editBaselineQty=Number(t.quantity)||0; // v15：记录编辑前基线，用于生成数量调整流水
   const tr=document.getElementById('sec-row-'+idx); if(!tr)return;
   const ccyOpts=getCashCcys().map(o=>`<option ${o===(t.currency||'CNY')?'selected':''}>${o}</option>`).join('');
   const projOpts=getProjects().map(o=>`<option ${o===(t.project||'')?'selected':''}>${escapeHtml(o)}</option>`).join('');
@@ -3580,6 +3581,26 @@ function saveSecInline(aid,idx){
   t.cost_price=Number(document.getElementById('sec-cost-'+idx).value)||0;
   t.pnl_amount=Number(document.getElementById('sec-pnl-'+idx).value)||0;
   t.notes=document.getElementById('sec-notes-'+idx).value.trim();
+  // v15：账户内修改持仓数量 → 生成一条 adjust 台账（数量带符号；纯改成本价 Δqty=0 不生成；不反写持仓，仅作台账）
+  const _newQty=t.quantity;
+  const _base=(t._editBaselineQty!=null)?t._editBaselineQty:_newQty;
+  const _dQty=+(_newQty-_base).toFixed(4);
+  if(Math.abs(_dQty)>1e-6){
+    DATA.transactions=DATA.transactions||[];
+    DATA.transactions.push({
+      id:'tx_adj_'+Date.now(), date:new Date().toISOString().slice(0,10),
+      type:'adjust', account:aid,
+      asset_name:t.asset_name, code:t.code||'', market:t.market||'',
+      quantity:_dQty,
+      price:t.cost_price||0,
+      amount:+(Math.abs(_dQty)*(t.cost_price||0)).toFixed(2),
+      currency:t.currency||'CNY', fee:0,
+      note:'账户内调整持仓数量 '+(_dQty>0?'+':'')+_dQty+' '+t.asset_name,
+      status:'completed', asset_category:t.asset_category||'', cat_id:t.cat_id||'',
+      project:t.project||'', location:t.location||'', _src:'账户内调整'
+    });
+  }
+  t._editBaselineQty=_newQty;
   afterEdit(aid);
   logActivity('\u4fee\u6539\u8bc1\u5238\u6301\u4ed7', acctName(aid)+' · '+t.asset_name+' · \u6570\u91cf '+t.quantity);
 }
@@ -3832,6 +3853,36 @@ function runSelfCheck(){
     rec('入账流水已登记到现金子账户', true,
       `共 ${txIn} 笔入账流水，其中 ${matched} 笔已在对应币种现金子账户；未登记 ${unmatched.length} 笔`+(unmatched.length?('：'+unmatched.slice(0,5).join('；')):''),
       unmatched.length? '🟡':'🟢');
+    // 3') 收入→现金子账户 对账：received 收入必须已在对应币种现金子账户找到入账记录（替代旧 #3「未登记属预期」口径）
+    (DATA.income.records||[]).forEach(r=>{
+      if(r.status!=='received' || !(Number(r.amount)>0) || !r.account) return;
+      const a=acctRes(r.account); if(!a) return;
+      const ccy=(r.currency||'CNY').toUpperCase();
+      const ch=(a.cash_holdings||[]).find(x=>(x.currency||'CNY').toUpperCase()===ccy && x._credits && x._credits[r.id]!=null);
+      const ok=ch && Math.abs((Number(ch._credits[r.id])||0)-Number(r.amount))<1e-6;
+      rec('分红/收入已入账现金子账户 · '+acctName(a.id), ok,
+        ok?`${r.name||r.type} +${r.amount} ${ccy} 已计入`:`${r.name||r.type} +${r.amount} ${ccy} 未在现金子账户找到入账记录`,
+        ok?'🟢':'🔴');
+    });
+    // 7) 账户内数量调整流水结构合法
+    let badAdj=0;
+    (DATA.transactions||[]).forEach(t=>{
+      if(t.type!=='adjust') return;
+      const a=acctRes(t.account); const sec=a&&(a.securities||[]).find(s=>s.asset_name===t.asset_name);
+      if(!a || !sec || !(typeof t.quantity==='number')) badAdj++;
+    });
+    rec('账户内调整流水结构合法', badAdj===0, `adjust 记录 ${badAdj} 条异常（缺账户/持仓/数量）`, badAdj===0?'🟢':'🔴');
+    // 8) 现金账本 == 收入台账（无双计/漏记）—— 最强「无双计」断言
+    (DATA.accounts||[]).forEach(a=>{
+      const credited={};
+      (a.cash_holdings||[]).forEach(ch=>{ if(ch._credits) Object.values(ch._credits).forEach(v=>{const c=(ch.currency||'CNY').toUpperCase(); credited[c]=(credited[c]||0)+Number(v);}); });
+      const incSum={};
+      (DATA.income.records||[]).forEach(r=>{ if(r.account && acctRes(r.account)===a && r.status==='received' && Number(r.amount)>0){const c=(r.currency||'CNY').toUpperCase(); incSum[c]=(incSum[c]||0)+Number(r.amount);} });
+      let mismatch=0; const ccies=new Set([...Object.keys(credited),...Object.keys(incSum)]);
+      ccies.forEach(c=>{ if(Math.abs((credited[c]||0)-(incSum[c]||0))>1e-6) mismatch++; });
+      rec('现金账本=收入台账（无双计/漏记） · '+acctName(a.id), mismatch===0,
+        `入账合计 ${JSON.stringify(credited)} vs 收入 ${JSON.stringify(incSum)}`, mismatch===0?'🟢':'🔴');
+    });
     // 4) 行情币种标签：证券持仓需有 market 才能解析实时价
     let noMkt=0, secCnt=0, cryptoCnt=0, cryptoOk=0;
     (DATA.accounts||[]).forEach(a=>{
@@ -3863,7 +3914,7 @@ function runSelfCheck(){
 function showSelfCheck(){
   let rep; try{ rep=runSelfCheck(); }catch(e){ rep={ok:false,checks:[],summary:'自检异常: '+e}; }
   const rows=(rep.checks||[]).map(c=>`<tr><td>${c.severity}</td><td>${escapeHtml(c.name)}</td><td style="color:var(--dim);font-size:12px">${escapeHtml(c.detail)}</td><td>${c.pass?'✅':'❌'}</td></tr>`).join('');
-  const html=`<div class="modal open" id="selfcheck-modal" style="display:flex"><div class="box" style="max-width:720px"><div class="mhead"><h3>🔍 自检报告（v13）</h3><button class="x" onclick="document.getElementById('selfcheck-modal').remove()">×</button></div><div class="mbody"><div style="padding:8px 10px;border-radius:6px;margin-bottom:10px;font-weight:700;background:${rep.ok?'#ecfdf5':'#fef2f2'};color:${rep.ok?'#065f46':'#991b1b'}">${rep.ok?'✅ 全部通过':'⚠️ 存在失败项'} · ${rep.summary}</div><table class="mtab"><thead><tr><th>级别</th><th>检查项</th><th>说明</th><th></th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:10px;font-size:12px;color:var(--dim)">🟡 未登记的入账流水属设计预期（现金子账户为权威来源）。如需把流水实际计入对应币种现金，后续将提供「一键登记」按钮。点击外部关闭。</div></div></div></div>`;
+  const html=`<div class="modal open" id="selfcheck-modal" style="display:flex"><div class="box" style="max-width:720px"><div class="mhead"><h3>🔍 自检报告（v15）</h3><button class="x" onclick="document.getElementById('selfcheck-modal').remove()">×</button></div><div class="mbody"><div style="padding:8px 10px;border-radius:6px;margin-bottom:10px;font-weight:700;background:${rep.ok?'#ecfdf5':'#fef2f2'};color:${rep.ok?'#065f46':'#991b1b'}">${rep.ok?'✅ 全部通过':'⚠️ 存在失败项'} · ${rep.summary}</div><table class="mtab"><thead><tr><th>级别</th><th>检查项</th><th>说明</th><th></th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:10px;font-size:12px;color:var(--dim)">v15：分红/收入直接计入对应币种现金子账户（收入台账驱动），账户内调整持仓数量生成「数量调整」流水；直接增删资产/加分红不再生成交易流水。点击外部关闭。</div></div></div></div>`;
   const old=document.getElementById('selfcheck-modal'); if(old)old.remove();
   document.body.insertAdjacentHTML('beforeend',html);
 }
@@ -4242,20 +4293,9 @@ function addInc(){
   }else{
     DATA.income.records.push(r);
   }
-  // 已到账的收入同步生成交易流水，使 txCashDelta 能把它计入对应账户现金；预计收入不计入。
-  if(r.status==='received' && r.account && r.amount>0){
-    const txId=r.id; // 与 income 记录同 id，方便编辑/删除时联动
-    const existing=(DATA.transactions||[]).findIndex(x=>x.id===txId);
-    const tx={
-      id:txId,date:r.date,type:'income',account:r.account,
-      asset_name:r.name||r.type_label||ccyName(r.currency),
-      code:'',market:'',quantity:0,amount:r.amount,price:r.amount,currency:r.currency,
-      fee:0,note:(r.note||'')+' [来自收入]',status:'completed',
-      asset_category:r.asset_category||'现金',cat_id:r.cat_id||'cat_cash',
-      project:r.project||'',location:r.location||''
-    };
-    if(existing>=0) DATA.transactions[existing]=tx;
-    else { if(!DATA.transactions) DATA.transactions=[]; DATA.transactions.push(tx); }
+  // v15：收入/分红直接入账对应币种现金子账户（不再生成冗余 income tx，避免与现金双计；加分红不进交易流水）
+  if(r.status==='received' && r.account && Number(r.amount)>0){
+    creditIncomeToCash(r.account, r);
   }
   computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();toast(editId?'已修改收入记录':'已添加收入记录');logActivity(editId?'修改收入':'添加收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount} ${r.currency} (${({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他'})[r.type]||r.type})`);}
 function editInc(id){
@@ -4283,7 +4323,7 @@ function editInc(id){
     var btn=document.querySelector('#inc-modal .btn:not(.ghost)');if(btn) btn.textContent='保存修改';
   },50);
 }
-function delInc(id){const r=DATA.income.records.find(x=>x.id===id);DATA.income.records=DATA.income.records.filter(x=>x.id!==id);if(id){DATA.transactions=(DATA.transactions||[]).filter(x=>x.id!==id);}computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();if(r)logActivity('删除收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount}`);}
+function delInc(id){const r=DATA.income.records.find(x=>x.id===id);DATA.income.records=DATA.income.records.filter(x=>x.id!==id);if(id){DATA.transactions=(DATA.transactions||[]).filter(x=>x.id!==id);}if(r&&r.account)revertIncomeCash(r.account,id);computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();if(r)logActivity('删除收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount}`);}
 function exportData(){
   const payload={
     accounts:DATA.accounts,
@@ -4623,6 +4663,7 @@ function saveTrade(){
     const inc={id:'inc'+Date.now(),date:tx.date,type:'dividend',type_label:'股息/分红',account:acctName(tx.account),holder:'',name:tx.name,project:'',currency:tx.currency,amount:tx.amount,status:tx.status,location:document.getElementById('tr-location').value||'',note:tx.note};
     inc.cny=toCny(tx.amount,tx.currency);
     DATA.income.records.push(inc); computeIncomeAgg();
+    if(inc.status==='received') creditIncomeToCash(tx.account, inc); // v15：分红自动入账对应币种现金
   } else {
     tx.account=document.getElementById('tr-account').value;
     tx.asset_name=document.getElementById('tr-instrument').value.trim()||'';
@@ -4742,6 +4783,7 @@ function addTx(){
     const inc={id:'inc'+Date.now(),date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
     inc.cny=toCny(tx.amount,tx.currency);
     DATA.income.records.push(inc); computeIncomeAgg();
+    if(inc.status==='received') creditIncomeToCash(tx.account, inc); // v15：收入自动入账对应币种现金
   }
   /* 买入/卖出时同步更新账户持仓（共用 applyTxToHolding） */
   applyTxToHolding(tx, type);
@@ -4849,6 +4891,33 @@ function baseCashCny(a){
   (a.cash_holdings||[]).forEach(ch=>{ c+=toCny(ch.amount||0,ch.currency||'CNY'); });
   return c;
 }
+// 按 id 或账户名解析账户（兼容 income 记录里 account 存的是 name 还是 id 的历史不一致）
+function acctRes(x){ if(!x)return null; const a=acct(x); if(a)return a; try{ return DATA.accounts.find(z=>z.platform===x)||null; }catch(e){ return null; } }
+// 把一笔 received 收入按币种记入对应现金子账户；用 income.id 做幂等（编辑/重复保存只入账一次）。
+function creditIncomeToCash(aid, inc){
+  const a=acctRes(aid); if(!a||!inc) return;
+  if(!inc.account || inc.status!=='received' || !(Number(inc.amount)>0)) return;
+  const id=inc.id, ccy=(inc.currency||'CNY').toUpperCase(), amt=+(Number(inc.amount)||0).toFixed(2);
+  a.cash_holdings=a.cash_holdings||[];
+  // 1) 先回滚该收入此前的旧入账（编辑/重复保存幂等）
+  let old=a.cash_holdings.find(ch=>(ch.currency||'CNY').toUpperCase()===ccy && ch._credits && ch._credits[id]!=null);
+  if(old){ old.amount=+(Number(old.amount)-Number(old._credits[id])).toFixed(2); delete old._credits[id];
+    if(old._auto_credit && Math.abs(old.amount)<1e-6 && Object.keys(old._credits).length===0) a.cash_holdings=a.cash_holdings.filter(x=>x!==old); }
+  // 2) 入账新金额
+  let ch=a.cash_holdings.find(x=>(x.currency||'CNY').toUpperCase()===ccy);
+  if(!ch){ ch={name:ccy+' 现金(分红入账)',amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_auto_credit:true,_credits:{}}; a.cash_holdings.push(ch); }
+  ch._credits=ch._credits||{};
+  ch.amount=+(Number(ch.amount)+amt).toFixed(2);
+  ch._credits[id]=amt;
+}
+// 删除/撤销时回滚
+function revertIncomeCash(aid, incId){
+  const a=acctRes(aid); if(!a) return;
+  (a.cash_holdings||[]).forEach(ch=>{ if(ch._credits && ch._credits[incId]!=null){
+    ch.amount=+(Number(ch.amount)-Number(ch._credits[incId])).toFixed(2); delete ch._credits[incId];
+    if(ch._auto_credit && Math.abs(ch.amount)<1e-6 && Object.keys(ch._credits).length===0) a.cash_holdings=a.cash_holdings.filter(x=>x!==ch);
+  }});
+}
 
 /* ============ 交易流水（三路合并） ============ */
 let ledgerExpanded=true;
@@ -4857,7 +4926,7 @@ function renderLedger(){
   // A. 交易记录 DATA.transactions
   const txRows=(DATA.transactions||[]).map(t=>({
     id:t.id||('tx-'+Date.now()+Math.random()), date:t.date||'',
-    type:t.type==='buy'?'买入':t.type==='sell'?'卖出':t.type==='income'?'收入':t.type==='transfer'?'转账':t.type==='dividend'?'股息':'其他',
+    type:t.type==='buy'?'买入':t.type==='sell'?'卖出':t.type==='income'?'收入':t.type==='transfer'?'转账':t.type==='dividend'?'股息':t.type==='adjust'?'数量调整':'其他',
     typeRaw:t.type||'', account:acctName(t.account)||(t.account_from?acctName(t.account_from)+'→'+acctName(t.account_to):''),
     target:t.asset_name||(t.name||''), code:t.code||'',
     amount:t.amount||0, currency:t.currency||'CNY', fee:t.fee||0,
@@ -4887,7 +4956,7 @@ function renderLedger(){
   };
   const maxShow=ledgerExpanded?all.length:Math.min(all.length,6);
   const rows=all.slice(0,maxShow).map((t,i)=>{
-    const sign=(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':'−';
+    const sign=(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':(t.typeRaw==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
     const cls=sign==='+'?'gn':'rd';
     const more=all.length>6&&!ledgerExpanded&&i===5?
       `<tr><td colspan="9" style="text-align:center;padding:8px"><button class="btn sm ghost" onclick="ledgerExpanded=true;renderLedger()">展开更多 ${all.length-6} 条 ▼</button></td></tr>`:'';
@@ -4971,7 +5040,7 @@ function delLedgerRow(id,src){
 
 function renderTx(){
   const rows=DATA.transactions.slice().sort((a,b)=>a.date<b.date?1:-1);
-  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整'};
+  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整'};
   document.getElementById('tx-body').innerHTML=rows.map(t=>{
     let acc,dir,amt=t.amount||0,ccy=t.currency||'CNY';
     if(t.type==='transfer'){ acc=acctName(t.account_from)+' → '+acctName(t.account_to); dir='转账'; }
@@ -4980,7 +5049,7 @@ function renderTx(){
     else if(t.type==='manual_adjust'){ acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     else { acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     const st=t.status?({received:'已到账',projected:'预计'})[t.status]||t.status:'';
-    const sign=(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':'−';
+    const sign=(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
     const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':'t-afund';
     return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${st}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
   }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
@@ -5474,14 +5543,32 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-28-v14';
+const APP_VERSION='2026-07-29-v15';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
     // 版本升级时不再删除 famdash_v1：本地未推送的改动比部署基线更珍贵，
     // 同步逻辑会通过时间戳/内容差异自动合并或覆盖；删除会导致新建账户/未同步交易丢失。
-    localStorage.setItem('famdash_app_version',APP_VERSION);
+    try{ localStorage.setItem('famdash_app_version',APP_VERSION); }catch(e){}
   }
+  // ===== 旧缓存自修复（账户凭空消失的真正根因）=====
+  // 若浏览器缓存着「旧版本 HTML」（其同步逻辑有缺陷，会把云端清空/丢账户），
+  // 用户打开后运行的仍是旧代码。这里拉取线上当前页、比对 APP_VERSION，
+  // 不一致则强制绕过缓存重载，确保运行的是含最新修复的 HTML。
+  try{
+    if(sessionStorage.getItem('famdash_cache_reloaded')==='1') return; // 防重载死循环
+    const _url=location.href.split('#')[0]+'?_cb='+Date.now();
+    fetch(_url,{cache:'no-store',headers:{'Cache-Control':'no-store','Pragma':'no-cache'}}).then(function(r){
+      if(!r.ok) throw new Error('net '+r.status);
+      return r.text();
+    }).then(function(t){
+      const m=(t||'').match(/APP_VERSION='([^']+)'/);
+      if(m && m[1]!==APP_VERSION){
+        try{ sessionStorage.setItem('famdash_cache_reloaded','1'); }catch(e){}
+        location.reload(true);
+      }
+    }).catch(function(){ /* 网络异常（如离线）时不强制刷新，避免反复弹刷新 */ });
+  }catch(e){}
 }
 function forceRefresh(){ location.reload(true); }
 
@@ -6154,8 +6241,16 @@ function _doSyncPush(tok,attempt){
       // 合并云端数据后再上传：避免「本地未拉取过的云端账户/流水/收入」被整体覆盖（此前多设备竞态会丢数据）。
       // 旧逻辑用 cloudT>localMod 直接放弃推送并改用云端，但漏掉了「本地比云端新、却从未拉取云端独有数据」的情况，
       // 导致本地整体覆盖云端、云端独有账户丢失。改为永远把云端合并进上传快照。
-      let snapToPush=snap;
-      try{ if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); snapToPush=buildPushSnapshot(snap, cs); } }catch(e){ snapToPush=snap; }
+      let snapToPush=null;
+      try{
+        if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); snapToPush=buildPushSnapshot(snap, cs); }
+        else { snapToPush=snap; } // 首次推送：云端无文件，直接推本地
+      }catch(e){
+        // 合并异常：宁可中止推送，也绝不让「仅本地」快照覆盖云端独有数据（防账户/流水丢失）
+        console.error('syncPush merge failed, abort to protect cloud', e);
+        try{ toast('同步跳过：合并云端失败，已保护云端数据，请稍后重试'); }catch(_){}
+        return Promise.resolve(false);
+      }
       const content=_b64encode(JSON.stringify(snapToPush));
       const body={message:'sync: '+fmtSyncTime(snap.syncedAt)+' · '+getDeviceLabel(),content:content};
       if(meta&&meta.sha)body.sha=meta.sha;
