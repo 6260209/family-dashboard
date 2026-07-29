@@ -2644,7 +2644,7 @@ function openAcct(aid){
   const dc=txCashDelta(a.id);
   const dch=baseCashCny(a);
   let txNote='';
-  if(dc!==0) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水净影响（买/卖/转入/转出/分红/收入，独立于上方现金小计）：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span><br><span style="color:#0e7490">现金合计已按现金子账户（现金小计）计算，不再叠加流水。如需把流水实际计入对应币种现金，请点「＋ 添加现金/债券/稳定币」手动登记。</span></div>`;
+  if(dc!==0) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水净影响（买/卖/转入/转出/分红/收入，独立于上方现金小计）：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span><br><span style="color:#0e7490">现金合计已按现金子账户（现金小计）计算，不再叠加流水。流水净影响与现金小计的差额可一键登记：<span style="cursor:pointer;font-weight:700;text-decoration:underline;color:#0e7490" onclick="calibrateCashFromTx('${aid}')">点此一键校准现金</span></span></div>`;
   h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（= 现金小计，本位币折算） <b>'+fmtCny(dch)+'</b> · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
   const dsec=txSecurities(a.id);
   let dsecHtml='';
@@ -3821,7 +3821,9 @@ function runSelfCheck(){
       const total=acctLiveTotalCny(a);
       const cash=baseCashCny(a);
       const nonCash=_selfNonCashCny(a);
-      const expected=cash+nonCash;
+      let calib=0;
+      if((a.cash_holdings||[]).some(c=>c._calibrated)) calib=txCashDelta(a.id);
+      const expected=cash+nonCash+calib;
       const ok=Math.abs(total-expected)<1;
       rec('现金合计无流水双计 · '+acctName(a.id), ok,
         `合计=${fmtCny(total)}，应为 现金小计(${fmtCny(cash)}) + 非现金持仓(${fmtCny(nonCash)})`+(ok?'':'（疑似仍叠加了交易流水净额）'),
@@ -4918,6 +4920,35 @@ function creditIncomeToCash(aid, inc){
   ch.amount=+(Number(ch.amount)+amt).toFixed(2);
   ch._credits[id]=amt;
 }
+
+function txCashDeltaByCcy(aid){
+  const m={};
+  (DATA.transactions||[]).forEach(t=>{
+    if(!t) return;
+    const ccy=(t.currency||'CNY').toUpperCase(), v=Number(t.amount||0), f=Number(t.fee||0);
+    if(t.type==='income' && t.account===aid) m[ccy]=(m[ccy]||0)+v;
+    else if(t.type==='transfer'){ if(t.account_from===aid) m[ccy]=(m[ccy]||0)-v; if(t.account_to===aid) m[ccy]=(m[ccy]||0)+v; }
+    else if(t.type==='buy' && t.account===aid) m[ccy]=(m[ccy]||0)-(v+f);
+    else if(t.type==='sell' && t.account===aid) m[ccy]=(m[ccy]||0)+(v-f);
+  });
+  return m;
+}
+function calibrateCashFromTx(aid){
+  const a=DATA.accounts.find(x=>x.id===aid); if(!a) return;
+  const sig=(DATA.transactions||[]).filter(t=>t&&(t.account===aid||(t.type==='transfer'&&(t.account_from===aid||t.account_to===aid)))).map(t=>t.id).sort().join(',');
+  const m=txCashDeltaByCcy(aid);
+  a.cash_holdings=a.cash_holdings||[];
+  Object.keys(m).forEach(ccy=>{
+    if(Math.abs(m[ccy])<1e-6) return;
+    let ch=a.cash_holdings.find(x=>(x.currency||'CNY').toUpperCase()===ccy && x._calibrated);
+    if(ch && ch._txsig===sig) return;
+    if(ch){ ch.amount=+(Number(ch.amount)-(Number(ch._txnet||0))).toFixed(2); }
+    else { ch={name:({USD:'美金',HKD:'港币',CNY:'人民币',USDT:'USDT'}[ccy]||ccy),amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_calibrated:true}; a.cash_holdings.push(ch); }
+    ch.amount=+(Number(ch.amount)+m[ccy]).toFixed(2); ch._txnet=m[ccy]; ch._txsig=sig;
+  });
+  saveEditsLocal(); if(typeof renderTx==='function') renderTx(); if(typeof recomputePortfolio==='function') recomputePortfolio(); if(typeof jRecomputeSummary==='function') jRecomputeSummary(a); openAcct(aid);
+  if(typeof toast==='function') toast('已按流水校准现金子账户');
+}
 // 删除/撤销时回滚
 function revertIncomeCash(aid, incId){
   const a=acctRes(aid); if(!a) return;
@@ -5551,7 +5582,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-29-v18';
+const APP_VERSION='2026-07-29-v19';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
