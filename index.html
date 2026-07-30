@@ -5759,7 +5759,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v27';
+const APP_VERSION='2026-07-30-v28';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6215,7 +6215,7 @@ function delAccountType(n){
 // 令牌存于本机 localStorage（famdash_sync_token），绝不写入公开源码，避免 GitHub 自动吊销令牌。
 const SYNC_REPO='6260209/family-dashboard-sync';
 const SYNC_FILE='sync.json';
-const SYNC_KEYS=['famdash_v1','famdash_activity_log','famdash_settings','famdash_holders','famdash_account_types','famdash_currencies','famdash_plans','famdash_todos','famdash_goals','famdash_categories','famdash_locations','famdash_projects','famdash_deleted_accounts','famdash_deleted_items'];
+const SYNC_KEYS=['famdash_v1','famdash_activity_log','famdash_settings','famdash_holders','famdash_account_types','famdash_currencies','famdash_plans','famdash_todos','famdash_goals','famdash_categories','famdash_locations','famdash_projects','famdash_deleted_accounts','famdash_deleted_items','famdash_acct_cat_order'];
 // 轻量级同步加密（用于加密 sync token）：AES-256-CBC + 固定 salt（保证可重现）
 const _TOK_SALT=new Uint8Array([0x46,0x41,0x4d,0x44,0x41,0x53,0x48,0x21,0x54,0x4f,0x4b,0x45,0x4e,0x21,0x21,0x21]);
 function _bytesToB64(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);return btoa(s);}
