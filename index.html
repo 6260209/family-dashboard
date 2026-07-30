@@ -3199,7 +3199,7 @@ function toast(msg){const t=document.getElementById('toast');if(!t)return;t.inne
 function saveEditsLocal(){
   try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
-  try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));scheduleSyncPush();}}catch(e){}
+  try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));try{sessionStorage.setItem('famdash_session_edited','1');}catch(e){}scheduleSyncPush();}}catch(e){}
 }
 function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv); DATA.accounts.forEach(normalizeSecPnl);}if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
 function afterEdit(aid){
@@ -5708,7 +5708,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v23';
+const APP_VERSION='2026-07-30-v24';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6435,7 +6435,7 @@ function _doSyncPush(tok,attempt){
           // 让本地与「合并后上传」的云端保持一致（本地 = 云端，避免下次拉取又出现分歧）
           const mv=snapV1(snapToPush);
           if(mv){ localStorage.setItem('famdash_v1', JSON.stringify(mv)); applyCloudToData(snapToPush); }
-          localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));
+          localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));try{sessionStorage.removeItem('famdash_session_edited');}catch(e){}
         }catch(e){}
         toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 已同步到云端'); return true;
       });
@@ -6569,6 +6569,7 @@ function syncPullOnLoad(){
     const alreadyPulled=sessionStorage.getItem('famdash_onload_pulled')==='1';
     syncPull().then(function(res){
       if(res.snap && _syncShouldApply(res.snap)){
+        if(sessionStorage.getItem('famdash_session_edited')==='1'){ try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){} return; }
         syncApply(res.snap);
         const merged=applyCloudToData(res.snap);
         try{loadEditsLocal();}catch(e){}   // ← 拉完云端后重载 DATA 内存变量
