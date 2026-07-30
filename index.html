@@ -291,6 +291,28 @@ tbody tr:hover{background:#f8fafc}
   .fc-edit{padding:7px 14px;min-height:40px}
 }
 
+/* —— 聚合视图展开卡片升级：原生市值 + 指标格 + 账户分布表（#2）—— */
+.ad-head .ad-mv-native{font-size:16px;font-weight:700;color:var(--text)}
+.ad-mv-cny{display:block;font-size:11.5px;color:var(--dim);margin-top:1px}
+.ad-multi{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:5px;font-size:10px;background:#fff7ed;border:1px solid #fed7aa;color:#c2410c;font-weight:600;vertical-align:middle}
+.ad-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:2px 0 12px}
+.ad-metric{background:#f8fafc;border:1px solid var(--border);border-radius:9px;padding:7px 9px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.ad-metric .ad-k{font-size:11px;color:#64748b;font-weight:500}
+.ad-metric .ad-v{font-size:13px;font-weight:600;color:var(--text);line-height:1.3;word-break:break-word}
+.ad-metric .ad-v small{font-weight:400;color:var(--dim);font-size:10.5px;margin-left:3px}
+.ad-chips{margin:0 0 10px}
+.ad-dist{margin:0 0 10px}
+.ad-dist-title{font-size:12px;font-weight:700;color:#0e7490;margin-bottom:5px}
+.ad-dist-table{width:100%;border-collapse:collapse;font-size:12px}
+.ad-dist-table th{text-align:left;color:#64748b;font-weight:600;padding:4px 6px;border-bottom:1px solid var(--border);font-size:11px}
+.ad-dist-table td{padding:5px 6px;border-bottom:1px solid #f1f5f9;color:var(--text);vertical-align:top}
+.ad-dist-table td:not(:first-child){text-align:right;white-space:nowrap}
+.ad-dist-table tfoot td{font-weight:700;border-top:1px solid var(--border);border-bottom:none;padding-top:6px}
+.ad-dist-table small{color:var(--dim);font-weight:400;margin-left:3px;font-size:10.5px}
+@media(max-width:640px){
+  .ad-metrics{grid-template-columns:repeat(2,1fr)}
+}
+
 /* —— 聚合视图：紧凑行 + 滚动容器（方案A）—— */
 #consolidated-body{max-height:420px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border);border-radius:10px;background:#fafbfc}
 #consolidated-body::-webkit-scrollbar{width:6px}
@@ -764,7 +786,7 @@ th.sortable.desc .arrow::after{content:'▼'}
         <tbody id="tx-body"></tbody>
       </table>
     </div>
-    <div class="note">说明：转账在两点账户间调整现金；买入扣账户现金并增加持仓，卖出反之。金额按建仓汇率折算人民币。流水仅存于本机浏览器，重要记录点「导出数据」备份。</div>
+    <div class="note">说明：转账在两点账户间调整现金；买入扣账户现金并增加持仓，卖出反之。金额按建仓汇率折算人民币。流水与编辑记录会随账户数据同步到云端（本机也自动备份一份）。</div>
   </div>
   <!-- 投资计划 -->
   <div class="card">
@@ -1389,14 +1411,50 @@ function renderConsolidated(){
       <span class="consol-mv">${fmtCny(r.mv)}</span>
       <span class="consol-pnl-badge ${pnlCls}">${pctStr}</span>
     </div>`;
-    // ---- 展开详情（完整卡片，含芯片编辑/价格联动）----
+    // ---- 展开详情（完整卡片：原生市值 + 数量/现价/成本/盈亏 + 账户分布表，#2）----
+    const headMV=mixedCcy?fmtCny(r.mv):fmtMVNative(r.mv,r.currency);
+    const headSub=(mixedCcy||r.currency==='CNY')?'':('<small class="ad-mv-cny">≈ ¥'+fmtCny(r.mv)+' CNY</small>');
+    const pnlSub=r.pnl?(' <small class="ad-pnl-sub">'+fmtCny(r.pnl)+'</small>'):'';
+    const distTable=(function(){
+      const map={};
+      for(const f of (r.raws||[])){
+        if(!map[f.acct]) map[f.acct]={acct:f.acct,ccy:f.currency,raw:f,qty:0,mvCny:0,nativeMv:0};
+        const g=map[f.acct];
+        if(typeof f.qty==='number') g.qty+=f.qty;
+        g.mvCny+=(f.mv||0);
+        g.nativeMv += (f.currency==='CNY')?(f.mv||0):jToNative(f.mv||0,'CNY',f.currency);
+      }
+      const keys=Object.keys(map);
+      if(!keys.length) return '';
+      let rows='';
+      for(const k of keys){
+        const g=map[k]; const f=g.raw; let ap=null;
+        try{ if(r.cat==='加密货币'){ const lp=cryptoLiveUnitPrice(f); if(lp!=null)ap=lp; } else { const lp=secLivePrice(f); if(lp!=null)ap=lp; } }catch(e){}
+        const aPrice=ap!=null?ap:(f.price||null);
+        const priceCell=aPrice!=null?fmtNative(aPrice,g.ccy):'—';
+        const mvCell=fmtNative(g.nativeMv,g.ccy)+(g.ccy!=='CNY'?('<small>'+fmtCny(g.mvCny)+'</small>'):'');
+        const qCell=(typeof g.qty==='number'&&g.qty>0)?(g.qty>=1e4?(g.qty/1e4).toFixed(1)+'万':g.qty.toLocaleString()):'—';
+        rows+='<tr><td>'+escapeHtml(g.acct)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
+      }
+      let foot;
+      if(mixedCcy){ foot=fmtCny(r.mv)+' CNY'; }
+      else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
+      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr><th>账户</th><th>数量</th><th>现价</th><th>市值</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="3">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+    })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
-        <div class="fc-top">
-          <div class="fc-name"><b>${escapeHtml(r.name)}</b></div>
-          <div class="fc-val"><span class="fc-mv">${fmtCny(r.mv)}</span>${qDisp?`<small>${qDisp}</small>`:''}</div>
+        <div class="fc-top ad-head">
+          <div class="fc-name"><b>${escapeHtml(r.name)}</b>${mixedCcy?'<span class="ad-multi">多币种</span>':''}</div>
+          <div class="fc-val"><span class="ad-mv-native">${headMV}</span>${headSub}${qDisp?`<small>${qDisp}</small>`:''}</div>
         </div>
-        <div class="fc-chips">
+        <div class="ad-metrics">
+          <div class="ad-metric"><span class="ad-k">数量</span><span class="ad-v">${qDisp}</span></div>
+          <div class="ad-metric"><span class="ad-k">现价</span><span class="ad-v">${priceDisp}</span></div>
+          <div class="ad-metric"><span class="ad-k">成本</span><span class="ad-v">${costDisp}</span></div>
+          <div class="ad-metric"><span class="ad-k">盈亏</span><span class="ad-v ${uc}">${pctStr}${pnlSub}</span></div>
+        </div>
+        ${distTable}
+        <div class="fc-chips ad-chips">
           ${consolChipHTML(idx,'project','投资项目',prjVals)}
           ${consolChipHTML(idx,'asset_category','子账户',catVals)}
           ${consolChipHTML(idx,'currency','货币',ccyVals)}
@@ -1406,9 +1464,7 @@ function renderConsolidated(){
         </div>
         <div class="fc-foot">
           <span class="fc-accts">${acctBadges}</span>
-          <span class="fc-meta">现价 ${priceDisp} · 成本 ${costDisp}</span>
           <span class="fc-base">市值 ${fmtCny(r.mv)} <small>CNY</small></span>
-          <span class="fc-pnl ${uc}">${pctStr}</span>
           ${hasQty?`<button class="fc-edit" onclick="event.stopPropagation();startEditConsolPrice(${idx})" title="修改现价（所有账户联动）" aria-label="修改现价（所有账户联动）"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`:''}
         </div>
       </div>
@@ -1618,6 +1674,12 @@ function fmtNative(val, ccy){
   if(Math.abs(v)>=1e8) return s+v.toExponential(2);
   if(Math.abs(v)>=1e4) return s+v.toLocaleString('zh-CN',{minimumFractionDigits:0,maximumFractionDigits:0});
   return s+v.toFixed(v%1===0?0:2);
+}
+// 市值双行展示：主显示原生币种市值，副显示 CNY（解决 USDT/USD 大数字困惑，#2 需求：加密币严格原生单位、不自动换算）
+function fmtMVNative(amountCny, ccy){
+  if(ccy==='CNY'||!ccy) return fmtCny(amountCny);
+  const nat=jToNative(amountCny,'CNY',ccy);
+  return fmtNative(nat, ccy);
 }
 // 市值统一显示：主显示本位币折算值，原币种作为灰色小字副标（解决 USDT 等大数字困惑）
 function fmtMV(amount,ccy){
@@ -2267,10 +2329,15 @@ function jBuildFlat(accounts){
       });
     }
     // 账户闲置现金 / 流动性余量 → 流动现金（与 build_dashboard_v5.py:191 一致）
+    // 去重：若该账户的现金子账户里已有「券商可用资金」种子条目（代表同一笔券商闲置现金），则不再额外发合成行，
+    // 避免与真实现金子账户重复展示、且消除「改/删种子��被合行悬空」的幽灵现金（排查 #4）。
     const sc=a.summary||{};
     const cashHkd=(sc.cash_hkd||sc.remaining_liquidity_hkd||0);
     if(cashHkd){
-      flat.push({sec:'cash',idx:-1,grp:'cash:'+a.platform,project:'',acct:a.platform,cat:'流动现金',name:'账户闲置现金',code:'',type:'现金',qty:'-',market:'',mv:Math.round(jHkdToCny(cashHkd)),pnl:0,pnl_pct:0,underlying:'流动现金',asset_category:'流动现金',loc:'中国',holder:hld,aid:aid,acctTag:a.account_type||''});
+      const hasSeededCash=(a.cash_holdings||[]).some(c=>c._seeded && Math.round(Number(c.amount||0))===Math.round(cashHkd));
+      if(!hasSeededCash){
+        flat.push({sec:'cash',idx:-1,grp:'cash:'+a.platform,project:'',acct:a.platform,cat:'流动现金',name:'账户闲置现金（券商可用）',code:'',type:'现金',qty:'-',market:'',mv:Math.round(jHkdToCny(cashHkd)),pnl:0,pnl_pct:0,underlying:'流动现金',asset_category:'流动现金',loc:'中国',holder:hld,aid:aid,acctTag:a.account_type||''});
+      }
     }
   }
   return flat;
@@ -2697,11 +2764,16 @@ function closeAcct(){document.getElementById('acct-modal').classList.remove('ope
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeAcct();});
 
 function renderLog(){
-  // 合并原始更新日志 + 本地操作记录
+  // 合并原始更新日志 + 本地操作记录；按稳定 id 去重，避免同一事件被写两处而显示两次（#3 修复）
   const logs=(DATA.meta.update_log||[]).slice();
   // 添加本地操作记录（从 localStorage 的操作日志合并）
   const actLogs=JSON.parse(localStorage.getItem('famdash_activity_log')||'[]');
-  const all=[...logs,...actLogs].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const seen=new Set(); const all=[];
+  for(const l of [...logs,...actLogs]){
+    const key=l.id||(l.date+'|'+(l.action||l.type||'')+'|'+(l.detail||l.desc||''));
+    if(seen.has(key)) continue; seen.add(key); all.push(l);
+  }
+  all.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   document.getElementById('log').innerHTML=all.map(l=>
     `<div class="log-item"><div class="ld">${l.date}</div><div class="lt"><b>${l.action||l.type||''}</b> — ${l.detail||l.desc||''}</div></div>`).join('')||
     '<div style="color:var(--dim);padding:20px;text-align:center">暂无日志</div>';
@@ -2711,7 +2783,7 @@ function renderLog(){
 function logActivity(type,desc){
   const now=new Date();
   const date=toISOStringLocal(now);
-  const log={date,action:type,detail:desc};
+  const log={id:'log'+Date.now()+'-'+Math.random().toString(36).slice(2,8),date,action:type,detail:desc};
   // ① localStorage（防刷新丢，也作为离线备份）
   try{
     const logs=JSON.parse(localStorage.getItem('famdash_activity_log')||'[]');
@@ -4327,7 +4399,25 @@ function calDayHTML(){
   return `<div class="cal-grid">${cells}</div><div id="day-events" class="note" style="margin-top:10px"></div>`;
 }
 function showDayEvents(dk){const recs=DATA.income.records.filter(r=>r.date===dk);const el=document.getElementById('day-events');if(!el)return;
-  el.innerHTML=recs.length?('<b>'+dk+' 收入明细：</b><br>'+recs.map(r=>{const cur=r.currency||'CNY';const amt=Number(r.amount)||0;return cur==='CNY'?(`• ${r.type_label||r.type} · ${r.name} +¥${fmt(r.cny)}`):(`• ${r.type_label||r.type} · ${r.name} +${amt.toLocaleString('en-US',{maximumFractionDigits:2})} ${cur} ≈¥${fmt(r.cny)}`);}).join('<br>')):(dk+' 无收入记录');}
+  window._calDayKey=dk;
+  if(!recs.length){ el.innerHTML='<div class="day-empty">'+escapeHtml(dk)+' 无收入记录</div>'; return; }
+  const typeMap={dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他'};
+  let sumCny=0;
+  const cards=recs.map(r=>{
+    const cur=r.currency||'CNY';const amt=Number(r.amount)||0;
+    const cny=(r.cny!=null)?Number(r.cny):toCny(amt,cur); sumCny+=cny;
+    const acctNameStr=(r.account&&acctName(r.account))||'未关联账户';
+    const typeLabel=r.type_label||typeMap[r.type]||r.type||'其他';
+    const recv=r.status==='received';
+    const cnText=(cur==='CNY')?'':('<span class="day-cny">≈ ¥'+fmtCny(cny)+' CNY</span>');
+    return `<div class="day-row" role="button" tabindex="0" onclick="editInc('${r.id}')" onkeydown="if(event.key==='Enter')editInc('${r.id}')">`
+      +`<div class="day-acct"><b>${escapeHtml(acctNameStr)}</b><span class="day-edit">编辑</span></div>`
+      +`<div class="day-meta">${escapeHtml(typeLabel)} · ${escapeHtml(r.name||'')}</div>`
+      +`<div class="day-amt"><span class="day-amt-native">${fmtNative(amt,cur)}</span>${cnText}<span class="day-status ${recv?'recv':'proj'}"><span class="dot"></span>${recv?'已到账':'预计'}</span></div>`
+      +`</div>`;
+  }).join('');
+  el.innerHTML='<div class="day-head"><b>'+escapeHtml(dk)+' 收入明细</b><span class="day-sum">合计 '+fmtCny(sumCny)+' CNY</span></div>'+cards;
+}
 function calMonthHTML(){const yk=String(calYr);const m=DATA.income.calendar.monthly;let cells='';
   for(let mo=1;mo<=12;mo++){const mk=`${yk}-${String(mo).padStart(2,'0')}`;const e=m[mk];const amt=e?e.income_cny:0;
     cells+=`<div class="cal-cell" style="min-height:54px"><div class="dnum">${mo}月</div>${amt?`<div class="inc">+${fmtCny(amt)}</div>`:'<div style="color:#cbd5e1">—</div>'}</div>`;}
@@ -4387,7 +4477,7 @@ function addInc(){
   if(r.status==='received' && r.account && Number(r.amount)>0){
     creditIncomeToCash(r.account, r);
   }
-  computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();toast(editId?'已修改收入记录':'已添加收入记录');logActivity(editId?'修改收入':'添加收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount} ${r.currency} (${({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他'})[r.type]||r.type})`);}
+  computeIncomeAgg();saveEditsLocal();renderInc();renderCalendar();if(window._calDayKey)showDayEvents(window._calDayKey);toast(editId?'已修改收入记录':'已添加收入记录');logActivity(editId?'修改收入':'添加收入',`${r.date} ${r.name||'(未命名)'} ¥${r.amount} ${r.currency} (${({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他'})[r.type]||r.type})`);}
 function editInc(id){
   const r=DATA.income.records.find(x=>x.id===id);
   if(!r){toast('记录不存在');return;}
@@ -5164,19 +5254,32 @@ function renderLedger(){
     account:r.account||'',target:r.name||r.income_type||'',code:'',
     amount:r.amount||0,currency:r.currency||'CNY',fee:0,status:'received',_src:'手动录入'
   }));
+  // D. 编辑/余额类操作记录（来自已同步的活动日志，作为只读「编辑」行并入台账，修复「改余额流水无记录」#3）
+  const editWhitelist={'修改现金持仓':1,'修改账户信息':1,'修改持仓':1};
+  const editRows=(JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'))
+    .filter(l=>editWhitelist[(l.action||l.type||'')])
+    .map(l=>({
+      id:'act-'+(l.id||(l.date+'|'+(l.action||l.type)+'|'+(l.detail||''))),
+      date:l.date||'', type:'编辑', typeRaw:'edit',
+      account:((l.detail||'').split(' · ')[0]||''),
+      target:(l.detail||''), code:'',
+      amount:0, currency:'', fee:0, status:'', _src:'编辑'
+    }));
   // 合并+排序
-  const all=[...txRows,...todoRows,...incRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const all=[...txRows,...todoRows,...incRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const typeTag=t=>{
-    const m={买入:'t-astock',卖出:'t-struct',收入:'t-afund',转账:'t-cash',股息:'t-bond'};
+    const m={买入:'t-astock',卖出:'t-struct',收入:'t-afund',转账:'t-cash',股息:'t-bond',编辑:'t-bond'};
     return `<span class="tag ${m[t.type]||'t-qdii'}">${t.type}</span>`;
   };
   const maxShow=ledgerExpanded?all.length:Math.min(all.length,6);
   const rows=all.slice(0,maxShow).map((t,i)=>{
-    const sign=(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':(t.typeRaw==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
-    const cls=sign==='+'?'gn':'rd';
+    const sign=(t.typeRaw==='edit')?'':(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':(t.typeRaw==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
+    const cls=(t.typeRaw==='edit')?'':(sign==='+'?'gn':'rd');
     const more=all.length>6&&!ledgerExpanded&&i===5?
       `<tr><td colspan="9" style="text-align:center;padding:8px"><button class="btn sm ghost" onclick="ledgerExpanded=true;renderLedger()">展开更多 ${all.length-6} 条 ▼</button></td></tr>`:'';
-    return `<tr><td>${t.date||'—'}</td><td>${typeTag(t)}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${t.account||'—'}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${t.target}">${t.target||'—'}</td><td class="${cls}">${sign}${fmtNative(t.amount,t.currency)}</td><td>${t.currency}</td><td><span class="tag ${t._src==='计划确认'?'active':t._src==='手动录入'?'t-bond':''}" style="font-size:10px">${t._src}</span></td><td>${t.status==='confirmed'?'已确认':t.status==='received'?'已到账':t.status}</td><td><button class="edt sm" onclick="editLedgerRow('${t.id}','${t._src}')" title="编辑" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del sm" onclick="delLedgerRow('${t.id}','${t._src}')" title="删除" aria-label="删除">×</button></td></tr>${more}`;
+    const amtCell=(t.typeRaw==='edit')?'—':(sign+fmtNative(t.amount,t.currency));
+    const rowBtns=(t._src==='编辑')?'<span style="color:var(--dim);font-size:11px">审计</span>':`<button class="edt sm" onclick="editLedgerRow('${t.id}','${t._src}')" title="编辑" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del sm" onclick="delLedgerRow('${t.id}','${t._src}')" title="删除" aria-label="删除">×</button>`;
+    return `<tr><td>${t.date||'—'}</td><td>${typeTag(t)}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${t.account||'—'}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${t.target}">${t.target||'—'}</td><td class="${cls}">${amtCell}</td><td>${t.currency}</td><td><span class="tag ${t._src==='计划确认'?'active':t._src==='手动录入'?'t-bond':''}" style="font-size:10px">${t._src}</span></td><td>${t.status==='confirmed'?'已确认':t.status==='received'?'已到账':t.status}</td><td>${rowBtns}</td></tr>${more}`;
   }).join('');
   const collapseBtn=all.length>6&&ledgerExpanded?
     `<tr><td colspan="9" style="text-align:center;padding:6px"><button class="btn sm ghost" onclick="ledgerExpanded=false;renderLedger()">收起 ▲</button></td></tr>`:'';
@@ -5759,7 +5862,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v28';
+const APP_VERSION='2026-07-30-v29';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
