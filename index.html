@@ -2612,7 +2612,7 @@ function openAcct(aid){
       name=r.name+(r.is_cash?' [稳定币]':''); qty=r.qty?String(r.qty):'—'; cost=r.cost_price!=null?fmt(r.cost_price):'—';
       // 实时行情覆盖：缓存有该币实时价则用它重算 现价/市值/盈亏；否则回退存储价(r.price / value÷qty)
       const lp=cryptoLiveUnitPrice(r);
-      let livePrice=(lp!=null)?lp:(r.price?Number(r.price):null);
+      let livePrice=(lp!=null)?lp:(r.value_usdt!=null?Number(r.value_usdt):(r.price?Number(r.price):null));
       if(livePrice==null && r.qty && r.value) livePrice=Number(r.value)/Number(r.qty);
       const totalMv=(livePrice!=null && r.qty!=null)?Number(r.qty)*livePrice:Number(r.value||0);
       // 现价显示【原生币种单位】，不折算成人民币（拉取什么货币就显示什么单位）
@@ -5733,7 +5733,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v25';
+const APP_VERSION='2026-07-30-v26';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6366,7 +6366,7 @@ function applyCloudToData(snap, overwrite){
         o.income={records:mergeRecordsById(cloudInc, localInc, function(x){return x.id;})};
       }
     }
-    if(o.accounts){DATA.accounts=o.accounts;DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
+    if(o.accounts){DATA.accounts=purgeDeletedAccounts(o.accounts);DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     if(o.transactions)DATA.transactions=o.transactions;
     try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
