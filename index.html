@@ -4409,7 +4409,7 @@ function showDayEvents(dk){const recs=DATA.income.records.filter(r=>r.date===dk)
     const acctNameStr=(r.account&&acctName(r.account))||'未关联账户';
     const typeLabel=r.type_label||typeMap[r.type]||r.type||'其他';
     const recv=r.status==='received';
-    const cnText=(cur==='CNY')?'':('<span class="day-cny">≈ ¥'+fmtCny(cny)+' CNY</span>');
+    const cnText=(cur==='CNY')?'':('<span class="day-cny">≈ ¥'+fmt(cny)+' CNY</span>');
     return `<div class="day-row" role="button" tabindex="0" onclick="editInc('${r.id}')" onkeydown="if(event.key==='Enter')editInc('${r.id}')">`
       +`<div class="day-acct"><b>${escapeHtml(acctNameStr)}</b><span class="day-edit">编辑</span></div>`
       +`<div class="day-meta">${escapeHtml(typeLabel)} · ${escapeHtml(r.name||'')}</div>`
