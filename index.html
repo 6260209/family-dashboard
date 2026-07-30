@@ -5708,7 +5708,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-29-v21';
+const APP_VERSION='2026-07-30-v22';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6451,20 +6451,19 @@ function syncPull(){
 }
 function _syncShouldApply(snap){
   const cloudV1=snapGet(snap,'famdash_v1');
-  if(!cloudV1)return false;            // 云端无数据（首次使用）→ 保留本地基线，允许首次播种
+  if(!cloudV1)return false;
   let localV1=null;try{localV1=localStorage.getItem('famdash_v1');}catch(e){}
-  if(localV1===null)return true;       // 本地从未同步过 → 以云端为准
-  // 如果本次会话已拉取过（onload_pulled 标志），说明之前已被正确应用，
-  // 此时 localV1 === cloudV1 但 DATA 可能是基线（手工刷新后），必须强制重新应用。
+  if(localV1===null)return true;
   if(sessionStorage.getItem('famdash_onload_pulled')==='1')return true;
-  if(localV1!==cloudV1)return true;    // 内容不一致（如重新部署带来的旧基线）→ 云端优先覆盖，杜绝旧数据刷回手机
-  // 内容相同：用时间戳兜底，仅当云端比本地「最后拉取/最后修改」更新时才刷新（避免无谓刷新循环）
   const cloudT=new Date(snap.syncedAt).getTime()||0;
   let lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
   const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
-  // 如果 lastPull 是未来的时间戳（例如临时冻结云端时 device 记下了 2027），必须归位，否则永远拉不到更新。
   const nowT=Date.now();
   if(lastPull>nowT+3600000){ try{ localStorage.setItem('famdash_sync_lastpull','0'); }catch(e){} lastPull=0; }
+  if(localV1!==cloudV1){
+    if(localMod>0 && localMod>cloudT)return false;
+    return true;
+  }
   return cloudT>lastPull && cloudT>localMod;
 }
 function syncNow(){
