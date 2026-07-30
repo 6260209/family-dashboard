@@ -2455,11 +2455,11 @@ function recomputeAggregations(){
   // —— 底层穿透 + 子账户分类/地域/持有人/主题/透视表（口径与 build_dashboard_v5.py 一致）——
   const flat=jBuildFlat(accounts);
   const total_cny=jHkdToCny(total);
-  const invested_cny=flat.reduce((s,r)=>s+(r.mv||0),0);
+  const invested_cny=flat.reduce((s,r)=>r.sec==='cash'?s:s+(r.mv||0),0);
   // 子账户分类：严格按【子账户管理】设置中的子账户名汇总（按持仓 asset_category 归类，重命名实时生效）
   const settingsCats=catNames();
   const cat_sum={};
-  for(const r of flat){const ac=resolveCatName(r);cat_sum[ac]=(cat_sum[ac]||0)+(r.mv||0);}
+  for(const r of flat){ if(r.sec==='cash')continue; const ac=resolveCatName(r); cat_sum[ac]=(cat_sum[ac]||0)+(r.mv||0); }
   const category_summary=[];
   for(const c of settingsCats){const v=cat_sum[c];if(v>0){const cid=(getCategories().find(x=>x.name===c)||{}).id;category_summary.push({name:c,value:Math.round(v),pct:Math.round(v/(total_cny)*1000)/10,color:catColor(cid)});}}
   if(cat_sum['未分类']>0)category_summary.push({name:'未分类',value:Math.round(cat_sum['未分类']),pct:Math.round(cat_sum['未分类']/(total_cny)*1000)/10,color:catColor(null)});
@@ -2481,7 +2481,7 @@ function recomputeAggregations(){
   for(const a of accounts){const hh=jGetTotalHkd(a);holder_map[a.holder||'未知']=(holder_map[a.holder||'未知']||0)+hh[0];}
   const holder_summary=Object.keys(holder_map).sort((a,b)=>holder_map[b]-holder_map[a]).map(k=>({name:k,value:Math.round(jHkdToCny(holder_map[k])),pct:Math.round(holder_map[k]/(tHkd)*1000)/10,color:holderColor(k)}));
   const pivot_map={};
-  for(const r of flat){const key=r.underlying;const _cn=resolveCatName(r),_cid=resolveCatIdOf(r);if(!pivot_map[key])pivot_map[key]={name:r.underlying,code:r.code,cat:_cn,cat_id:_cid,by_acct:{},total:0,pnl:0,accts:new Set()};const pm=pivot_map[key];pm.by_acct[r.acct]=(pm.by_acct[r.acct]||0)+(r.mv||0);pm.total+=(r.mv||0);pm.pnl+=(r.pnl||0);pm.accts.add(r.acct);}
+  for(const r of flat){ if(r.sec==='cash')continue; const key=r.underlying;const _cn=resolveCatName(r),_cid=resolveCatIdOf(r);if(!pivot_map[key])pivot_map[key]={name:r.underlying,code:r.code,cat:_cn,cat_id:_cid,by_acct:{},total:0,pnl:0,accts:new Set()};const pm=pivot_map[key];pm.by_acct[r.acct]=(pm.by_acct[r.acct]||0)+(r.mv||0);pm.total+=(r.mv||0);pm.pnl+=(r.pnl||0);pm.accts.add(r.acct);}
   const pivot_rows=Object.keys(pivot_map).sort((a,b)=>pivot_map[b].total-pivot_map[a].total).map(k=>{const pm=pivot_map[k];pm.total=Math.round(pm.total);pm.pnl=Math.round(pm.pnl);pm.pnl_pct=pm.total?Math.round(pm.pnl/pm.total*10000)/100:0;pm.platforms=Array.from(pm.accts).sort();pm.count=pm.accts.size;delete pm.accts;return pm;});
   const hold_pnl_cny=accounts.reduce((s,a)=>s+jAcctHoldingPnlCny(a),0);
   const today_pnl_cny=accounts.reduce((s,a)=>s+jAcctTodayCny(a),0);
@@ -2489,8 +2489,8 @@ function recomputeAggregations(){
   const return_pct=cost_basis?Math.round(hold_pnl_cny/cost_basis*10000)/100:0;
   // 现金/债券/货币基金/银行理财按【子账户】精确汇总（与聚合页筛选口径一致，根除首页与聚合页不一致）
   // 关键：用本函数局部 flat（jBuildFlat 输出），不是 DATA.flat（DATA.flat 还在本函数末尾才赋值，会读到旧值）
-  const cash_cny_val=Math.round(flat.filter(r=>{const cn=resolveCatName(r);return cn==='现金'||cn==='货币基金'||cn==='银行理财';}).reduce((s,r)=>s+(r.mv||0),0));
-  const bond_cny_val=Math.round(flat.filter(r=>resolveCatName(r)==='债券').reduce((s,r)=>s+(r.mv||0),0));
+  const cash_cny_val=Math.round(flat.filter(r=>r.sec!=='cash' && (resolveCatName(r)==='现金'||resolveCatName(r)==='货币基金'||resolveCatName(r)==='银行理财')).reduce((s,r)=>s+(r.mv||0),0));
+  const bond_cny_val=Math.round(flat.filter(r=>r.sec!=='cash' && resolveCatName(r)==='债券').reduce((s,r)=>s+(r.mv||0),0));
   // —— 写回 DATA ——
   DATA.allocation=alloc.map(d=>({name:d.name,value:Math.round(jHkdToCny(d.value)),pct:d.pct,color:d.color}));
   DATA.account_breakdown=ab.map(x=>({name:x.name.replace(/^[^·]*\s*·\s*/,''),value:Math.round(jHkdToCny(x.asset_hkd)),pct:x.pct}));
@@ -5880,7 +5880,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v31';
+const APP_VERSION='2026-07-30-v32';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
