@@ -160,6 +160,7 @@ tbody tr:hover{background:#f8fafc}
 .acct .top{display:flex;justify-content:space-between;align-items:flex-start}
 .acct .pn{font-weight:700;font-size:15px}
 .acct .htag{font-size:11px;font-weight:600;color:#4a5b7c;background:#eef2f8;padding:1px 7px;border-radius:7px;margin-left:5px;vertical-align:middle}
+.day-acct .htag{font-size:11px;font-weight:600;color:#4a5b7c;background:#eef2f8;padding:1px 7px;border-radius:7px;margin-left:5px;vertical-align:middle}
 .acct .at{font-size:11px;color:var(--dim)}
 .acct .av{font-size:22px;font-weight:800;margin:8px 0 2px}
 .acct .ap{font-size:12px;color:var(--dim)}
@@ -4410,8 +4411,9 @@ function showDayEvents(dk){const recs=DATA.income.records.filter(r=>r.date===dk)
     const typeLabel=r.type_label||typeMap[r.type]||r.type||'其他';
     const recv=r.status==='received';
     const cnText=(cur==='CNY')?'':('<span class="day-cny">≈ ¥'+fmt(cny)+' CNY</span>');
+    const holder=incRecHolder(r);
     return `<div class="day-row" role="button" tabindex="0" onclick="editInc('${r.id}')" onkeydown="if(event.key==='Enter')editInc('${r.id}')">`
-      +`<div class="day-acct"><b>${escapeHtml(acctNameStr)}</b><span class="day-edit">编辑</span></div>`
+      +`<div class="day-acct"><b>${escapeHtml(acctNameStr)}</b>${holder?'<span class="htag">'+escapeHtml(holder)+'</span>':''}<span class="day-edit">编辑</span></div>`
       +`<div class="day-meta">${escapeHtml(typeLabel)} · ${escapeHtml(r.name||'')}</div>`
       +`<div class="day-amt"><span class="day-amt-native">${fmtNative(amt,cur)}</span>${cnText}<span class="day-status ${recv?'recv':'proj'}"><span class="dot"></span>${recv?'已到账':'预计'}</span></div>`
       +`</div>`;
@@ -5878,7 +5880,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v30';
+const APP_VERSION='2026-07-30-v31';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
