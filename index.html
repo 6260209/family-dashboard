@@ -2928,6 +2928,30 @@ function purgeDeletedAccounts(arr){
   if(!del.length)return arr;
   return arr.filter(function(a){ return del.indexOf(a.id||a.name)<0; });
 }
+/* ============ 子项目删除 Tombstone（现金/持仓/结构性产品删除也跨同步持久化） ============
+ * 旧逻辑 mergeAccountsForPush 对子数组走 UNION，导致本地删掉的现金/证券/代币在下次推送/拉取时
+ * 被云端版本（仍含该子项）重新并回，删除永不传播。这里维护 famdash_deleted_items
+ * （格式 aid::sec::key），在 mergeAccountsForPush / applyCloudToData / loadEditsLocal 三处剔除。 */
+function getItemKey(sec, it){
+  if(!it) return '';
+  if(sec==='cash_holdings') return 'cash:'+(it.currency||'')+':'+(it.name||'');
+  if(sec==='structured_products') return 'sp:'+(it.product_id||it.name||'');
+  const nm = it.asset_name||it.name||it.symbol||it.product_id||it.id||'';
+  return sec+':'+nm;
+}
+function getDeletedItems(){ try{ return JSON.parse(localStorage.getItem('famdash_deleted_items')||'[]'); }catch(e){ return []; } }
+function addDeletedItem(aid, sec, it){ if(!aid)return; const k=aid+'::'+getItemKey(sec,it); const s=new Set(getDeletedItems()); s.add(k); try{ localStorage.setItem('famdash_deleted_items', JSON.stringify([...s])); }catch(e){} }
+function isItemDeleted(aid, sec, it){ return getDeletedItems().indexOf(aid+'::'+getItemKey(sec,it))>=0; }
+function purgeDeletedItems(accts){
+  const del=getDeletedItems(); if(!del.length||!Array.isArray(accts))return accts;
+  const secs=['securities','fund_holdings','holdings','cash_holdings','crypto','bond_holdings'];
+  accts.forEach(function(a){
+    if(!a||!a.id)return;
+    secs.forEach(function(sec){ if(!a[sec])return; a[sec]=a[sec].filter(function(it){ return !isItemDeleted(a.id, sec, it); }); });
+    if(a.structured_products){ Object.keys(a.structured_products).forEach(function(k){ const grp=a.structured_products[k]; if(grp&&grp.items) grp.items=grp.items.filter(function(it){ return !isItemDeleted(a.id,'structured_products',it); }); }); }
+  });
+  return accts;
+}
 function deleteAccount(aid){
   const a=acct(aid); if(!a)return;
   confirmDialog('<svg class="ic-svg" width="14" height="14"><use href="#i-trash"/></svg> 删除账户',`确定删除账户「${escapeHtml(a.platform)}」？此操作不可恢复，删除后首页总额将自动重算。`,function(){
@@ -3226,7 +3250,7 @@ function saveEditsLocal(){
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
   try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));try{sessionStorage.setItem('famdash_session_edited','1');}catch(e){}scheduleSyncPush();}}catch(e){}
 }
-function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts){DATA.accounts=purgeDeletedAccounts(o.accounts);DATA.accounts.forEach(normalizeSecurityMv); DATA.accounts.forEach(normalizeSecPnl);}if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
+function loadEditsLocal(){try{const s=localStorage.getItem('famdash_v1');if(!s)return;const o=JSON.parse(s);if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));DATA.accounts.forEach(normalizeSecurityMv); DATA.accounts.forEach(normalizeSecPnl);}if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}if(o.transactions)DATA.transactions=o.transactions;if(o.activity_log&&o.activity_log.length){localStorage.setItem('famdash_activity_log',JSON.stringify(o.activity_log));}if(o.update_log&&o.update_log.length&&DATA.meta){DATA.meta.update_log=o.update_log;}}catch(e){}}
 function afterEdit(aid){
   const a=acct(aid);
   if(a)syncHoldingsFromLegacy(a); // 先由旧式数组回填统一 holdings（编辑已落在 legacy 数组上）
@@ -3245,6 +3269,7 @@ function delHolding(aid,sec,idx){
   const item=a[sec]&&a[sec][idx];
   const name=item?(item.name||item.asset_name||item.product_id||`#${idx}`):`#${idx}`;
   if(a[sec])a[sec].splice(idx,1);
+  addDeletedItem(aid, sec, item);   // 记入子项目 tombstone，确保删除跨同步/重登录持久化
   afterEdit(aid);
   logActivity('删除'+ (labelMap[sec]||sec), `${acctName(aid)} · ${name}`);
 }
@@ -3253,6 +3278,7 @@ function delStruct(aid,k,i){
   const item=a.structured_products&&a.structured_products[k]&&a.structured_products[k].items&&a.structured_products[k].items[i];
   const name=item?(item.product_id||`#${i}`):`#${i}`;
   if(a.structured_products&&a.structured_products[k]){a.structured_products[k].items.splice(i,1);if(!a.structured_products[k].items.length)delete a.structured_products[k];}
+  addDeletedItem(aid, 'structured_products', item);   // 子项目 tombstone
   afterEdit(aid);
   logActivity('删除结构性产品',`${acctName(aid)} · ${name}`);
 }
@@ -5733,7 +5759,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v26';
+const APP_VERSION='2026-07-30-v27';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6189,7 +6215,7 @@ function delAccountType(n){
 // 令牌存于本机 localStorage（famdash_sync_token），绝不写入公开源码，避免 GitHub 自动吊销令牌。
 const SYNC_REPO='6260209/family-dashboard-sync';
 const SYNC_FILE='sync.json';
-const SYNC_KEYS=['famdash_v1','famdash_activity_log','famdash_settings','famdash_holders','famdash_account_types','famdash_currencies','famdash_plans','famdash_todos','famdash_goals','famdash_categories','famdash_locations','famdash_projects','famdash_deleted_accounts'];
+const SYNC_KEYS=['famdash_v1','famdash_activity_log','famdash_settings','famdash_holders','famdash_account_types','famdash_currencies','famdash_plans','famdash_todos','famdash_goals','famdash_categories','famdash_locations','famdash_projects','famdash_deleted_accounts','famdash_deleted_items'];
 // 轻量级同步加密（用于加密 sync token）：AES-256-CBC + 固定 salt（保证可重现）
 const _TOK_SALT=new Uint8Array([0x46,0x41,0x4d,0x44,0x41,0x53,0x48,0x21,0x54,0x4f,0x4b,0x45,0x4e,0x21,0x21,0x21]);
 function _bytesToB64(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);return btoa(s);}
@@ -6347,7 +6373,9 @@ function applyCloudToData(snap, overwrite){
     o=JSON.parse(v1);
     // ── 账户删除 tombstone：合并云端已删清单到本地，并剔除已删账户，使删除跨同步/重登录持久化
     try{ const _cd=snapGet(snap,'famdash_deleted_accounts'); if(_cd){ const _arr=JSON.parse(_cd); const _set=new Set(getDeletedAccounts()); _arr.forEach(function(x){_set.add(x);}); try{localStorage.setItem('famdash_deleted_accounts',JSON.stringify([..._set]));}catch(e){} } }catch(e){}
-    if(o.accounts) o.accounts=purgeDeletedAccounts(o.accounts);
+    // ── 子项目删除 tombstone：合并云端已删子项清单，使现金/持仓删除跨同步持久化
+    try{ const _ci=snapGet(snap,'famdash_deleted_items'); if(_ci){ const _a=JSON.parse(_ci); const _s2=new Set(getDeletedItems()); _a.forEach(function(x){_s2.add(x);}); try{localStorage.setItem('famdash_deleted_items',JSON.stringify([..._s2]));}catch(e){} } }catch(e){}
+    if(o.accounts) o.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));
     if(!overwrite && localV1){
       const cloudAcctMap={}; (o.accounts||[]).forEach(function(a){ cloudAcctMap[a.id||a.name]=a; });
       (localV1.accounts||[]).forEach(function(a){
@@ -6366,7 +6394,7 @@ function applyCloudToData(snap, overwrite){
         o.income={records:mergeRecordsById(cloudInc, localInc, function(x){return x.id;})};
       }
     }
-    if(o.accounts){DATA.accounts=purgeDeletedAccounts(o.accounts);DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
+    if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     if(o.transactions)DATA.transactions=o.transactions;
     try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
@@ -6401,7 +6429,7 @@ function mergeAccountsForPush(localAcc, cloudAcc){
     } else out.push(a);
   });
   cloudAcc.forEach(function(a){ const k=a.id||a.name; if(!(k in seen) && !isAccountDeleted(k)) out.push(a); });
-  return out;
+  return purgeDeletedItems(out);   // 剔除已删子项目，避免云端版本把删除的现金/持仓并回
 }
 // 构造「推送到云端」的快照：把云端数据合并进本地，保证云端独有账户/流水/收入不被覆盖。
 // famdash_v1 走账户并集 + 流水/收入按 id 合并（云端优先、本地覆盖同名 → 本地改动不丢）；
