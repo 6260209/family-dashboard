@@ -5708,7 +5708,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v22';
+const APP_VERSION='2026-07-30-v23';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6461,7 +6461,9 @@ function _syncShouldApply(snap){
   const nowT=Date.now();
   if(lastPull>nowT+3600000){ try{ localStorage.setItem('famdash_sync_lastpull','0'); }catch(e){} lastPull=0; }
   if(localV1!==cloudV1){
-    if(localMod>0 && localMod>cloudT)return false;
+    // 本地有未推送修改时，优先保护本地，避免覆盖未同步的删除/编辑。
+    // 等用户手动 syncNow 时会先 push 本地再 pull 云端，通过 merge 解决分歧。
+    if(localMod>0)return false;
     return true;
   }
   return cloudT>lastPull && cloudT>localMod;
