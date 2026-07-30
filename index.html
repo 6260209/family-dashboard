@@ -6510,6 +6510,8 @@ function _syncShouldApply(snap){
   if(!cloudV1)return false;
   // 云端标记删除的账户，即便本地有未推送改动也要重拉并剔除（删除必须持久化，不能因 localMod>0 被跳过）
   try{ const cd=snapGet(snap,'famdash_deleted_accounts'); if(cd){ const set=new Set(JSON.parse(cd)); if((DATA.accounts||[]).some(function(a){return set.has(a.id||a.name);})) return true; } }catch(e){}
+  // 云端标记删除的子项目（现金/持仓等），若本地对应账户仍存在，则强制重拉以剔除（与账户 tombstone 同理）
+  try{ const ci=snapGet(snap,'famdash_deleted_items'); if(ci){ const set=new Set(JSON.parse(ci)); let hit=false; set.forEach(function(d){ const aid=d.split('::')[0]; if((DATA.accounts||[]).some(function(a){return a.id===aid;})) hit=true; }); if(hit) return true; } }catch(e){}
   let localV1=null;try{localV1=localStorage.getItem('famdash_v1');}catch(e){}
   if(localV1===null)return true;
   if(sessionStorage.getItem('famdash_onload_pulled')==='1')return true;
