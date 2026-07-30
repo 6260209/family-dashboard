@@ -1127,11 +1127,6 @@ function flatFindRaw(r){
   if(r.sec==='crypto')return(a.crypto||[])[r.idx]||null;
   if(r.sec==='hold')return(a.holdings||[])[r.idx]||null;
   if(r.sec==='cash')return(a.cash_holdings||[])[r.idx]||null;
-  if(r.sec==='sp'){
-    const sp=a.structured_products; if(!sp)return null;
-    const grp=(r.grp||'').indexOf('usd_')>=0?(sp.usd_products||{}):(sp.hkd_products||{});
-    return(grp.items||[])[r.idx]||null;
-  }
   return null;
 }
 // （首页子账户分类明细相关函数已合并至账户页 renderConsolidated；此处保留 flatFindRaw 供账户页复用）
@@ -1262,7 +1257,6 @@ const CONSOL_TABS=[
   {key:'all',label:'<svg class="ic-svg" width="14" height="14"><use href="#i-doc"/></svg> 全部'},
   {key:'security',label:'<svg class="ic-svg" width="14" height="14"><use href="#i-chart"/></svg> 证券'},
   {key:'fund',label:'<svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 基金'},
-  {key:'structured',label:'<svg class="ic-svg" width="14" height="14"><use href="#i-link"/></svg> 结构性产品'},
   {key:'crypto',label:'₿ 加密货币'},
   {key:'cash',label:'<svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金/其他'}
 ];
@@ -1270,7 +1264,7 @@ const CONSOL_TABS=[
 const CONSOL_CAT_MAP={
   'A股证券':'security','港股':'security','美股':'security',
   'A股基金':'fund','QDII':'fund','债基':'fund','保险':'cash',
-  '结构性产品':'structured','加密货币':'crypto','流动现金':'cash'
+  '加密货币':'crypto','流动现金':'cash'
 };
 let consolTab='全部';
 let consolHolder='全部';
@@ -1754,30 +1748,11 @@ function acctLiveTotalCny(a){
     }
     c+=toCny(total, ccy);
   });
-  // 2) 现金类持仓（含券商可用资金、稳定币、债券等）
+  // 2) 现金类持仓（含稳定币、债券、手动现金子账户等）
   c+=baseCashCny(a);
   // 注意：交易流水现金影响(txCashDelta)不再计入账户总值/现金合计，避免与手动现金子账户重复计数。
   // 现金合计 = 现金小计(手动现金子账户)；流水影响降级为对账信号（见账户弹窗 txNote）。
   return c;
-}
-// 初始化时把券商端「可用现金 / 结构化产品净值」种入可编辑结构，
-// 使实时汇总(acctLiveTotalCny)≈原始 summary，且不丢真实资产、现金在弹窗可见。
-// 注意：用户已显式删除的"_seeded"条目不应再被自动重新种入！
-// 只在 cash_holdings 完全为空时才种入；用户自己添加的 cash_holdings 不覆盖。
-function seedBrokerAssets(){
-  (DATA.accounts||[]).forEach(a=>{
-    // 1) 券商可用现金 → cash_holdings（仅当完全为空）
-    if(a.summary){
-      const cashHkd = a.summary.cash_hkd || a.summary.remaining_liquidity_hkd;
-      if(cashHkd && (!a.cash_holdings || a.cash_holdings.length === 0)){
-        a.cash_holdings=[{name:'券商可用资金',amount:cashHkd,currency:'HKD',type:'现金',profit:0,return_pct:0,asset_category:'现金',_seeded:true}];
-      }
-    }
-    // 2) 券商结构化产品净值 → structured_products（仅当完全为空）
-    if((!a.structured_products||(!a.structured_products.hkd_products&&!a.structured_products.usd_products)) && a.summary && a.summary.structured_nv_hkd){
-      a.structured_products={hkd_products:{items:[{product_id:'券商结构化产品(自动导入)',face_value_hkd:a.summary.structured_nv_hkd,underlying:['结构性产品'],_seeded:true}]}};
-    }
-  });
 }
 // 账户总值：始终用实时汇总（含证券/基金/现金/加密/结构化 + UI 编辑），
 // 保证弹窗总额=可见持仓之和、且随现金增删联动。仅当实时为 0 才回退 summary。
@@ -1790,7 +1765,7 @@ function accountTotalCny(a){
   if(asm.total_asset_usdt) return cny(asm.total_asset_usdt)*7.155;
   return 0;
 }
-// ===== 实时重聚合（与 aggregator_v4.py / build_dashboard_v5.py 同源，前端移植）=====
+// ===== 实时重聚合（前端统一口径；本地编辑/删除后联动刷新各类图表）=====
 // 目的：本地删除/编辑账户或持仓后，让饼图/子账户/地域/持有人/主题/账户排行/透视表全部联动刷新，
 // 解决原先"只改了首页大数字，图表不更新"以及"删了账户图表还显示幽灵数据"的问题。
 let FX_CNY_HKD=1.09, FX_USD_HKD=7.80, FX_USD_CNY=FX_USD_HKD/FX_CNY_HKD;
@@ -2148,7 +2123,7 @@ function jGetTotalHkd(a){
 function jClassify(a){if('securities'in a)return 'security';if('fund_holdings'in a)return 'fund';if('holdings'in a)return 'crypto';return 'other';}
 function jSecValueCny(t){const ccy=t.currency||'HKD';const mv=ccy==='CNY'?(t.market_value_cny||0):ccy==='HKD'?(t.market_value_hkd||0):(t.market_value_usd||0);return (mv||0)*(ccy==='CNY'?1:(ccy==='HKD'?1/FX_CNY_HKD:FX_USD_CNY));}
 function jSecPnlCny(t){const ccy=t.currency||'HKD';const p=ccy==='CNY'?(t.pnl_total_cny||0):ccy==='HKD'?(t.pnl_total_hkd||0):(t.pnl_total_usd||0);return (p||0)*(ccy==='CNY'?1:(ccy==='HKD'?1/FX_CNY_HKD:FX_USD_CNY));}
-const CAT_ORDER=['A股证券','港股','美股','QDII','A股基金','债基','保险','结构性产品','加密货币','流动现金'];
+const CAT_ORDER=['A股证券','港股','美股','QDII','A股基金','债基','保险','加密货币','流动现金'];
 const REGION_COLORS={'中国':'#fbbf24','香港':'#0ea5e9','美国':'#14b8a6','数字资产':'#f7931a','全球商品':'#94a3b8','中国内地':'#fbbf24','中国香港':'#0ea5e9','欧洲':'#8b5cf6','其他':'#94a3b8'};
 const HOLDER_COLORS={'未知':'#94a3b8'};
 const HOLDER_PALETTE=['#0ea5e9','#14b8a6','#f59e0b','#8b5cf6','#ec4899','#10b981','#6366f1','#ef4444'];
@@ -2156,7 +2131,6 @@ function holderColor(name){if(!name||name==='未知')return HOLDER_COLORS['未�
 const THEME_COLORS=['#0ea5e9','#14b8a6','#8b5cf6','#f59e0b','#10b981','#ef4444','#ec4899','#06b6d4','#fbbf24','#64748b'];
 function jUnderlyingIndex(name,code,cat,tags){
   name=String(name||'');const code_u=String(code||'').toUpperCase();const tagstr=(tags||[]).map(x=>String(x)).join(' ').toUpperCase();const n_u=name.toUpperCase();
-  if(cat==='结构性产品')return '结构性产品(FCN)';
   if(cat==='加密货币'){if(code_u.indexOf('QQQ')>=0)return '纳斯达克100';return '加密货币';}
   if(code_u.indexOf('QQQ')>=0)return '纳斯达克100';
   if(name.indexOf('纳斯达克')>=0||name.indexOf('纳指')>=0)return '纳斯达克100';
@@ -2178,7 +2152,6 @@ function jUnderlyingIndex(name,code,cat,tags){
 }
 function jRegionOf(underlying){
   if(underlying==='纳斯达克100'||underlying==='标普500'||underlying==='美股个股')return '美国';
-  if(underlying==='结构性产品(FCN)')return '美国';
   if(underlying==='恒生科技'||underlying==='港股宽基'||underlying==='港股个股')return '香港';
   if(underlying==='加密货币')return '数字资产';
   if(underlying==='流动现金')return '中国';
@@ -2195,7 +2168,6 @@ function normalizeAccount(a){
   if(!a||!Array.isArray(a.holdings))return a;
   const H=a.holdings;
   a.securities=[]; a.fund_holdings=[]; a.cash_holdings=[];
-  a.structured_products={usd_products:{items:[]},hkd_products:{items:[]}};
   a.crypto=[];
   for(const h of H){
     // 统一数据层：ccy 与 currency 必须完全同步，currency 是 ccy 的展示别名
@@ -2217,11 +2189,6 @@ function normalizeAccount(a){
       const cp=Number(h.cost_price)||0;
       const pnlPct=(cp>0&&unit>0)?+(((unit-cp)/cp)*100).toFixed(2):(h.pnl_pct||0);
       a.crypto.push(Object.assign({is_cash:!!h.is_cash,amount:h.qty,value_usdt:unit,currency:ccy,pnl_pct:pnlPct,cost_price:h.cost_price||null},common));
-      continue;
-    }
-    if(cat==='结构性产品'){
-      const grp=(ccy==='USD')?'usd_products':'hkd_products';
-      a.structured_products[grp].items.push(Object.assign({product_id:String(h.name||''),underlying:[h.market||h.asset_type||''],face_value_usd:(ccy==='USD')?val:null,face_value_hkd:(ccy==='HKD')?val:null,currency:ccy},common));
       continue;
     }
     // 股票类子账户（美股/港股/A股/股票/ETF/期权等）一律走证券持仓，
@@ -2282,8 +2249,6 @@ function syncHoldingsFromLegacy(a){
   (a.securities||[]).forEach(t=>{const ccy=t.currency||'CNY';const f=pv(t.id,_fwdVal(t,ccy),t.pnl_amount);H.push({id:t.id||genHid(),name:t.asset_name,code:t.code,qty:t.quantity,cost_price:t.cost_price,price:t.price,value:f.value,pnl:f.pnl,cat:t.asset_category||marketToCat(t.market)||'美股',cat_id:t.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:t.location||'',project:t.project||'',source:'sec',market:t.market||'',asset_type:t.asset_type||''});});
   (a.fund_holdings||[]).forEach(f=>{const ccy=f.currency||'CNY';const v=Number(f.amount||0);const f2=pv(f.id,v,f.profit);H.push({id:f.id||genHid(),name:f.name,code:f.code,qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:f.asset_category||'基金',cat_id:f.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:f.location||'',project:f.project||'',source:'fund',market:'',asset_type:''});});
   (a.cash_holdings||[]).forEach(c=>{const ccy=c.currency||'CNY';const v=Number(c.amount||0);const f2=pv(c.id,v,c.profit);H.push({id:c.id||genHid(),name:c.name,code:'',qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:c.asset_category||'现金',cat_id:c.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:c.location||'',project:c.project||'',source:'cash',market:'',asset_type:c.type||''});});
-  const sp=a.structured_products||{};
-  ['usd_products','hkd_products'].forEach(k=>{(sp[k]||{}).items&&sp[k].items.forEach(p=>{const ccy=k==='usd_products'?'USD':'HKD';const v=(ccy==='USD'?p.face_value_usd:p.face_value_hkd)||0;const f2=pv(p.id,v,null);H.push({id:p.id||genHid(),name:p.product_id,code:'',qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:'结构性产品',cat_id:p.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:p.location||'',project:p.project||'',source:'struct',market:(p.underlying||[]).join('/'),asset_type:''});});});
   (a.crypto||[]).forEach(x=>{
     const ccy=x.currency||'USD';
     // value_usdt 在旧数据中表示该加密货币的【总市值】（数量 × 现价），不是单价
@@ -2302,7 +2267,7 @@ function syncHoldingsFromLegacy(a){
   return a;
 }
 function jBuildFlat(accounts){
-  // 统一口径：直接读 a.holdings（与 build_dashboard_v5.py 同源），cat 即设置类别名，
+  // 统一口径：直接读 a.holdings，cat 即设置类别名，
   // mv/pnl 经 toCny 折算 CNY，underlying 经 jUnderlyingIndex 归口，保证分析链路单一真源。
   const flat=[];
   for(const a of accounts){
@@ -2328,17 +2293,6 @@ function jBuildFlat(accounts){
         cost_price:h.cost_price||0,price:h.price||0,currency:ccy,
         underlying:und,asset_category:cat,loc:h.location||'',holder:h.holder||hld,aid:aid,acctTag:a.account_type||''
       });
-    }
-    // 账户闲置现金 / 流动性余量 → 流动现金（与 build_dashboard_v5.py:191 一致）
-    // 去重：若该账户的现金子账户里已有「券商可用资金」种子条目（代表同一笔券商闲置现金），则不再额外发合成行，
-    // 避免与真实现金子账户重复展示、且消除「改/删种子��被合行悬空」的幽灵现金（排查 #4）。
-    const sc=a.summary||{};
-    const cashHkd=(sc.cash_hkd||sc.remaining_liquidity_hkd||0);
-    if(cashHkd){
-      const hasSeededCash=(a.cash_holdings||[]).some(c=>c._seeded && Math.round(Number(c.amount||0))===Math.round(cashHkd));
-      if(!hasSeededCash){
-        flat.push({sec:'cash',idx:-1,grp:'cash:'+a.platform,project:'',acct:a.platform,cat:'流动现金',name:'账户闲置现金（券商可用）',code:'',type:'现金',qty:'-',market:'',mv:Math.round(jHkdToCny(cashHkd)),pnl:0,pnl_pct:0,underlying:'流动现金',asset_category:'流动现金',loc:'中国',holder:hld,aid:aid,acctTag:a.account_type||''});
-      }
     }
   }
   return flat;
@@ -2368,7 +2322,7 @@ function jToNative(amount,ccy,native){
 // 账户 summary 重算（口径与 server.py recompute_summary 一致）：编辑/删除持仓后回写账户总资产，
 // 使全球总额与所有图表实时联动。支持 summary(HKD证券/结构化) / summary_cny(CNY基金) / account_summary(USDT/CNY)。
 function jRecomputeSummary(raw){
-  // 统一口径：直接按 holdings 汇总（与 build_dashboard_v5.py 一致），账户现金来自 summary.cash_hkd/remaining_liquidity_hkd
+  // 统一口径：直接按 holdings 汇总，账户现金只取 cash_holdings 子账户（liquid_explicit），不再读券商快照 snapshot 字段
   const hlds=raw.holdings||[];
   let totalCny=0, pnlCny=0;
   for(const h of hlds){
@@ -2378,7 +2332,7 @@ function jRecomputeSummary(raw){
   }
   if('summary' in raw){
     const s=raw.summary||{}; raw.summary=s;
-    const cashHkd=(s.cash_hkd||0)+(s.remaining_liquidity_hkd||0);
+    const cashHkd=(raw.cash_holdings||[]).reduce((acc,c)=>acc+jToHkd(Number(c.amount||0),c.currency||'HKD'),0);
     s.total_asset_hkd=Math.round(totalCny*FX_CNY_HKD+cashHkd);
     s.securities_nv_hkd=Math.round(totalCny*FX_CNY_HKD);
   } else if('summary_cny' in raw){
@@ -2397,8 +2351,8 @@ function recomputeAggregations(){
   const accounts=(DATA.accounts||[]).filter(a=>!(a.archived&&!showArchived));
   // 地域旧名 → 设置项（所在地管理）名称
   function remapRegion(r){const M={'中国':'中国内地','香港':'中国香港','美国':'美国','欧洲':'欧洲','数字资产':'其他','全球商品':'其他'};return M[r]||r;}
-  // —— 资产大类（allocation） + 账户规模（account_breakdown），口径与 aggregator_v4.py 一致 ——
-  let total=0,struct=0,sec=0,fund=0,crypto=0,bond=0,ins=0,liquid_explicit=0;
+  // —— 资产大类（allocation） + 账户规模（account_breakdown），前端统一口径 ——
+  let total=0,sec=0,fund=0,crypto=0,bond=0,ins=0,liquid_explicit=0;
   const ab=[];
   for(const a of accounts){
     const cat=jClassify(a);
@@ -2409,12 +2363,8 @@ function recomputeAggregations(){
     if(cat==='security'){
       const s=a.summary||{};
       let secCny=(a.securities||[]).reduce((acc,t)=>acc+toCny(secValRaw(t),t.currency||'CNY'),0);
-      let stCny=Object.keys(a.structured_products||{}).reduce((acc,k)=>{
-        const items=(a.structured_products[k]||{}).items||[];
-        return acc + items.reduce((acc2,it)=>acc2+toCny(it.face_value_usd?it.face_value_usd:it.face_value_hkd||0,it.face_value_usd?'USD':'HKD'),0);
-      },0);
-      if(secCny<=0&&stCny<=0){ secCny=(s.securities_nv_hkd||0)/FX_CNY_HKD; stCny=(s.structured_nv_hkd||0)/FX_CNY_HKD; }
-      sec+=secCny*FX_CNY_HKD; struct+=stCny*FX_CNY_HKD;
+      if(secCny<=0){ secCny=(s.securities_nv_hkd||0)/FX_CNY_HKD; }
+      sec+=secCny*FX_CNY_HKD;
     }
     else if(cat==='fund'){
       let fCny=(a.fund_holdings||[]).reduce((s,f)=>s+toCny(f.amount||0,f.currency||'CNY'),0);
@@ -2435,12 +2385,11 @@ function recomputeAggregations(){
       if(t==='债券')bond+=ch;else if(t==='保险')ins+=ch;else liquid_explicit+=ch;
     }
   }
-  const cash=total-(struct+sec+fund+crypto);
+  const cash=total-(sec+fund+crypto);
   let residual_other=cash-(bond+ins+liquid_explicit);
   if(residual_other<0)residual_other=0;
   const liquid_cash_hkd=liquid_explicit+residual_other;
   const allocRaw=[
-    {name:'结构性产品',value:Math.round(struct),color:'#0ea5e9'},
     {name:'证券/股票/ETF',value:Math.round(sec),color:'#14b8a6'},
     {name:'A股/基金(CNY)',value:Math.round(fund),color:'#8b5cf6'},
     {name:'加密货币/ETF',value:Math.round(crypto),color:'#f59e0b'},
@@ -2452,7 +2401,7 @@ function recomputeAggregations(){
   const tHkd=total||1;
   for(const x of ab)x.pct=Math.round(x.asset_hkd/(tHkd)*1000)/10;
   for(const d of alloc)d.pct=Math.round(d.value/(tHkd)*1000)/10;
-  // —— 底层穿透 + 子账户分类/地域/持有人/主题/透视表（口径与 build_dashboard_v5.py 一致）——
+  // —— 底层穿透 + 子账户分类/地域/持有人/主题/透视表（前端统一口径）——
   const flat=jBuildFlat(accounts);
   const total_cny=jHkdToCny(total);
   const invested_cny=flat.reduce((s,r)=>r.sec==='cash'?s:s+(r.mv||0),0);
@@ -2607,11 +2556,6 @@ function openAcct(aid){
   cashMerged.forEach(x=>_addCatItem('cash_holdings',x.rec,x.idx));
   // 加密货币统一走 a.holdings（source==='crypto'），a.crypto 已在 syncHoldingsFromLegacy 中合并并清空
   (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto')_addCatItem('holdings',h,i);});
-  if(a.structured_products){
-    ['usd_products','hkd_products'].forEach(k=>{
-      (a.structured_products[k]||{}).items&&a.structured_products[k].items.forEach((p,i)=>_addCatItem('structured_products',p,{k,i}));
-    });
-  }
 
   // ===== 按子账户顺序渲染区块 =====
   const cats=getCategories();
@@ -2698,18 +2642,6 @@ function openAcct(aid){
       // 统一 holdings 后，crypto 记录在 a.holdings 中，编辑/删除也走 holdings
       const editSec=(sec==='holdings')?'holdings':'crypto';
       edt=editBtn(editSec,it.idx); del=delBtn(editSec,it.idx);
-    } else if(sec==='structured_products'){
-      ccy=r.currency||'';
-      name=r.product_id||''; qty='—'; cost='—'; price='—';
-      const fv=r.face_value_usd||r.face_value_hkd||0;
-      mv=fmtCny(r.face_value_usd?usdToCny(fv):hkdToCny(fv));
-      mvCny=mv.replace(/[^0-9.-]/g,'')*1;
-      pnl=r.profit!=null?String(r.profit):'—';
-      pct=r.return_pct!=null?(r.return_pct+'%'):'';
-      proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
-      const spIdx=it.idx;
-      edt=`<button class="edt" onclick="showAddForm('${aid}','structured_products','${spIdx.k}:${spIdx.i}')"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`;
-      del=`<button class="del" onclick="delStruct('${aid}','${spIdx.k}',${spIdx.i})">×</button>`;
     }
     const ccyTag=ccy?('<span class="tag '+(ccy==='HKD'?'t-hk':ccy==='USD'?'t-us':ccy==='USDT'?'t-crypto':'t-astock')+'">'+ccy+'</span>'):'—';
     return {name,proj,qty,cost,price,mv,ccyTag,pnl,pnlCls,pct,pctCls,cat,loc,notes,edt,del,mvCny};
@@ -2719,7 +2651,6 @@ function openAcct(aid){
     if(it.section==='fund_holdings') return 'fund-row-'+it.idx;
     if(it.section==='cash_holdings') return 'cash-row-'+it.idx;
     if(it.section==='crypto') return 'hold-row-'+it.idx;
-    if(it.section==='structured_products') return 'struct-row-'+it.idx.k+'-'+it.idx.i;
     return '';
   }
   orderedCats.forEach(catName=>{
@@ -3008,7 +2939,6 @@ function purgeDeletedAccounts(arr){
 function getItemKey(sec, it){
   if(!it) return '';
   if(sec==='cash_holdings') return 'cash:'+(it.currency||'')+':'+(it.name||'');
-  if(sec==='structured_products') return 'sp:'+(it.product_id||it.name||'');
   const nm = it.asset_name||it.name||it.symbol||it.product_id||it.id||'';
   return sec+':'+nm;
 }
@@ -3021,7 +2951,6 @@ function purgeDeletedItems(accts){
   accts.forEach(function(a){
     if(!a||!a.id)return;
     secs.forEach(function(sec){ if(!a[sec])return; a[sec]=a[sec].filter(function(it){ return !isItemDeleted(a.id, sec, it); }); });
-    if(a.structured_products){ Object.keys(a.structured_products).forEach(function(k){ const grp=a.structured_products[k]; if(grp&&grp.items) grp.items=grp.items.filter(function(it){ return !isItemDeleted(a.id,'structured_products',it); }); }); }
   });
   return accts;
 }
@@ -3167,18 +3096,6 @@ const SEC_SCHEMA={
     {k:'return_pct',l:'收益率%',t:'number',readOnly:true},
     {k:'notes',l:'备注',t:'text',ph:'可选'}
   ]},
-  structured_products:{label:'结构性产品',fields:[
-    {k:'product_id',l:'产品',t:'text'},
-    {k:'underlying',l:'挂钩标的',t:'text',ph:'逗号分隔'},
-    {k:'currency',l:'货币单位',t:'select',options:[]},
-    {k:'project',l:'投资项目',t:'select',options:[]},
-    {k:'asset_category',l:'子账户',t:'select',options:[]},
-    {k:'location',l:'所在地',t:'select',options:[]},
-    {k:'face_value_usd',l:'名义本金(USD)',t:'number'},
-    {k:'profit',l:'票息/盈亏',t:'number'},
-    {k:'return_pct',l:'收益率%',t:'number',readOnly:true},
-    {k:'notes',l:'备注',t:'text',ph:'可选'}
-  ]},
 };
 
 /* ===== 动态选项列表（localStorage 持久化，设置页可增删） ===== */
@@ -3195,7 +3112,6 @@ const DEFAULT_PROJECTS=[
   '纳斯达克100（QQQ/QQQM/QDII纳指）',
   '标普500（SPY/VOO/标普QDII）',
   '债券产品',
-  '结构性产品(FCN)',
   '港股持仓',
   'A股持仓',
   '加密货币',
@@ -3214,7 +3130,6 @@ const DEFAULT_CATEGORIES=[
   {id:'cat_bond',name:'债券'},
   {id:'cat_cash',name:'现金'},
   {id:'cat_mmf',name:'货币基金'},
-  {id:'cat_struct',name:'结构性产品'},
   {id:'cat_crypto',name:'加密货币'},
   {id:'cat_bank',name:'银行理财'},
   {id:'cat_ins',name:'保险'},
@@ -3235,7 +3150,7 @@ function genCatId(){return 'cat_'+Math.random().toString(36).slice(2,10)+Date.no
 function getCategories(){try{const a=JSON.parse(localStorage.getItem(CATEGORY_KEY)||'null');if(Array.isArray(a)){if(a.length===0)return[{id:'cat_other',name:'其他'}];if(typeof a[0]==='string')return a.map(s=>({id:genCatId(),name:s}));return a;}}catch(e){}return DEFAULT_CATEGORIES.map(c=>({id:c.id,name:c.name}));}
 function catNames(){return getCategories().map(c=>(c&&c.name!=null?c.name:c));}
 // ===== 子账户模式：stock=股票单价模式（数量/现价/成本价），fund=基金资产模式（金额/盈亏/收益率%）=====
-const MODE_DEFAULTS={'cat_sec_etf':'stock','cat_fund_off':'fund','cat_astock':'stock','cat_hk':'stock','cat_us':'stock','cat_bond':'stock','cat_cash':'fund','cat_mmf':'fund','cat_struct':'fund','cat_crypto':'fund','cat_bank':'fund','cat_ins':'fund','cat_other':'fund'};
+const MODE_DEFAULTS={'cat_sec_etf':'stock','cat_fund_off':'fund','cat_astock':'stock','cat_hk':'stock','cat_us':'stock','cat_bond':'stock','cat_cash':'fund','cat_mmf':'fund','cat_crypto':'fund','cat_bank':'fund','cat_ins':'fund','cat_other':'fund'};
 function guessMode(name){if(/股|ETF|证券|stock|bond|债|指数/i.test(name||''))return 'stock';return 'fund';}
 function catMode(id){if(!id)return 'fund';const a=getCategories();const f=a.find(c=>c&&c.id===id);if(!f)return 'fund';if(f.mode)return f.mode;const d=MODE_DEFAULTS[f.id];return d||guessMode(f.name);}
 function catModeOf(name){const id=resolveCatIdSafe(name);return id?catMode(id):guessMode(name);}
@@ -3247,7 +3162,7 @@ function catNormName(s){const a=getCategories();const n=((s||'').trim().replace(
 // 统一分类解析（单一真源 = 【子账户管理】设置）：返回 Settings 子账户名；
 // 孤儿 / 已删除 / 匹配不到 → “未分类”（不污染 Settings 列表）
 // 旧粗略类别 → 设置项（子账户管理）名称的桥接（全局，供 resolveCatName 等调用）
-function catToSettings(cat){const M={'流动现金':'现金','加密货币':'加密货币','结构性产品':'结构性产品','A股证券':'A股','港股':'港股','美股':'美股','A股基金':'场外基金','QDII':'其他','债基':'债券'};return M[cat]||cat;}
+function catToSettings(cat){const M={'流动现金':'现金','加密货币':'加密货币','A股证券':'A股','港股':'港股','美股':'美股','A股基金':'场外基金','QDII':'其他','债基':'债券'};return M[cat]||cat;}
 function resolveCatName(r){const nm=catNameById(r.cat_id)||catNormName(r.asset_category)||'';if(nm)return nm;const br=catToSettings(r.cat);return (br&&catNormName(br))?br:'未分类';}
 function resolveCatIdOf(r){if(r.cat_id&&catNameById(r.cat_id))return r.cat_id;let id=resolveCatIdSafe(r.asset_category);if(id)return id;const m=catToSettings(r.cat);if(m){id=resolveCatIdSafe(m);if(id)return id;}return null;}
 // 配色：按 Settings 子账户顺序生成稳定 HSL 色；未分类/孤儿 → 灰
@@ -3338,7 +3253,7 @@ function afterEdit(aid){
 }
 function delHolding(aid,sec,idx){
   const a=acct(aid);
-  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收',structured_products:'结构性产品'};
+  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
   const item=a[sec]&&a[sec][idx];
   const name=item?(item.name||item.asset_name||item.product_id||`#${idx}`):`#${idx}`;
   if(a[sec])a[sec].splice(idx,1);
@@ -3346,42 +3261,18 @@ function delHolding(aid,sec,idx){
   afterEdit(aid);
   logActivity('删除'+ (labelMap[sec]||sec), `${acctName(aid)} · ${name}`);
 }
-function delStruct(aid,k,i){
-  const a=acct(aid);
-  const item=a.structured_products&&a.structured_products[k]&&a.structured_products[k].items&&a.structured_products[k].items[i];
-  const name=item?(item.product_id||`#${i}`):`#${i}`;
-  if(a.structured_products&&a.structured_products[k]){a.structured_products[k].items.splice(i,1);if(!a.structured_products[k].items.length)delete a.structured_products[k];}
-  addDeletedItem(aid, 'structured_products', item);   // 子项目 tombstone
-  afterEdit(aid);
-  logActivity('删除结构性产品',`${acctName(aid)} · ${name}`);
-}
 function showAddForm(aid,sec,idx,presetCat,preMappedVals){
   let sc=SEC_SCHEMA[sec];if(!sc)return;
   const a=acct(aid);
   let cur=(idx!=null&&a[sec])?a[sec][idx]:null;
-  if(sec==='structured_products' && idx && typeof idx==='string'){
-    const [k,i]=idx.split(':');
-    if(a.structured_products && a.structured_products[k] && a.structured_products[k].items[i]){
-      cur=Object.assign({},a.structured_products[k].items[i]);
-      cur.face_value=cur.face_value_usd!=null?cur.face_value_usd:(cur.face_value_hkd!=null?cur.face_value_hkd:'');
-    }
-  }
   // 跨schema模式切换时：用迁移值覆盖原始数据（编辑已有持仓从基金→证券或反之）
   if(preMappedVals){cur=Object.assign(cur||{},preMappedVals);}
   if(cur){cur=Object.assign({},cur);if(sec==='securities'){cur.mv=cur.market_value_cny!=null?cur.market_value_cny:'';}}
-  // 结构性产品本金字段通用化（支持 USD/HKD 迁移）
-  if(sec==='structured_products'){
-    sc={label:sc.label, fields:sc.fields.map(f=>f.k==='face_value_usd'?{...f,k:'face_value',l:'名义本金'}:f)};
-  }
   // 取已有数据中该字段的"自定义"值，扩充 options（让用户加过的下次还能选）
   const extraOpts = (key) => {
     const s = new Set();
     DATA.accounts.forEach(acc => {
-      if(sec==='structured_products'){
-        ['usd_products','hkd_products'].forEach(k=>{(acc.structured_products?.[k]?.items||[]).forEach(it=>{if(it&&it[key]&&!sc.fields.find(f=>f.k===key).options.includes(it[key]))s.add(it[key]);});});
-      } else {
-        (acc[sec]||[]).forEach(it => { if (it && it[key] && !sc.fields.find(f=>f.k===key).options.includes(it[key])) s.add(it[key]); });
-      }
+      (acc[sec]||[]).forEach(it => { if (it && it[key] && !sc.fields.find(f=>f.k===key).options.includes(it[key])) s.add(it[key]); });
     });
     return Array.from(s);
   };
@@ -3568,18 +3459,6 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
     [hCost,hPrice].forEach(el=>el&&el.addEventListener('input',_hcalc));
     setTimeout(_hcalc,30);
   }
-  // 结构化产品(FCN)：名义本金(现金价值) + 票息/盈亏 → 自动算收益率%
-  if(sec==='structured_products'){
-    const fv=document.getElementById('af-structured_products-face_value');
-    const pf=document.getElementById('af-structured_products-profit');
-    const pctEl=document.getElementById('af-structured_products-return_pct');
-    const _calc=()=>{
-      const FV=Number(fv&&fv.value)||0, P=Number(pf&&pf.value)||0;
-      if(pctEl) pctEl.value=(FV>0)?+(P/FV*100).toFixed(2):'';
-    };
-    [fv,pf].forEach(el=>el&&el.addEventListener('input',_calc));
-    setTimeout(_calc,30);
-  }
   // 保存按钮：先读值，再关 modal，再 commit（避免删 DOM 后读不到值）
   document.getElementById('af-save-btn').onclick=function(){
     const modal=document.getElementById('add-form-modal');
@@ -3605,8 +3484,7 @@ function commitAdd(aid,sec,idx,preVals){
   const vals=preVals||{};
   if(!preVals) sc.fields.forEach(f=>{ if(f.hideInForm) return; vals[f.k]=document.getElementById('af-'+sec+'-'+f.k).value; });
   const isEdit=idx!=null;
-  if(sec==='structured_products'){addStruct(aid,vals,isEdit?idx:null);}
-  else{addHolding(aid,sec,vals,idx==null?null:idx);}
+  addHolding(aid,sec,vals,idx==null?null:idx);
 }
 // 证券市值按币种正确折算到 market_value_hkd / market_value_usd / market_value_cny，
 // 解决「HKD 持仓市值被写进 market_value_cny、导致详情页显示 HK$ 0 / 小计与总额口径不一致」的 bug。
@@ -3660,7 +3538,7 @@ function addHolding(aid,sec,vals,idx){
   if(isEdit){a[sec][idx]=o;}else{a[sec].push(o);}
   afterEdit(aid);
   // 详细日志
-  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收',structured_products:'结构性产品'};
+  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
   const secLabel=labelMap[sec]||sec;
   const name=o.name||o.asset_name||o.product_id||'(未命名)';
   if(isEdit){
@@ -3818,90 +3696,6 @@ function saveCashInline(aid,idx){
   c.notes=document.getElementById('cash-notes-'+idx).value.trim();
   afterEdit(aid);
   logActivity('修改现金持仓',`${acctName(aid)} · ${c.name} · ¥${c.amount} ${c.currency}`);
-}
-function addStruct(aid,vals,idxStr){
-  const a=acct(aid);
-  a.structured_products=a.structured_products||{};
-  a.structured_products.usd_products=a.structured_products.usd_products||{items:[]};
-  a.structured_products.hkd_products=a.structured_products.hkd_products||{items:[]};
-  const o={
-    product_id:vals.product_id,
-    underlying:(vals.underlying||'').split(/[,，、]/).map(s=>s.trim()).filter(Boolean),
-    currency:vals.currency,
-    project:vals.project,
-    asset_category:vals.asset_category,
-    location:vals.location,
-    profit:Number(vals.profit)||0,
-    return_pct:Number(vals.return_pct)||0,
-    notes:vals.notes
-  };
-  const fv=Number(vals.face_value!=null?vals.face_value:vals.face_value_usd)||0;
-  if(fv>0&&o.profit){ o.return_pct=+((o.profit/fv)*100).toFixed(2); }
-  const targetKey=o.currency==='HKD'?'hkd_products':'usd_products';
-  if(idxStr){
-    const [oldK,oldI]=idxStr.split(':');
-    const oldArr=(a.structured_products[oldK]||{}).items;
-    if(oldArr && oldArr[oldI]){
-      if(oldK===targetKey){
-        oldArr[oldI]={...oldArr[oldI],...o};
-        if(targetKey==='usd_products')oldArr[oldI].face_value_usd=fv;else oldArr[oldI].face_value_hkd=fv;
-      } else {
-        oldArr.splice(oldI,1);
-        if(targetKey==='usd_products')o.face_value_usd=fv;else o.face_value_hkd=fv;
-        a.structured_products[targetKey].items.push(o);
-      }
-      afterEdit(aid);
-      logActivity('修改结构性产品',`${acctName(aid)} · ${o.product_id||'(未命名)'}`);
-      return;
-    }
-  }
-  if(targetKey==='usd_products')o.face_value_usd=fv;else o.face_value_hkd=fv;
-  a.structured_products[targetKey].items.push(o);
-  afterEdit(aid);
-  logActivity('添加结构性产品',`${acctName(aid)} · ${vals.product_id||'(未命名)'} · 名义本金 $${fv}`);
-}
-function editStructInline(aid,k,i){
-  const a=acct(aid); if(!a||!a.structured_products)return;
-  const sp=a.structured_products[k]; if(!sp||!sp.items||!sp.items[i])return;
-  const p=sp.items[i]; const fv=p.face_value_usd||p.face_value_hkd||0;
-  const tr=document.getElementById('struct-row-'+k+'-'+i); if(!tr)return;
-  const isUsd=!!p.face_value_usd;
-  const ccyOpts=getCashCcys().map(o=>`<option ${o===(p.currency||(isUsd?'USD':'HKD'))?'selected':''}>${o}</option>`).join('');
-  const projOpts=getProjects().map(o=>`<option ${o===(p.project||'')?'selected':''}>${escapeHtml(o)}</option>`).join('');
-  const catOpts=catNames().map(n=>`<option ${n===(p.asset_category||'')?'selected':''}>${escapeHtml(n)}</option>`).join('');
-  const locOpts=getLocations().map(o=>`<option ${o===(p.location||'')?'selected':''}>${escapeHtml(o)}</option>`).join('');
-  tr.innerHTML=`<td>${i+1}</td>`+
-    `<td><select id="struct-ccy-${k}-${i}" style="width:54px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px">${ccyOpts}</select></td>`+
-    `<td><select id="struct-proj-${k}-${i}" style="width:100px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px">${projOpts}</select></td>`+
-    `<td><select id="struct-cat-${k}-${i}" style="width:70px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px">${catOpts}</select></td>`+
-    `<td><select id="struct-loc-${k}-${i}" style="width:62px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px">${locOpts}</select></td>`+
-    `<td><input id="struct-pid-${k}-${i}" value="${escapeHtml(p.product_id||'')}" style="width:150px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:11px"></td>`+
-    `<td><input id="struct-und-${k}-${i}" value="${(p.underlying||[]).join(', ')}" style="width:130px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:11px"></td>`+
-    `<td><input id="struct-fv-${k}-${i}" value="${fv}" style="width:64px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:11px">${isUsd?' USD':' HKD'}</td>`+
-    `<td><input id="struct-profit-${k}-${i}" value="${p.profit||0}" placeholder="票息/盈亏" style="width:58px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px"></td>`+
-    `<td><input id="struct-rpct-${k}-${i}" value="${p.return_pct!=null?p.return_pct:''}" placeholder="收益率%" style="width:54px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px"></td>`+
-    `<td><input id="struct-notes-${k}-${i}" value="${escapeHtml(p.notes||'')}" placeholder="备注" style="width:64px;padding:3px 5px;border:1px solid var(--border);border-radius:6px;font-size:10px"></td>`+
-    `<td><button class="btn sm" onclick="saveStructInline('${aid}','${k}',${i})">保存</button> <button class="btn ghost sm" onclick="openAcct('${aid}')">取消</button></td>`;
-  const q=document.getElementById('struct-pid-'+k+'-'+i); if(q)q.focus();
-}
-function saveStructInline(aid,k,i){
-  const a=acct(aid); if(!a||!a.structured_products)return;
-  const sp=a.structured_products[k]; if(!sp||!sp.items||!sp.items[i])return;
-  const p=sp.items[i];
-  p.currency=document.getElementById('struct-ccy-'+k+'-'+i).value;
-  p.project=document.getElementById('struct-proj-'+k+'-'+i).value.trim();
-  const _scid=document.getElementById('struct-cat-'+k+'-'+i).value.trim(); p.cat_id=resolveCatId(_scid); p.asset_category=_scid;
-  p.location=document.getElementById('struct-loc-'+k+'-'+i).value.trim();
-  p.product_id=document.getElementById('struct-pid-'+k+'-'+i).value.trim()||p.product_id;
-  p.underlying=(document.getElementById('struct-und-'+k+'-'+i).value||'').split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
-  const newFv=Number(document.getElementById('struct-fv-'+k+'-'+i).value)||0;
-  if(p.face_value_usd!=null) p.face_value_usd=newFv; else p.face_value_hkd=newFv;
-  p.notes=document.getElementById('struct-notes-'+k+'-'+i).value.trim();
-  p.profit=Number(document.getElementById('struct-profit-'+k+'-'+i).value)||0;
-  const _fpfv=Number(document.getElementById('struct-fv-'+k+'-'+i).value)||0;
-  p.return_pct=_fpfv>0?+((p.profit/_fpfv)*100).toFixed(2):0;
-  afterEdit(aid);
-  logActivity('修改结构性产品',`${acctName(aid)} · ${p.product_id}`);
 }
 
 
@@ -4441,7 +4235,6 @@ function showIncModal(){
       <option value="纳斯达克100">纳斯达克100（QQQ/QQQM/QDII纳指）</option>
       <option value="标普500">标普500（SPY/VOO/标普QDII）</option>
       <option value="债券">债券产品</option>
-      <option value="结构性产品">结构性产品(FCN)</option>
       <option value="港股">港股持仓</option>
       <option value="A股">A股持仓</option>
       <option value="加密货币">加密货币</option>
@@ -4642,7 +4435,6 @@ function openTxModal(type){ txCur=type;
         <option value="纳斯达克100">纳斯达克100（QQQ/QQQM/QDII纳指）</option>
         <option value="标普500">标普500（SPY/VOO/标普QDII）</option>
         <option value="债券">债券产品（全部归入债券类）</option>
-        <option value="结构性产品">结构性产品(FCN)</option>
         <option value="港股">港股持仓</option>
         <option value="A股">A股持仓</option>
         <option value="加密货币">加密货币</option>
@@ -4746,7 +4538,7 @@ function switchTradeTab(tab){
 }
 /* ============ 标的联想 + 自动归类（合并「代码/标的名称」为单一标的字段） ============ */
 function marketToCat(m){return {US:'美股',HK:'港股',CN:'A股','其他':'其他'}[m]||'';}
-function catToMarket(cat){return {美股:'US',港股:'HK',A股:'CN','A股证券':'CN',加密货币:'',场外基金:'',基金:'',货币基金:'',结构性产品:'',现金:'',流动现金:''}[cat]||'';}
+function catToMarket(cat){return {美股:'US',港股:'HK',A股:'CN','A股证券':'CN',加密货币:'',场外基金:'',基金:'',货币基金:'',现金:'',流动现金:''}[cat]||'';}
 function buildInstrOptions(){
   const seen=new Set(); const arr=[];
   (DATA.flat||[]).forEach(r=>{ if(r&&r.name&&!seen.has(r.name)){seen.add(r.name);arr.push(r);} });
@@ -5415,7 +5207,7 @@ function renderBacktest(){
     </div>
     <h4 style="margin:16px 0 8px;color:var(--text)">一、执行摘要（核心结论）</h4>
     <table class="mtab"><thead><tr><th>结论项</th><th>结果</th></tr></thead><tbody>
-      <tr><td>组合真实配置</td><td>A股权益 35.6%｜现金/稳定币 23.5%｜加密货币 15.4%｜结构性产品 11.1%｜美股科技 10.5%</td></tr>
+      <tr><td>组合真实配置</td><td>A股权益 35.6%｜现金/稳定币 23.5%｜加密货币 15.4%｜美股科技 10.5%</td></tr>
       <tr><td>子账户集中度 HHI</td><td><b>0.2306</b>（中度集中）</td></tr>
       <tr><td>中性情景组合净年化</td><td><b style="color:var(--green)">8.50%</b>（含 0.6% 摩擦成本）</td></tr>
       <tr><td>乐观情景组合净年化</td><td style="color:var(--green)"><b>12.07%</b></td></tr>
@@ -5460,20 +5252,10 @@ function renderReport(){
       <tr><td>总资产</td><td><b>239,132 HKD</b></td><td>(~$30,653 USD)</td></tr>
       <tr><td>今日盈亏</td><td style="color:var(--green)"><b>+5,353 HKD (+2.24%)</b></td><td>今日表现强劲</td></tr>
       <tr><td>证券净值</td><td><b>55,123 HKD (23.0%)</b></td><td>股票/期权持仓</td></tr>
-      <tr><td>结构性产品净值</td><td><b>152,539 HKD (63.8%)</b></td><td>FCN + Sharkfin</td></tr>
       <tr><td>现金及可用</td><td><b>~31,470 HKD (13.2%)</b></td><td>流动性+购买力</td></tr>
     </tbody></table>
 
-    <h4 style="margin:18px 0 8px">二、结构性产品 · 标的集中度分析</h4>
-    <table class="mtab"><thead><tr><th>底层标的</th><th>出现次数</th><th>涉及产品数</th><th>占FCN面值比例</th><th>风险评估</th></tr></thead><tbody>
-      <tr><td><b>英伟达(NVDA)</b></td><td><b>12 次</b></td><td><b>12/13 只</b></td><td>~90%</td><td><span style="color:var(--red)"><svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 极度集中</span></td></tr>
-      <tr><td>美光科技(MU)</td><td>8 次</td><td>8/13 只</td><td>~60%</td><td><span style="color:var(--red)"><svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 高度集中</span></td></tr>
-      <tr><td>谷歌-A(GOOGL)</td><td>6 次</td><td>6/13 只</td><td>~45%</td><td style="color:var(--amber)"><svg class="ic-svg" width="12" height="12" style="color:#f59e0b"><use href="#i-alert"/></svg> 较高集中</td></tr>
-      <tr><td>特斯拉(TSLA)</td><td>4 次</td><td>4/13 只</td><td>~30%</td><td><svg class="ic-svg" width="12" height="12" style="color:#eab308"><use href="#i-alert"/></svg> 中等集中</td></tr>
-      <tr><td>苹果(AAPL)</td><td>1 次</td><td>1/13 只</td><td>~8%</td><td style="color:var(--green)"><svg class="ic-svg" width="12" height="12" style="color:#10b981"><use href="#i-check"/></svg> 分散</td></tr>
-    </tbody></table>
-
-    <h4 style="margin:18px 0 8px">三、组合健康度评分</h4>
+    <h4 style="margin:18px 0 8px">二、组合健康度评分</h4>
     <table class="mtab"><thead><tr><th>评估维度</th><th>评分(0-100)</th><th>权重</th><th>加权分</th><th>说明</th></tr></thead><tbody>
       <tr><td>分散化程度</td><td><b style="color:var(--red)">25</b></td><td>20%</td><td>5.0</td><td>英伟达极度集中</td></tr>
       <tr><td>风险控制</td><td><b>60</b></td><td>25%</td><td>15.0</td><td>有期权对冲意识</td></tr>
@@ -5483,7 +5265,7 @@ function renderReport(){
       <tr><td colspan="4"><b>综合得分</b></td><td><b>58.3</b> — 中性偏谨慎</td></tr>
     </tbody></table>
 
-    <h4 style="margin:18px 0 8px">四、操作建议清单</h4>
+    <h4 style="margin:18px 0 8px">三、操作建议清单</h4>
     <table class="mtab"><thead><tr><th>优先级</th><th>建议</th><th>理由</th></tr></thead><tbody>
       <tr><td><span style="color:var(--red)"><svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 高</span></td><td>降低英伟达集中度</td><td>12/13只含NVDA，系统性风险过大</td></tr>
       <tr><td><span style="color:var(--red)"><svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 高</span></td><td>关注飞鱼科技流动性</td><td>仙股大额持仓，退出难度高</td></tr>
@@ -5880,7 +5662,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v32';
+const APP_VERSION='2026-07-30-v33';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6000,7 +5782,7 @@ function delProjItem(p){let arr=getProjects();arr=arr.filter(x=>x!==p);saveProje
 function resetProjs(){saveProjects(DEFAULT_PROJECTS.slice());patchAllSchema();showProjectManager();toast('已恢复默认');}
 
 /* ===== 子账户管理器 ===== */
-function catRefCount(id){let n=0;const A=Array.isArray(DATA.accounts)?DATA.accounts:[];const secs=['securities','fund_holdings','holdings','cash_holdings'];A.forEach(a=>{secs.forEach(s=>(a[s]||[]).forEach(it=>{if(it&&it.cat_id===id)n++;}));if(a.structured_products){['usd_products','hkd_products'].forEach(k=>{const sp=a.structured_products[k];if(sp&&sp.items)sp.items.forEach(p=>{if(p&&p.cat_id===id)n++;});});}});(DATA.transactions||[]).forEach(t=>{if(t&&t.cat_id===id)n++;});if(DATA.income&&Array.isArray(DATA.income.records)){DATA.income.records.forEach(r=>{if(r&&r.cat_id===id)n++;});}return n;}
+function catRefCount(id){let n=0;const A=Array.isArray(DATA.accounts)?DATA.accounts:[];const secs=['securities','fund_holdings','holdings','cash_holdings'];A.forEach(a=>{secs.forEach(s=>(a[s]||[]).forEach(it=>{if(it&&it.cat_id===id)n++;}));});(DATA.transactions||[]).forEach(t=>{if(t&&t.cat_id===id)n++;});if(DATA.income&&Array.isArray(DATA.income.records)){DATA.income.records.forEach(r=>{if(r&&r.cat_id===id)n++;});}return n;}
 function showCategoryManager(){
   const old=document.getElementById('cat-modal');if(old)old.remove();
   const list=getCategories();
@@ -6050,12 +5832,6 @@ function migrateCatToOther(fromId){
     (a.securities||[]).forEach(t=>{if(t&&t.cat_id===fromId){t.cat_id=otherId;t.asset_category=otherName;}});
     (a.fund_holdings||[]).forEach(f=>{if(f&&f.cat_id===fromId){f.cat_id=otherId;f.asset_category=otherName;}});
     (a.cash_holdings||[]).forEach(c=>{if(c&&c.cat_id===fromId){c.cat_id=otherId;c.asset_category=otherName;}});
-    if(a.structured_products){
-      ['usd_products','hkd_products'].forEach(k=>{
-        const sp=a.structured_products[k];
-        if(sp&&sp.items)sp.items.forEach(p=>{if(p&&p.cat_id===fromId)p.cat_id=otherId;});
-      });
-    }
     (a.holdings||[]).forEach(h=>{if(h&&h.cat_id===fromId){h.cat_id=otherId;h.cat=otherName;h.asset_category=otherName;}});
   });
   (DATA.transactions||[]).forEach(t=>{if(t&&t.cat_id===fromId)t.cat_id=otherId;});
@@ -6177,11 +5953,6 @@ function cascadeRename(kind,oldName,newName){
       if((kind==='category'||kind==='cat')&&nrm(c.asset_category)===nrm(oldName))c.asset_category=newName;
       if(kind==='project'&&nrm(c.project)===nrm(oldName))c.project=newName;
       if(kind==='location'&&nrm(c.location)===nrm(oldName))c.location=newName;
-    }
-    for(const st of A(a.structured_products)){
-      if((kind==='category'||kind==='cat')&&nrm(st.asset_category)===nrm(oldName))st.asset_category=newName;
-      if(kind==='project'&&nrm(st.project)===nrm(oldName))st.project=newName;
-      if(kind==='location'&&nrm(st.location)===nrm(oldName))st.location=newName;
     }
   }
   for(const r of A(DATA.transactions)){
@@ -6662,7 +6433,6 @@ function syncNow(){
     if(res.snap && _syncShouldApply(res.snap)){
       syncApply(res.snap);
       const merged=applyCloudToData(res.snap);
-      try{seedBrokerAssets();}catch(e){}
       localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
       if(merged){
         localStorage.setItem('famdash_sync_localmod',String(Date.now()));
@@ -6757,7 +6527,6 @@ function syncPullOnLoad(){
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
         if(merged) localStorage.setItem('famdash_sync_localmod',String(Date.now()));
         else localStorage.setItem('famdash_sync_localmod','0');
-        try{seedBrokerAssets();}catch(e){}
         recomputePortfolio();
         // 合并/应用云端后就地重渲染当前视图(绝不 location.reload：避免手机重复输密码、且本地有云端缺的数据时无限重载)
         try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
@@ -6807,7 +6576,6 @@ function migrateCategoryModel(){
   const findCatIdByName=nrm=>{const list=getCategories();return (list.find(c=>((c&&c.name||'').trim().replace(/\s+/g,'')===nrm))||{}).id||null;};
   A.forEach(a=>{
     secs.forEach(s=>(a[s]||[]).forEach(it=>{ if(it&&it.asset_category&&!it.cat_id){ const id=findCatIdByName(((it.asset_category||'').trim().replace(/\s+/g,''))); it.cat_id=id||resolveCatId(it.asset_category); } }));
-    if(a.structured_products){['usd_products','hkd_products'].forEach(k=>{const sp=a.structured_products[k];if(sp&&sp.items)sp.items.forEach(p=>{ if(p&&p.asset_category&&!p.cat_id){ const id=findCatIdByName(((p.asset_category||'').trim().replace(/\s+/g,''))); p.cat_id=id||resolveCatId(p.asset_category); } });});}
   });
   (DATA.transactions||[]).forEach(t=>{ if(t&&t.asset_category&&!t.cat_id){ const id=findCatIdByName(((t.asset_category||'').trim().replace(/\s+/g,''))); t.cat_id=id||resolveCatId(t.asset_category); } });
   if(DATA.income&&Array.isArray(DATA.income.records)){ DATA.income.records.forEach(r=>{ if(r&&r.asset_category&&!r.cat_id){ const id=findCatIdByName(((r.asset_category||'').trim().replace(/\s+/g,''))); r.cat_id=id||resolveCatId(r.asset_category); } }); }
@@ -6830,8 +6598,6 @@ try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
 try{recomputeAggregations();}catch(e){console.error('recomputeAggregations on load:',e)}
 try{enrichExistingAssets();}catch(e){console.error('enrichExistingAssets:',e)}
 try{initMeta();}catch(e){console.error('initMeta:',e)}
-/* 初始化时把券商端现金/结构化净值种入可编辑结构，使实时汇总≈summary 且不丢资产 */
-try{seedBrokerAssets();}catch(e){console.error('seedBrokerAssets:',e)}
 /* 注意：初始化时需重建 DATA.flat（补齐 sec/idx 定位器供卡片标签使用），
    但重建会覆盖 DATA.total → 保存权威值后立即还原（还原权威） */
 try{recomputePortfolio();}catch(e){console.error('init recomputePortfolio:',e)}
