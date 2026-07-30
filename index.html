@@ -1692,7 +1692,7 @@ function acctCurrency(a){
   return (a.currency||'CNY').split('/')[0];
 }
 function acctCcys(a){
-  const catMap={'美股账户':'USD','港股账户':'HKD','A股账户':'CNY','美元基金':'USD','港元基金':'HKD','人民币基金':'CNY','美元结构性产品':'USD','港元结构性产品':'HKD','加密货币账户':'USDT','现金账户':'CNY'};
+  const catMap={'美股账户':'USD','港股账户':'HKD','A股账户':'CNY','美元基金':'USD','港元基金':'HKD','人民币基金':'CNY','加密货币账户':'USDT','现金账户':'CNY'};
   const set=new Set();
   (a.cash_holdings||[]).forEach(function(c){ if(c.currency) set.add(c.currency); });
   if(!set.size && a.account_category && catMap[a.account_category]) set.add(catMap[a.account_category]);
@@ -2932,7 +2932,7 @@ function purgeDeletedAccounts(arr){
   if(!del.length)return arr;
   return arr.filter(function(a){ return del.indexOf(a.id||a.name)<0; });
 }
-/* ============ 子项目删除 Tombstone（现金/持仓/结构性产品删除也跨同步持久化） ============
+/* ============ 子项目删除 Tombstone（现金/持仓删除也跨同步持久化） ============
  * 旧逻辑 mergeAccountsForPush 对子数组走 UNION，导致本地删掉的现金/证券/代币在下次推送/拉取时
  * 被云端版本（仍含该子项）重新并回，删除永不传播。这里维护 famdash_deleted_items
  * （格式 aid::sec::key），在 mergeAccountsForPush / applyCloudToData / loadEditsLocal 三处剔除。 */
