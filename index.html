@@ -5358,9 +5358,25 @@ function delLedgerRow(id,src){
 
 
 function renderTx(){
-  const rows=DATA.transactions.slice().sort((a,b)=>a.date<b.date?1:-1);
-  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整'};
-  document.getElementById('tx-body').innerHTML=rows.map(t=>{
+  // A. 交易记录
+  const txRows=DATA.transactions.map(t=>({...t,_src:'tx'}));
+  // B. 编辑/余额类操作记录（来自已同步的活动日志，作为只读「编辑」行并入台账，修复「改余额流水无记录」#3）
+  const editWhitelist={'修改现金持仓':1,'修改账户信息':1,'修改持仓':1};
+  const editRows=(JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'))
+    .filter(l=>editWhitelist[(l.action||l.type||'')])
+    .map(l=>({
+      id:'act-'+(l.id||(l.date+'|'+(l.action||l.type)+'|'+(l.detail||''))),
+      date:l.date||'', type:'edit', typeRaw:'edit',
+      account:((l.detail||'').split(' · ')[0]||''),
+      target:(l.detail||''), code:'',
+      amount:0, currency:'', fee:0, status:'', _src:'edit'
+    }));
+  const all=[...txRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整',edit:'编辑'};
+  document.getElementById('tx-body').innerHTML=all.map(t=>{
+    if(t._src==='edit'){
+      return `<tr><td>${t.date||'—'}</td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td>审计</td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
+    }
     let acc,dir,amt=t.amount||0,ccy=t.currency||'CNY';
     if(t.type==='transfer'){ acc=acctName(t.account_from)+' → '+acctName(t.account_to); dir='转账'; }
     else if(t.type==='income'){ acc=acctName(t.account); dir=t.income_type||''; }
@@ -5382,7 +5398,7 @@ function renderTx(){
     else if(t.type==='transfer') trf+=v;
   });
   document.getElementById('tx-subtotal').innerHTML=
-    `<span>共 <b>${rows.length}</b> 条流水</span>`+
+    `<span>共 <b>${all.length}</b> 条流水</span>`+
     `<span>收入 +${fmtCny(inc)} · 股息 +${fmtCny(div)} · 买入 −${fmtCny(buy)} · 卖出 +${fmtCny(sell)} · 转账 ${fmtCny(trf)}</span>`;
   document.getElementById('tx-cash').innerHTML=
     `流水净现金流（收入+卖出−买入）：<b>${fmtCny(inc+sell-buy)}</b>`;
@@ -5862,7 +5878,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v29';
+const APP_VERSION='2026-07-30-v30';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
