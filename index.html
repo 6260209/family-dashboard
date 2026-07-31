@@ -4979,6 +4979,40 @@ function calibrateCashFromTx(aid){
   saveEditsLocal(); if(typeof renderTx==='function') renderTx(); if(typeof recomputePortfolio==='function') recomputePortfolio(); if(typeof jRecomputeSummary==='function') jRecomputeSummary(a); openAcct(aid);
   if(typeof toast==='function') toast('已按流水校准现金子账户');
 }
+/* ============ 启动自愈：补回丢失的收入入账钩子（v41） ============
+   背景：cash_holdings 在同步合并时以 name 为 key，且 unionHoldings 是「本地条目先占坑、
+   云端同名条目丢弃」，推送(mergeAccountsForPush)与拉取(mergeV1Accounts)两条路径皆然。
+   后果：任何「只改云端 sync.json」的现金修复，都会被设备本地的旧同名子账户挤掉 ——
+   这正是历史上 _credits 入账钩子反复丢失、"修好又消失"的机制性原因。
+   对策：不依赖云端数据下发，改为每次启动时在本地幂等自愈。
+   凡 status==='received' 且金额>0 的收入，若在对应币种现金子账户找不到等额 _credits 钩子，
+   就调用 creditIncomeToCash 重新入账（该函数自带同 id 幂等：先撤旧值再入新值）。
+   顺序要求：必须在 recomputeCashAll() 之前运行，由后者统一把 amount 重算为
+   _manual_base + 交易净额 + _credits 合计，两者结果自洽。
+*/
+function autoCreditMissingIncomes(){
+  let fixed=0;
+  try{
+    const recs=(DATA.income&&DATA.income.records)||[];
+    recs.forEach(function(r){
+      if(!r || r.status!=='received' || !r.account) return;
+      const amt=Number(r.amount); if(!(amt>0)) return;
+      const a=acctRes(r.account); if(!a) return;
+      const ccy=(r.currency||'CNY').toUpperCase();
+      const hit=(a.cash_holdings||[]).find(function(ch){
+        return (ch.currency||'CNY').toUpperCase()===ccy && ch._credits && ch._credits[r.id]!=null;
+      });
+      if(hit && Math.abs(Number(hit._credits[r.id])-amt)<1e-6) return; // 已正确入账，跳过
+      creditIncomeToCash(r.account, r);
+      fixed++;
+    });
+  }catch(e){ console.error('autoCreditMissingIncomes:',e); }
+  if(fixed){
+    try{ console.info('[自愈] 补回收入入账钩子 '+fixed+' 条'); }catch(e){}
+    try{ saveEditsLocal(); }catch(e){}
+  }
+  return fixed;
+}
 // 删除/撤销时回滚
 function revertIncomeCash(aid, incId){
   const a=acctRes(aid); if(!a) return;
@@ -5692,7 +5726,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-31-v40';
+const APP_VERSION='2026-07-31-v41';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6821,6 +6855,7 @@ try{loadEditsLocal();}catch(e){console.error('loadEditsLocal:',e)}
 try{(DATA.accounts||[]).forEach(a=>normalizeAccount(a));}catch(e){console.error('normalizeAccount:',e)}
 try{showArchived=!!getSettings().showArchived;}catch(e){}
 try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
+  try{ autoCreditMissingIncomes(); }catch(e){console.error('autoCreditMissingIncomes:',e)}
   try{ recomputeCashAll(); }catch(e){console.error('recomputeCashAll:',e)}
 /* 加载时即按【设置】重建子账户/地域/持有人等聚合分组（名称对齐设置项），保留文件权威总资产 */
 try{recomputeAggregations();}catch(e){console.error('recomputeAggregations on load:',e)}
