@@ -391,7 +391,8 @@ tbody tr:hover{background:#f8fafc}
 .cal-cell{border:1px solid var(--border);border-radius:10px;min-height:76px;padding:6px;font-size:11px;cursor:pointer;background:#fff;transition:.12s;position:relative}
 .cal-cell:hover{border-color:var(--accent)}
 .cal-cell.dim{background:#f8fafc;color:#cbd5e1;cursor:default}
-.cal-cell.today{box-shadow:0 0 0 2px var(--accent) inset}
+.cal-cell.today{background:#f0f9ff}
+.cal-cell.selected{box-shadow:0 0 0 2px var(--accent) inset}
 .cal-cell .dnum{font-weight:700;color:#334155}
 .cal-cell .inc{margin-top:4px;color:#0e7490;font-weight:700;font-size:11px}
 .cal-cell .dot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:#14b8a6}
@@ -1413,8 +1414,9 @@ function renderConsolidated(){
     const distTable=(function(){
       const map={};
       for(const f of (r.raws||[])){
-        if(!map[f.acct]) map[f.acct]={acct:f.acct,ccy:f.currency,raw:f,qty:0,mvCny:0,nativeMv:0};
-        const g=map[f.acct];
+        const key=f.aid||f.acct;
+        if(!map[key]) map[key]={acct:f.acct,holder:f.holder||'—',ccy:f.currency,raw:f,qty:0,mvCny:0,nativeMv:0};
+        const g=map[key];
         if(typeof f.qty==='number') g.qty+=f.qty;
         g.mvCny+=(f.mv||0);
         g.nativeMv += (f.currency==='CNY')?(f.mv||0):jToNative(f.mv||0,'CNY',f.currency);
@@ -1429,12 +1431,12 @@ function renderConsolidated(){
         const priceCell=aPrice!=null?fmtNative(aPrice,g.ccy):'—';
         const mvCell=fmtNative(g.nativeMv,g.ccy)+(g.ccy!=='CNY'?('<small>'+fmtCny(g.mvCny)+'</small>'):'');
         const qCell=(typeof g.qty==='number'&&g.qty>0)?(g.qty>=1e4?(g.qty/1e4).toFixed(1)+'万':g.qty.toLocaleString()):'—';
-        rows+='<tr><td>'+escapeHtml(g.acct)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
+        rows+='<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
       }
       let foot;
       if(mixedCcy){ foot=fmtCny(r.mv)+' CNY'; }
       else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
-      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr><th>账户</th><th>数量</th><th>现价</th><th>市值</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="3">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr><th>账户</th><th>持有人</th><th>数量</th><th>现价</th><th>市值</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="4">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
@@ -4176,7 +4178,7 @@ function setIncLegend(mode){
     leg.innerHTML='<span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:2px;background:#0ea5e9"></span>历年收入合计 (CNY)</span>';
   }
 }
-let calMode='day',calYr=new Date().getFullYear(),calMo=new Date().getMonth();
+let calMode='day',calYr=new Date().getFullYear(),calMo=new Date().getMonth(),calSel=new Date().toISOString().slice(0,10);
 function renderCalendar(){
   try{ computeIncomeAgg(); }catch(e){ console.error('renderCalendar computeIncomeAgg', e); }
   document.getElementById('cal-tabs').innerHTML=['day','month','year'].map(m=>`<div class="tab ${calMode===m?'active':''}" onclick="setCalMode('${m}')">${m==='day'?'日':m==='month'?'月':'年'}视图</div>`).join('');
@@ -4188,12 +4190,13 @@ function calShift(d){if(calMode==='day'){calMo+=d;if(calMo<0){calMo=11;calYr--;}
 function calDayHTML(){
   const cal=DATA.income.calendar.daily;const today=new Date();const first=new Date(calYr,calMo,1);const sd=first.getDay();const days=new Date(calYr,calMo+1,0).getDate();
   let cells='';for(let i=0;i<sd;i++)cells+='<div class="cal-cell dim"></div>';
-  for(let d=1;d<=days;d++){const dk=`${calYr}-${String(calMo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;const e=cal[dk];const amt=e?e.income_cny:0;const isT=(today.getFullYear()===calYr&&today.getMonth()===calMo&&today.getDate()===d);
-    cells+=`<div class="cal-cell ${isT?'today':''}" onclick="showDayEvents('${dk}')"><div class="dnum">${d}</div>${amt?`<div class="inc">+${fmtCny(amt)}</div><span class="dot"></span>`:''}</div>`;}
+  for(let d=1;d<=days;d++){const dk=`${calYr}-${String(calMo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;const e=cal[dk];const amt=e?e.income_cny:0;const isT=(today.getFullYear()===calYr&&today.getMonth()===calMo&&today.getDate()===d);const isSel=(calSel===dk);
+    cells+=`<div class="cal-cell ${isT?'today':''} ${isSel?'selected':''}" onclick="showDayEvents('${dk}')"><div class="dnum">${d}</div>${amt?`<div class="inc">+${fmtCny(amt)}</div><span class="dot"></span>`:''}</div>`;}
   document.getElementById('cal-title').textContent=`${calYr}年${calMo+1}月`;
   return `<div class="cal-grid">${cells}</div><div id="day-events" class="note" style="margin-top:10px"></div>`;
 }
 function showDayEvents(dk){const recs=DATA.income.records.filter(r=>r.date===dk);const el=document.getElementById('day-events');if(!el)return;
+  calSel=dk;renderCalendar();
   window._calDayKey=dk;
   if(!recs.length){ el.innerHTML='<div class="day-empty">'+escapeHtml(dk)+' 无收入记录</div>'; return; }
   const typeMap={dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他'};
@@ -5662,7 +5665,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-30-v33';
+const APP_VERSION='2026-07-31-v34';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
