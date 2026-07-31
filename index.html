@@ -1360,7 +1360,7 @@ function renderConsolidated(){
     m.pnl_pct=(m.mv>0)?((m.pnl/m.mv)*100):0;
     if(!m.price&&m.qty>0){
       // 兜底单价：m.mv 是 CNY，需换算回原生币种，避免标签 USDT/USD 却显示 CNY 价
-      const r2c=(m.currency==='USD'||m.currency==='USDT')?(FX.USD_CNY||7.156):(m.currency==='HKD'?(1/(FX.CNY_HKD||1.09)):1);
+      const r2c=fxCny(m.currency);
       m.price=(m.mv/m.qty)/r2c;
     }
   }
@@ -1713,7 +1713,7 @@ function secMvNorm(t){
   if(q>0&&p>0){
     const nat=q*p, c=t.currency||'CNY';
     if(c==='HKD'){ if(!t.market_value_hkd)t.market_value_hkd=Math.round(nat*100)/100; if(!t.market_value_cny)t.market_value_cny=Math.round(nat/FX_CNY_HKD*100)/100; }
-    else if(c==='USD'||c==='USDT'){ if(!t.market_value_usd)t.market_value_usd=Math.round(nat*100)/100; if(!t.market_value_cny)t.market_value_cny=Math.round(nat*FX_USD_CNY*100)/100; }
+    else if(c==='USD'||c==='USDT'||c==='USDC'){ if(!t.market_value_usd)t.market_value_usd=Math.round(nat*100)/100; if(!t.market_value_cny)t.market_value_cny=Math.round(nat*fxCny(c)*100)/100; }
     else { if(!t.market_value_cny)t.market_value_cny=Math.round(nat*100)/100; }
   }
   return t;
@@ -1770,8 +1770,8 @@ function accountTotalCny(a){
 // ===== 实时重聚合（前端统一口径；本地编辑/删除后联动刷新各类图表）=====
 // 目的：本地删除/编辑账户或持仓后，让饼图/子账户/地域/持有人/主题/账户排行/透视表全部联动刷新，
 // 解决原先"只改了首页大数字，图表不更新"以及"删了账户图表还显示幽灵数据"的问题。
-let FX_CNY_HKD=1.09, FX_USD_HKD=7.80, FX_USD_CNY=FX_USD_HKD/FX_CNY_HKD;
-function jToHkd(amount,ccy){ccy=(ccy||'HKD').toUpperCase();if(ccy==='HKD')return amount;if(ccy==='USD'||ccy==='USDT')return amount*FX_USD_HKD;if(ccy==='CNY')return amount*FX_CNY_HKD;return amount;}
+let FX_CNY_HKD=1.09, FX_USD_HKD=7.80, FX_USD_CNY=FX_USD_HKD/FX_CNY_HKD, FX_USDT_CNY=FX_USD_CNY, FX_USDC_CNY=FX_USD_CNY;
+function jToHkd(amount,ccy){return (amount||0)*fxHkd(ccy);}
 function jHkdToCny(h){return (h||0)/FX_CNY_HKD;}
 function jUsdToCny(u){return (u||0)*FX_USD_CNY;}
 
@@ -2123,8 +2123,8 @@ function jGetTotalHkd(a){
   return [0,'?'];
 }
 function jClassify(a){if('securities'in a)return 'security';if('fund_holdings'in a)return 'fund';if('holdings'in a)return 'crypto';return 'other';}
-function jSecValueCny(t){const ccy=t.currency||'HKD';const mv=ccy==='CNY'?(t.market_value_cny||0):ccy==='HKD'?(t.market_value_hkd||0):(t.market_value_usd||0);return (mv||0)*(ccy==='CNY'?1:(ccy==='HKD'?1/FX_CNY_HKD:FX_USD_CNY));}
-function jSecPnlCny(t){const ccy=t.currency||'HKD';const p=ccy==='CNY'?(t.pnl_total_cny||0):ccy==='HKD'?(t.pnl_total_hkd||0):(t.pnl_total_usd||0);return (p||0)*(ccy==='CNY'?1:(ccy==='HKD'?1/FX_CNY_HKD:FX_USD_CNY));}
+function jSecValueCny(t){const ccy=t.currency||'HKD';const mv=ccy==='CNY'?(t.market_value_cny||0):ccy==='HKD'?(t.market_value_hkd||0):(t.market_value_usd||0);return (mv||0)*fxCny(ccy);}
+function jSecPnlCny(t){const ccy=t.currency||'HKD';const p=ccy==='CNY'?(t.pnl_total_cny||0):ccy==='HKD'?(t.pnl_total_hkd||0):(t.pnl_total_usd||0);return (p||0)*fxCny(ccy);}
 const CAT_ORDER=['A股证券','港股','美股','QDII','A股基金','债基','保险','加密货币','流动现金'];
 const REGION_COLORS={'中国':'#fbbf24','香港':'#0ea5e9','美国':'#14b8a6','数字资产':'#f7931a','全球商品':'#94a3b8','中国内地':'#fbbf24','中国香港':'#0ea5e9','欧洲':'#8b5cf6','其他':'#94a3b8'};
 const HOLDER_COLORS={'未知':'#94a3b8'};
@@ -3386,12 +3386,12 @@ function showAddForm(aid,sec,idx,presetCat,preMappedVals){
       const P = priceEl ? (Number(priceEl.value)||0) : (function(){ const _lp=_formLivePrice(); return (_lp!=null)?_lp:CP; })();
       let mvNative=Q*P, mvCny=mvNative;
       if(ccy==='HKD') mvCny=mvNative/FX_CNY_HKD;
-      else if(ccy==='USD'||ccy==='USDT') mvCny=mvNative*FX_USD_CNY;
+      else if(ccy==='USD'||ccy==='USDT'||ccy==='USDC') mvCny=mvNative*fxCny(ccy);
       if(mv) mv.value=Math.round(mvCny);
       if(Q>0&&mvCny>0){
         let costTotal=Q*CP;
         if(ccy==='HKD') costTotal=costTotal/FX_CNY_HKD;
-        else if(ccy==='USD'||ccy==='USDT') costTotal=costTotal*FX_USD_CNY;
+        else if(ccy==='USD'||ccy==='USDT'||ccy==='USDC') costTotal=costTotal*fxCny(ccy);
         const pnl=Math.round(mvCny-costTotal);
         if(pa) pa.value=pnl;
         if(pp) pp.value=+(pnl/mvCny*100).toFixed(2);
@@ -3503,7 +3503,7 @@ function secMvFields(qty, price, ccy){
   const nat=(Number(qty)||0)*(Number(price)||0);
   const r={market_value_cny:0,market_value_hkd:0,market_value_usd:0};
   if(ccy==='HKD'){ r.market_value_hkd=Math.round(nat*100)/100; r.market_value_cny=Math.round(nat/FX_CNY_HKD*100)/100; }
-  else if(ccy==='USD'||ccy==='USDT'){ r.market_value_usd=Math.round(nat*100)/100; r.market_value_cny=Math.round(nat*FX_USD_CNY*100)/100; }
+  else if(ccy==='USD'||ccy==='USDT'||ccy==='USDC'){ r.market_value_usd=Math.round(nat*100)/100; r.market_value_cny=Math.round(nat*fxCny(ccy)*100)/100; }
   else { r.market_value_cny=Math.round(nat*100)/100; r.market_value_hkd=Math.round(nat*FX_CNY_HKD*100)/100; }
   return r;
 }
@@ -4346,8 +4346,11 @@ function exportData(){
 function resetEdits(){localStorage.removeItem('famdash_v1');location.reload();}
 
 /* ============ 标签切换 + 流水录入 + 账户联动 ============ */
-const FX={USD_CNY:7.156,CNY_HKD:1.09};
-function toCny(amt,ccy){ccy=(ccy||'CNY').toUpperCase();if(ccy==='USD'||ccy==='USDT'||ccy==='USDC')return (amt||0)*FX.USD_CNY;if(ccy==='HKD')return (amt||0)/FX.CNY_HKD;if(ccy==='CNY')return (amt||0);const r=customRateToCny(ccy);if(r!=null)return (amt||0)*r;return (amt||0);}
+const FX={USD_CNY:7.156,CNY_HKD:1.09,USDT_CNY:7.156,USDC_CNY:7.156};
+// 汇率换算助手：支持 USDT/USDC 独立汇率（选项 B，默认与 USD 平价）。返回 1 单位 ccy = ? CNY / ? HKD
+function fxCny(c){c=(c||'CNY').toUpperCase();if(c==='CNY')return 1;if(c==='HKD')return 1/(FX.CNY_HKD||1.09);if(c==='USD')return FX.USD_CNY||7.156;if(c==='USDT')return FX.USDT_CNY||FX.USD_CNY||7.156;if(c==='USDC')return FX.USDC_CNY||FX.USD_CNY||7.156;const r=customRateToCny(c);return r!=null?r:1;}
+function fxHkd(c){c=(c||'HKD').toUpperCase();if(c==='HKD')return 1;if(c==='CNY')return FX.CNY_HKD||1.09;if(c==='USD')return FX_USD_HKD||7.80;if(c==='USDT')return (FX.USDT_CNY||FX.USD_CNY||7.156)*(FX.CNY_HKD||1.09);if(c==='USDC')return (FX.USDC_CNY||FX.USD_CNY||7.156)*(FX.CNY_HKD||1.09);const r=customRateToCny(c);return r!=null?r*(FX.CNY_HKD||1.09):1;}
+function toCny(amt,ccy){return (amt||0)*fxCny(ccy);}
 /* ============ 自定义货币（兑人民币） ============ */
 // 内置 CNY/HKD/USD；用户可在「货币管理」中添加其他货币（如 JPY/EUR/GBP）并填写兑人民币汇率。
 const CCY_KEY='famdash_currencies';
@@ -5636,6 +5639,8 @@ function applySettings(){
   document.documentElement.style.setProperty('--down',upIsRed?'#16a34a':'#dc2626');
   if(s.fxUSD)FX.USD_CNY=s.fxUSD;
   if(s.fxHKD)FX.CNY_HKD=s.fxHKD;
+  if(s.fxUSDT)FX.USDT_CNY=s.fxUSDT;
+  if(s.fxUSDC)FX.USDC_CNY=s.fxUSDC;
   BASE_CCY=s.baseCcy||'CNY';
   document.documentElement.setAttribute('data-theme', s.theme==='dark'?'dark':'light');
   try{refreshHero();}catch(e){}
@@ -5675,6 +5680,7 @@ function renderMine(){
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-chart"/></svg> 投资项目</div><div class="desc">增删改投资项目分类（如纳斯达克100、黄金、REITs…）</div></div><button class="btn ghost sm" onclick="showProjectManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 子账户排序</div><div class="desc">增删改、拖拽或 ▲▼ 调整子账户显示顺序（如场内ETF、场外基金、债券…）</div></div><button class="btn ghost sm" onclick="showCategoryManager()">排序</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 行情源管理</div><div class="desc">A股/港股/美股/加密 行情源的启用、优先级排序与自定义 URL（带安全校验）</div></div><button class="btn ghost sm" onclick="showQuoteSourceManager()">管理</button></div>`;
+  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 汇率源管理</div><div class="desc">USD/CNY/HKD 及 USDT/USDC 实时汇率源：启用、排序、自定义 URL，失败自动回退手动值</div></div><button class="btn ghost sm" onclick="showFxSourceManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 所在地</div><div class="desc">增删改资产所在地（如中国内地、香港、美国…）</div></div><button class="btn ghost sm" onclick="showLocationManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl">管理入口</div><div class="desc">快速跳转账户 / 子账户 / 录入</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm" onclick="switchTab('accounts')"><svg class="ic-svg" width="14" height="14"><use href="#i-wallet"/></svg> 账户</button><button class="btn ghost sm" onclick="showCategoryManager()"><svg class="ic-svg" width="14" height="14"><use href="#i-stack"/></svg> 子账户</button><button class="btn ghost sm" onclick="switchTab('trade')"><svg class="ic-svg" width="14" height="14"><use href="#i-plus"/></svg> 录入</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl">🔍 自检</div><div class="desc">运行完整流程自检：现金对账 / 收入日历 / 流水入账 / 行情标签 / 持仓数量</div></div><button class="btn ghost sm" onclick="showSelfCheck()">运行自检</button></div>`;
@@ -5683,7 +5689,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-31-v38';
+const APP_VERSION='2026-07-31-v39';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -5715,20 +5721,25 @@ function forceRefresh(){ location.reload(true); }
 /* ============ 汇率管理 ============ */
 function showFxModal(){
   const s=getSettings();
-  const usd=s.fxUSD||FX.USD_CNY, hkd=s.fxHKD||FX.CNY_HKD;
-  const html=`<div class="modal open" id="fx-modal" style="display:flex"><div class="box" style="max-width:420px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 汇率设置</h3><button class="x" aria-label="关闭" onclick="document.getElementById('fx-modal').remove()">×</button></div><div class="mbody"><div class="tx-form">
+  const usd=s.fxUSD||FX.USD_CNY, hkd=s.fxHKD||FX.CNY_HKD, usdt=s.fxUSDT||FX.USDT_CNY||FX.USD_CNY, usdc=s.fxUSDC||FX.USDC_CNY||FX.USD_CNY;
+  const html=`<div class="modal open" id="fx-modal" style="display:flex"><div class="box" style="max-width:440px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 汇率设置（手动）</h3><button class="x" aria-label="关闭" onclick="document.getElementById('fx-modal').remove()">×</button></div><div class="mbody"><div class="tx-form">
     <div class="row"><label>USD→CNY</label><input id="fx-usd" type="number" step="0.001" value="${usd}"></div>
     <div class="row"><label>CNY→HKD</label><input id="fx-hkd" type="number" step="0.001" value="${hkd}"></div>
+    <div class="row"><label>USDT→CNY</label><input id="fx-usdt" type="number" step="0.001" value="${usdt}"></div>
+    <div class="row"><label>USDC→CNY</label><input id="fx-usdc" type="number" step="0.001" value="${usdc}"></div>
+    <div class="mgr-tip">也可在「汇率源管理」接入实时汇率源（自动覆盖此处）。关闭自动拉取则使用本手动值。</div>
     <button class="btn" onclick="saveFx()">保存</button><button class="btn ghost" onclick="document.getElementById('fx-modal').remove()">取消</button>
   </div></div></div></div>`;
   const old=document.getElementById('fx-modal');if(old)old.remove();
   document.body.insertAdjacentHTML('beforeend',html);
 }
-function applyBuiltinFx(u,h){
+function applyBuiltinFx(u,h,usdt,usdc){
   const oldU=FX.USD_CNY, oldH=FX.CNY_HKD;
   saveSetting('fxUSD',u);saveSetting('fxHKD',h);
+  if(usdt!=null){ saveSetting('fxUSDT',usdt); FX.USDT_CNY=usdt; FX_USDT_CNY=usdt; }
+  if(usdc!=null){ saveSetting('fxUSDC',usdc); FX.USDC_CNY=usdc; FX_USDC_CNY=usdc; }
   // 同步到 DATA.meta.fx（保证所有设备一致）
-  if(DATA.meta){ DATA.meta.fx=DATA.meta.fx||{}; DATA.meta.fx.USD_CNY=u; DATA.meta.fx.CNY_HKD=h; }
+  if(DATA.meta){ DATA.meta.fx=DATA.meta.fx||{}; DATA.meta.fx.USD_CNY=u; DATA.meta.fx.CNY_HKD=h; if(usdt!=null)DATA.meta.fx.USDT_CNY=usdt; if(usdc!=null)DATA.meta.fx.USDC_CNY=usdc; }
   FX.USD_CNY=u; FX.CNY_HKD=h;
   // 同步两处汇率：对象 FX（toCny 等用）+ 全局常量 FX_*（recompute/jToHkd 等用，否则改了不重算）
   FX_USD_CNY=u; FX_CNY_HKD=h; FX_USD_HKD=u*h;
@@ -5738,11 +5749,169 @@ function applyBuiltinFx(u,h){
 function saveFx(){
   const u=Number(document.getElementById('fx-usd').value)||7.156;
   const h=Number(document.getElementById('fx-hkd').value)||1.09;
-  const {oldU,oldH}=applyBuiltinFx(u,h);
+  const ut=Number(document.getElementById('fx-usdt').value)||u;
+  const uc=Number(document.getElementById('fx-usdc').value)||u;
+  const {oldU,oldH}=applyBuiltinFx(u,h,ut,uc);
   const m=document.getElementById('fx-modal');if(m)m.remove();
   toast('汇率已更新');
-  logActivity('修改汇率',`USD→CNY ${oldU}→${u} · CNY→HKD ${oldH}→${h}`);
+  logActivity('修改汇率',`USD→CNY ${oldU}→${u} · CNY→HKD ${oldH}→${h} · USDT→CNY ${ut} · USDC→CNY ${uc}`);
 }
+/* ============ 汇率源管理（多源实时汇率，可排序/自定义，USDT/USDC 独立，选项 B）============ */
+const FX_TTL_MS = 5*60*1000; // 5 分钟
+// 内置汇率源：每个源可填充 {USD_CNY, CNY_HKD, USDT_CNY, USDC_CNY} 的任意子集；首成即停 + 合并填充
+const FX_SOURCES = [
+  { name:'open.er-api',
+    buildUrls: function(){ return ['https://open.er-api.com/v6/latest/USD']; },
+    parse: function(b){ const r=b&&b.rates; if(!r||!r.CNY) return {}; const usdCny=Number(r.CNY); const cnyHkd=(r.HKD&&usdCny)?(Number(r.HKD)/usdCny):null; return { USD_CNY:usdCny, CNY_HKD:cnyHkd }; } },
+  { name:'frankfurter',
+    buildUrls: function(){ return ['https://api.frankfurter.app/latest?from=USD&to=CNY,HKD']; },
+    parse: function(b){ const r=b&&b.rates; if(!r||!r.CNY) return {}; const usdCny=Number(r.CNY); const cnyHkd=(r.HKD&&usdCny)?(Number(r.HKD)/usdCny):null; return { USD_CNY:usdCny, CNY_HKD:cnyHkd }; } },
+  { name:'coingecko-stable',
+    buildUrls: function(){ return ['https://api.coingecko.com/api/v3/simple/price?ids=tether,usd-coin&vs_currencies=usd']; },
+    parse: function(b){ const usd=FX.USD_CNY||7.156; const t=b&&b.tether&&b.tether.usd, u=b&&b['usd-coin']&&b['usd-coin'].usd; return { USDT_CNY:(t?Number(t)*usd:null), USDC_CNY:(u?Number(u)*usd:null) }; } }
+];
+let fxCache = (function(){ try{ return JSON.parse(localStorage.getItem('famdash_fx_cache')||'null'); }catch(e){ return null; } })();
+function fxCacheValid(){ return fxCache && fxCache.ts && (Date.now()-fxCache.ts)<FX_TTL_MS; }
+function saveFxCache(obj){ fxCache={ts:Date.now(), rates:obj}; try{ localStorage.setItem('famdash_fx_cache', JSON.stringify(fxCache)); }catch(e){} }
+function applyFxRates(rates){
+  if(rates.USD_CNY!=null&&isFinite(rates.USD_CNY)&&rates.USD_CNY>0){ FX.USD_CNY=rates.USD_CNY; FX_USD_CNY=rates.USD_CNY; }
+  if(rates.CNY_HKD!=null&&isFinite(rates.CNY_HKD)&&rates.CNY_HKD>0){ FX.CNY_HKD=rates.CNY_HKD; FX_CNY_HKD=rates.CNY_HKD; FX_USD_HKD=FX_USD_CNY*rates.CNY_HKD; }
+  if(rates.USDT_CNY!=null&&isFinite(rates.USDT_CNY)&&rates.USDT_CNY>0){ FX.USDT_CNY=rates.USDT_CNY; FX_USDT_CNY=rates.USDT_CNY; }
+  if(rates.USDC_CNY!=null&&isFinite(rates.USDC_CNY)&&rates.USDC_CNY>0){ FX.USDC_CNY=rates.USDC_CNY; FX_USDC_CNY=rates.USDC_CNY; }
+}
+// 合并「用户汇率源配置」与「内置源」：返回按优先级排序、已启用、应用了 URL 覆盖的源列表
+function buildFxSourceList(){
+  const builtin = FX_SOURCES;
+  const cfg = getSettings().fxSources || null;
+  if(cfg && cfg.length){
+    const list = cfg.map(function(c){
+      const d = builtin.find(function(x){ return x.name===c.name; });
+      if(!d) return null;
+      if(c.enabled===false) return null;
+      if(c.urlOverride){ return { name:d.name, buildUrls:function(){ return [c.urlOverride]; }, parse:d.parse }; }
+      return d;
+    }).filter(Boolean);
+    return list.length ? list : builtin.slice();
+  }
+  return builtin.slice();
+}
+// 通用抓取：按优先级拉取各源，合并填充汇率键；TTL 内复用缓存；全失败保持原值（优雅降级）
+async function fetchFxRates(force){
+  if(!force && fxCacheValid()){ applyFxRates(fxCache.rates||{}); return true; }
+  const sources = buildFxSourceList();
+  const merged = {};
+  let ok=false;
+  for(const src of sources){
+    try{
+      const urls = src.buildUrls();
+      const bodies = await Promise.all(urls.map(function(u){ return _fetchJson(u, 8000); }));
+      const part = src.parse(bodies[0]);
+      Object.keys(part).forEach(function(k){ if(part[k]!=null&&isFinite(part[k])&&part[k]>0) merged[k]=part[k]; });
+      if(Object.keys(merged).length) ok=true;
+      console.info('[汇率] 源 '+src.name+' 解析: '+JSON.stringify(part));
+    }catch(e){ console.warn('[汇率] 源 '+src.name+' 失败:', e.message); }
+  }
+  if(ok){
+    applyFxRates(merged);
+    saveFxCache(merged);
+    try{ recomputePortfolio(); }catch(e){}
+    try{ refreshFxViews(); }catch(e){}
+    console.info('[汇率] 已更新: '+JSON.stringify(merged));
+  } else {
+    console.warn('[汇率] 所有汇率源均失败，保持原值');
+  }
+  return ok;
+}
+function refreshFxViews(){
+  try{ if(typeof renderMine==='function') renderMine(); }catch(e){}
+  try{ if(typeof renderAccts==='function') renderAccts(); }catch(e){}
+  try{ if(typeof renderConsolidated==='function') renderConsolidated(); }catch(e){}
+  try{ if(typeof refreshHero==='function') refreshHero(); }catch(e){}
+}
+function fetchFxWhenReady(attempt){
+  attempt=attempt||0;
+  try{
+    if(getSettings().fxAutoFetch===false){ console.info('[汇率] 自动拉取已关闭'); return; }
+    fetchFxRates(false).then(function(){}).catch(function(){});
+  }catch(e){ console.warn('fetchFxWhenReady:', e.message); }
+}
+/* 汇率源配置读写（镜像行情源） */
+function fxGetCfg(){ const s=getSettings(); s.fxSources=s.fxSources||[]; return s.fxSources; }
+function fxSetCfg(arr){ const s=getSettings(); s.fxSources=arr; saveSetting('fxSources', arr); }
+function fxInitArr(){
+  const arr=fxGetCfg(); if(arr.length) return arr;
+  return FX_SOURCES.map(function(d){ return {name:d.name, enabled:true, urlOverride:''}; });
+}
+function fxMove(name, dir){
+  let arr=fxInitArr(); const i=arr.findIndex(function(x){ return x.name===name; }); if(i<0)return;
+  const j=i+dir; if(j<0||j>=arr.length)return;
+  const it=arr.splice(i,1)[0]; arr.splice(j,0,it); fxSetCfg(arr); showFxSourceManager();
+}
+function fxSetEnabled(name, enabled){
+  let arr=fxInitArr(); let c=arr.find(function(x){ return x.name===name; });
+  if(!c){ c={name:name, enabled:true, urlOverride:''}; arr.push(c); }
+  c.enabled=enabled; fxSetCfg(arr);
+}
+function fxReset(){ const s=getSettings(); s.fxSources=[]; saveSetting('fxSources',[]); toast('汇率源已恢复默认'); showFxSourceManager(); }
+function fxSaveAndClose(){ const m=document.getElementById('fxs-modal'); if(m)m.remove(); toast('汇率源设置已保存'); }
+function showFxSourceManager(){
+  const old=document.getElementById('fxs-modal');if(old)old.remove();
+  const cfg=fxGetCfg();
+  const defs=FX_SOURCES;
+  const items=defs.map(function(d,idx){
+    const c=cfg.find(function(x){ return x.name===d.name; });
+    const enabled=(c?c.enabled!==false:true);
+    const ord=cfg.findIndex(function(x){ return x.name===d.name; });
+    return {d:d, enabled:enabled, ord:(ord>=0?ord:idx)};
+  }).sort(function(a,b){ return a.ord-b.ord; });
+  const rows=items.map(function(it){
+    const d=it.d;
+    return `<div class="mgr-item" data-name="${escapeAttr(d.name)}">`
+      +`<input type="checkbox" class="fxs-enable" ${it.enabled?'checked':''} data-name="${escapeAttr(d.name)}" title="启用/停用">`
+      +`<span class="mgr-name">${escapeHtml(d.name)}</span>`
+      +`<span style="display:flex;gap:6px;margin-left:auto">`
+      +`<button class="mgr-move" onclick="fxMove('${escapeAttr(d.name)}',-1)" title="上移">▲</button>`
+      +`<button class="mgr-move" onclick="fxMove('${escapeAttr(d.name)}',1)" title="下移">▼</button>`
+      +`<button class="mgr-edit" onclick="showFxSourceEdit('${escapeAttr(d.name)}')" title="修改源"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`
+      +`</span></div>`;
+  }).join('');
+  const autoChk = getSettings().fxAutoFetch!==false ? 'checked':'';
+  const cur=`<div class="mgr-tip">当前实时汇率：USD→CNY <b>${Number(FX.USD_CNY).toFixed(4)}</b> · CNY→HKD <b>${Number(FX.CNY_HKD).toFixed(4)}</b> · USDT→CNY <b>${Number(FX.USDT_CNY||FX.USD_CNY).toFixed(4)}</b> · USDC→CNY <b>${Number(FX.USDC_CNY||FX.USD_CNY).toFixed(4)}</b></div>`;
+  const html=`<div class="modal open" id="fxs-modal" style="display:flex"><div class="box" style="max-width:560px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 汇率源管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('fxs-modal').remove()">×</button></div><div class="mbody">${cur}<div class="mgr-tip">勾选=启用 · ▲▼=优先级（靠上优先）· 修改=自定义 URL。首成即停，全失败回退手动值（不阻塞页面）。</div><div class="mgr-list">${rows||'<div class="mgr-empty">暂无</div>'}</div><div class="mgr-sec"><label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="fxs-auto" ${autoChk} onchange="saveSetting('fxAutoFetch',this.checked)"> 启动自动拉取实时汇率（关闭则仅用手动值）</label></div><div class="mgr-foot"><button class="btn ghost" onclick="fetchFxRates(true);showFxSourceManager()">🔄 立即刷新</button><button class="btn ghost" onclick="fxReset()">↺ 恢复默认</button><button class="btn" onclick="fxSaveAndClose()">完成</button></div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  document.querySelectorAll('#fxs-modal .fxs-enable').forEach(function(cb){
+    cb.addEventListener('change',function(){ fxSetEnabled(this.dataset.name, this.checked); });
+  });
+}
+function fxDefaultUrl(name){
+  const map={ 'open.er-api':'https://open.er-api.com/v6/latest/USD', 'frankfurter':'https://api.frankfurter.app/latest?from=USD&to=CNY,HKD', 'coingecko-stable':'https://api.coingecko.com/api/v3/simple/price?ids=tether,usd-coin&vs_currencies=usd' };
+  return map[name]||'https://';
+}
+function showFxSourceEdit(name){
+  const def=FX_SOURCES.find(function(d){ return d.name===name; }); if(!def)return;
+  const cfg=fxGetCfg().find(function(x){ return x.name===name; })||{};
+  const cur=def.urlOverride|| cfg.urlOverride || fxDefaultUrl(name);
+  const old=document.getElementById('fxse-modal');if(old)old.remove();
+  const html=`<div class="modal open" id="fxse-modal" style="display:flex"><div class="box" style="max-width:560px"><div class="mhead"><h3>修改汇率源 · ${escapeHtml(name)}</h3><button class="x" aria-label="关闭" onclick="document.getElementById('fxse-modal').remove()">×</button></div><div class="mbody"><div class="tx-form">
+    <div class="row" style="flex-direction:column;align-items:stretch"><label>请求 URL（返回 JSON，须含 USD/CNY/HKD 或 USDT/USDC 字段）</label><textarea id="fxse-url" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:12px;font-family:monospace">${escapeHtml(cur)}</textarea></div>
+    <div class="mgr-tip">必须 https，禁止内网地址。自定义 URL 仍需返回与内置源相同结构的 JSON，否则解析失败会自动 fallback 下一源。</div>
+    <div id="fxse-err" style="color:#dc2626;font-size:12px;min-height:16px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="document.getElementById('fxse-modal').remove()">取消</button><button class="btn" onclick="fxSaveEdit('${escapeAttr(name)}')">保存</button></div>
+  </div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function fxSaveEdit(name){
+  const url=(document.getElementById('fxse-url').value||'').trim();
+  const err=validateQuoteSourceUrl(url);
+  const errEl=document.getElementById('fxse-err');
+  if(err){ if(errEl)errEl.textContent='✗ '+err; return; }
+  let arr=fxInitArr();
+  let c=arr.find(function(x){ return x.name===name; }); if(!c){ c={name:name, enabled:true, urlOverride:''}; arr.push(c); }
+  c.urlOverride=url; fxSetCfg(arr);
+  const m=document.getElementById('fxse-modal'); if(m)m.remove();
+  toast('已更新源：'+name);
+}
+
 /* ============ 资产类型 / 币种管理 ============ */
 function showCashTypeManager(){
   const old=document.getElementById('cashtype-modal');if(old)old.remove();
@@ -6007,7 +6176,7 @@ function _inputModalConfirm(){
   _inputModalCallback=null;
 }
 function editBuiltinRate(code){
-  const cur = code==='USD' ? FX.USD_CNY : (1/FX.CNY_HKD);
+  const cur = code==='USD' ? FX.USD_CNY : (code==='HKD' ? (1/FX.CNY_HKD) : (code==='USDT' ? (FX.USDT_CNY||FX.USD_CNY) : (FX.USDC_CNY||FX.USD_CNY)));
   showInputModal({
     title:'修改 '+code+' 汇率',
     label:'1 '+code+' = ? CNY',
@@ -6015,12 +6184,11 @@ function editBuiltinRate(code){
     step:'0.0001',
     onConfirm:function(v){
       const r=Number(v);if(!isFinite(r)||r<=0){toast('无效汇率');return;}
-      let u=FX.USD_CNY, h=FX.CNY_HKD;
-      if(code==='USD') u=r; else h=1/r; // HKD：汇率为 1 HKD=?CNY，即 1/CNY_HKD
-      const {oldU,oldH}=applyBuiltinFx(u,h);
+      if(code==='USDT'){ applyBuiltinFx(FX.USD_CNY, FX.CNY_HKD, r, FX.USDC_CNY); }
+      else if(code==='USDC'){ applyBuiltinFx(FX.USD_CNY, FX.CNY_HKD, FX.USDT_CNY, r); }
+      else { let u=FX.USD_CNY, h=FX.CNY_HKD; if(code==='USD') u=r; else h=1/r; applyBuiltinFx(u,h); }
       if(typeof renderCcyList==='function') renderCcyList();
       toast(code+' 汇率已更新');
-      logActivity('修改汇率',`${code} · USD→CNY ${oldU}→${u} · CNY→HKD ${oldH}→${h}`);
     }
   });
 }
@@ -6033,7 +6201,7 @@ function showCurrencyManager(){
 }
 function renderCcyList(){
   const el=document.getElementById('ccy-list');if(!el)return;
-  const builtin=[{c:'CNY',rate:1,fix:true},{c:'USD',rate:FX.USD_CNY,fix:false},{c:'HKD',rate:1/FX.CNY_HKD,fix:false}];
+  const builtin=[{c:'CNY',rate:1,fix:true},{c:'USD',rate:FX.USD_CNY,fix:false},{c:'HKD',rate:1/FX.CNY_HKD,fix:false},{c:'USDT',rate:FX.USDT_CNY||FX.USD_CNY,fix:false},{c:'USDC',rate:FX.USDC_CNY||FX.USD_CNY,fix:false}];
   let h=builtin.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span><b>${x.c}</b> <small style="color:var(--dim)">${x.c==='CNY'?'（基准）':'(内置)'}</small> · 1 ${x.c} = <b>${Number(x.rate).toFixed(x.c==='CNY'?0:4)}</b> CNY</span>${x.fix?'<span style="color:var(--dim);font-size:11px">固定</span>':'<button class="btn ghost sm" onclick="editBuiltinRate(\''+x.c+'\')">改汇率</button>'}</div>`).join('');
   h+=getCurrencies().map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span><b>${escapeHtml(c.code)}</b> · 1 ${escapeHtml(c.code)} = <b>${Number(c.rateToCny)||0}</b> CNY</span><span style="display:flex;gap:8px"><button class="btn ghost sm" onclick="editCurrencyRate('${escapeHtml(c.code)}')">改汇率</button><button class="btn danger sm" onclick="delCurrency('${escapeHtml(c.code)}')">删除</button></span></div>`).join('');
   if(!getCurrencies().length)h+='<div style="color:var(--dim);padding:14px;text-align:center;font-size:12px">暂无自定义货币</div>';
@@ -6624,7 +6792,7 @@ function migrateCategoryModel(){
 function startApp(){
 try{document.title='家庭资产账户整合 '+APP_VERSION; const _fv=document.getElementById('footer-app-version'); if(_fv)_fv.textContent=APP_VERSION;}catch(e){}
 try{const _bl=document.getElementById('boot-loading');if(_bl)_bl.remove();}catch(e){}
-try{ if(DATA && DATA.meta && DATA.meta.fx){FX.USD_CNY=DATA.meta.fx.USD_CNY||7.156;FX.CNY_HKD=DATA.meta.fx.CNY_HKD||1.09;} }catch(e){}
+try{ if(DATA && DATA.meta && DATA.meta.fx){FX.USD_CNY=DATA.meta.fx.USD_CNY||7.156;FX.CNY_HKD=DATA.meta.fx.CNY_HKD||1.09;if(DATA.meta.fx.USDT_CNY)FX.USDT_CNY=DATA.meta.fx.USDT_CNY;if(DATA.meta.fx.USDC_CNY)FX.USDC_CNY=DATA.meta.fx.USDC_CNY;} }catch(e){}
 if(DATA && !DATA.transactions) DATA.transactions=[];
 if(DATA && !DATA.meta) DATA.meta={};   // 运行时聚合元数据（total_accounts/update_log/fx），data blob 不含，必须初始化
 if(DATA && !DATA.metrics) DATA.metrics={};   // 运行时指标（收益率/盈亏等），data blob 不含，必须初始化
@@ -6668,6 +6836,7 @@ try{syncPullOnLoad();}catch(e){console.error('syncPullOnLoad:',e)}
 /* 加密货币实时行情：数据就绪后自动拉一次（fetchCryptoWhenReady 轮询等云端合并完成，TTL 5 分钟，失败静默降级，绝不阻塞渲染）*/
 try{ fetchCryptoWhenReady(0); }catch(e){}
 try{ fetchSecWhenReady(0); }catch(e){}
+try{ fetchFxWhenReady(0); }catch(e){}
 window.addEventListener('resize',function(){try{charts.forEach(function(c){c.resize()});}catch(_){}});
 }  // ← 闭合 function startApp()
 /* ============ 方案 B：数据解密与解锁 ============ */
