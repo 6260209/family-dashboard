@@ -4346,7 +4346,10 @@ function exportData(){
 function resetEdits(){localStorage.removeItem('famdash_v1');location.reload();}
 
 /* ============ 标签切换 + 流水录入 + 账户联动 ============ */
-const FX={USD_CNY:7.156,CNY_HKD:1.09,USDT_CNY:7.156,USDC_CNY:7.156};
+/* USDT_CNY/USDC_CNY 初始为 null = "未独立设定，跟随 USD_CNY"。
+   切勿改回硬编码数值：那会让 fxCny 的回落链 (FX.USDT_CNY||FX.USD_CNY) 永远命中旧默认值，
+   导致 USD 汇率已更新、USDT 仍按旧值换算，稳定币资产被系统性高估。 */
+const FX={USD_CNY:7.156,CNY_HKD:1.09,USDT_CNY:null,USDC_CNY:null};
 // 汇率换算助手：支持 USDT/USDC 独立汇率（选项 B，默认与 USD 平价）。返回 1 单位 ccy = ? CNY / ? HKD
 function fxCny(c){c=(c||'CNY').toUpperCase();if(c==='CNY')return 1;if(c==='HKD')return 1/(FX.CNY_HKD||1.09);if(c==='USD')return FX.USD_CNY||7.156;if(c==='USDT')return FX.USDT_CNY||FX.USD_CNY||7.156;if(c==='USDC')return FX.USDC_CNY||FX.USD_CNY||7.156;const r=customRateToCny(c);return r!=null?r:1;}
 function fxHkd(c){c=(c||'HKD').toUpperCase();if(c==='HKD')return 1;if(c==='CNY')return FX.CNY_HKD||1.09;if(c==='USD')return FX_USD_HKD||7.80;if(c==='USDT')return (FX.USDT_CNY||FX.USD_CNY||7.156)*(FX.CNY_HKD||1.09);if(c==='USDC')return (FX.USDC_CNY||FX.USD_CNY||7.156)*(FX.CNY_HKD||1.09);const r=customRateToCny(c);return r!=null?r*(FX.CNY_HKD||1.09):1;}
@@ -5689,7 +5692,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-31-v39';
+const APP_VERSION='2026-07-31-v40';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -5773,11 +5776,20 @@ const FX_SOURCES = [
 let fxCache = (function(){ try{ return JSON.parse(localStorage.getItem('famdash_fx_cache')||'null'); }catch(e){ return null; } })();
 function fxCacheValid(){ return fxCache && fxCache.ts && (Date.now()-fxCache.ts)<FX_TTL_MS; }
 function saveFxCache(obj){ fxCache={ts:Date.now(), rates:obj}; try{ localStorage.setItem('famdash_fx_cache', JSON.stringify(fxCache)); }catch(e){} }
+/* 数值合理区间守门：坏源（如把 CNY 返回成 0.14）会直接击穿全站总资产，必须拦在写入前。
+   区间宽松取值，只拦离谱数据，不拦正常波动。 */
+const FX_SANE={ USD_CNY:[4,12], CNY_HKD:[0.7,1.8], USDT_CNY:[4,12], USDC_CNY:[4,12] };
+function _fxSane(key,v){
+  if(v==null||!isFinite(v)||v<=0) return false;
+  const r=FX_SANE[key]; if(!r) return true;
+  if(v<r[0]||v>r[1]){ try{ console.warn('[FX] 拒绝异常汇率 '+key+'='+v+'（合理区间 '+r[0]+'~'+r[1]+'）'); }catch(e){} return false; }
+  return true;
+}
 function applyFxRates(rates){
-  if(rates.USD_CNY!=null&&isFinite(rates.USD_CNY)&&rates.USD_CNY>0){ FX.USD_CNY=rates.USD_CNY; FX_USD_CNY=rates.USD_CNY; }
-  if(rates.CNY_HKD!=null&&isFinite(rates.CNY_HKD)&&rates.CNY_HKD>0){ FX.CNY_HKD=rates.CNY_HKD; FX_CNY_HKD=rates.CNY_HKD; FX_USD_HKD=FX_USD_CNY*rates.CNY_HKD; }
-  if(rates.USDT_CNY!=null&&isFinite(rates.USDT_CNY)&&rates.USDT_CNY>0){ FX.USDT_CNY=rates.USDT_CNY; FX_USDT_CNY=rates.USDT_CNY; }
-  if(rates.USDC_CNY!=null&&isFinite(rates.USDC_CNY)&&rates.USDC_CNY>0){ FX.USDC_CNY=rates.USDC_CNY; FX_USDC_CNY=rates.USDC_CNY; }
+  if(_fxSane('USD_CNY',rates.USD_CNY)){ FX.USD_CNY=rates.USD_CNY; FX_USD_CNY=rates.USD_CNY; }
+  if(_fxSane('CNY_HKD',rates.CNY_HKD)){ FX.CNY_HKD=rates.CNY_HKD; FX_CNY_HKD=rates.CNY_HKD; FX_USD_HKD=FX_USD_CNY*rates.CNY_HKD; }
+  if(_fxSane('USDT_CNY',rates.USDT_CNY)){ FX.USDT_CNY=rates.USDT_CNY; FX_USDT_CNY=rates.USDT_CNY; }
+  if(_fxSane('USDC_CNY',rates.USDC_CNY)){ FX.USDC_CNY=rates.USDC_CNY; FX_USDC_CNY=rates.USDC_CNY; }
 }
 // 合并「用户汇率源配置」与「内置源」：返回按优先级排序、已启用、应用了 URL 覆盖的源列表
 function buildFxSourceList(){
@@ -5852,7 +5864,13 @@ function fxSetEnabled(name, enabled){
   if(!c){ c={name:name, enabled:true, urlOverride:''}; arr.push(c); }
   c.enabled=enabled; fxSetCfg(arr);
 }
-function fxReset(){ const s=getSettings(); s.fxSources=[]; saveSetting('fxSources',[]); toast('汇率源已恢复默认'); showFxSourceManager(); }
+function fxReset(){
+  const s=getSettings(); s.fxSources=[]; saveSetting('fxSources',[]);
+  /* 必须同时清缓存并置空内存副本，否则 TTL(5min) 内仍会回灌旧自动值，看起来"重置没生效" */
+  try{ localStorage.removeItem('famdash_fx_cache'); }catch(e){}
+  fxCache=null;
+  toast('汇率源已恢复默认'); showFxSourceManager();
+}
 function fxSaveAndClose(){ const m=document.getElementById('fxs-modal'); if(m)m.remove(); toast('汇率源设置已保存'); }
 function showFxSourceManager(){
   const old=document.getElementById('fxs-modal');if(old)old.remove();
