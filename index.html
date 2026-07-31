@@ -5726,7 +5726,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-31-v41';
+const APP_VERSION='2026-07-31-v42';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6454,13 +6454,46 @@ function incomeRecordsFrom(src){
 // 把云端快照中的 famdash_v1 应用进内存 DATA（账户/收入/交易）。
 // 关键：applyCloudToData 与 syncApply 配套——只写 localStorage 不够，
 // 否则紧随其后的 syncPush 会把「陈旧基线」而非「云端数据」推回云端（覆盖手机数据）。
-function unionHoldings(localArr, cloudArr, keyFn){
-  keyFn=keyFn||function(x){return (x.symbol||x.name||x.id||'');};
-  const map={}; const out=[];
-  (localArr||[]).forEach(function(x){const k=keyFn(x); if(!(k in map)){map[k]=true; out.push(x);}});
-  (cloudArr||[]).forEach(function(x){const k=keyFn(x); if(!(k in map)){map[k]=true; out.push(x);}});
+/* 现金子账户专用的「字段级合并」（v42 修复根因）
+   背景：unionHoldings 原本按 key 去重后【整个对象保留先到者、丢弃后到者】。
+   cash_holdings 的 key 是 name，于是同名现金条目只要本地有一份，云端那份就被整体丢弃——
+   连同云端上的 _credits（收入入账钩子）一起陪葬。这就是历史分红钩子反复消失、
+   自检红灯反复复发的真凶（2026-07-30 实测钩子从 13 逐步坍塌到 3，每次坍塌都对应一次设备推送）。
+   修法：同名条目不再丢弃，改为字段级并集——_credits 按收入 id 取并集（冲突时胜方优先），
+   _manual_base 胜方缺失时用败方补齐。其余字段仍以胜方为准。
+   注意：amount 不在此处纠正，后续 recomputeCashAll() 会按
+   amount = _manual_base + 交易净额 + _credits合计 统一重算，保持单一事实源。 */
+function mergeCashEntry(win, lose){
+  if(!lose) return win;
+  if(!win) return lose;
+  const out=Object.assign({}, lose, win); // 以胜方为主，败方仅补齐胜方没有的字段
+  const cw=win._credits||{}, cl=lose._credits||{};
+  const cred={};
+  Object.keys(cl).forEach(function(k){ cred[k]=cl[k]; });
+  Object.keys(cw).forEach(function(k){ cred[k]=cw[k]; }); // 同一收入 id 冲突时胜方覆盖
+  if(Object.keys(cred).length) out._credits=cred; else delete out._credits;
+  if(win._manual_base==null && lose._manual_base!=null) out._manual_base=lose._manual_base;
   return out;
 }
+// mergeFn 可选：同 key 冲突时不再丢弃后到者，而是交给 mergeFn 做字段级合并。
+function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
+  keyFn=keyFn||function(x){return (x.symbol||x.name||x.id||'');};
+  const idx={}; const out=[];
+  (localArr||[]).forEach(function(x){
+    const k=keyFn(x);
+    if(!(k in idx)){ idx[k]=out.length; out.push(x); }
+    else if(mergeFn){ out[idx[k]]=mergeFn(out[idx[k]], x); }
+  });
+  (cloudArr||[]).forEach(function(x){
+    const k=keyFn(x);
+    if(!(k in idx)){ idx[k]=out.length; out.push(x); }
+    else if(mergeFn){ out[idx[k]]=mergeFn(out[idx[k]], x); }
+  });
+  return out;
+}
+function holdingKeyFn(x){ return (x.symbol||x.name||x.id||''); }
+// 现金走字段级合并，其余持仓维持原「先到者胜」语义，避免扩大改动面。
+function holdingMergeFor(key){ return key==='cash_holdings' ? mergeCashEntry : null; }
 function mergeV1Accounts(cloudAccounts, localAccounts){
   const localMap={}; (localAccounts||[]).forEach(function(a){ localMap[a.id||a.name]=a; });
   const out=[];
@@ -6469,7 +6502,7 @@ function mergeV1Accounts(cloudAccounts, localAccounts){
     if(la){
       const m=Object.assign({},c);
       ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(k){
-        if(la[k]&&la[k].length) m[k]=unionHoldings(la[k], c[k]||[], function(x){return (x.symbol||x.name||x.id||'');});
+        if(la[k]&&la[k].length) m[k]=unionHoldings(la[k], c[k]||[], holdingKeyFn, holdingMergeFor(k));
         else if(c[k]) m[k]=c[k];
       });
       out.push(m); delete localMap[c.id||c.name];
@@ -6556,7 +6589,7 @@ function mergeAccountsForPush(localAcc, cloudAcc){
     if(c){
       const m=Object.assign({},a);
       ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
-        m[key]=unionHoldings(a[key]||[], c[key]||[], function(x){return (x.symbol||x.name||x.id||'');});
+        m[key]=unionHoldings(a[key]||[], c[key]||[], holdingKeyFn, holdingMergeFor(key));
       });
       out.push(m);
     } else out.push(a);
