@@ -216,6 +216,13 @@ tbody tr:hover{background:#f8fafc}
 .mgr-item .mgr-move{width:34px;height:34px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;transition:all var(--transition-fast)}
 .mgr-item .mgr-move:hover{background:#e2e8f0}
 .mgr-item .mgr-name{flex:1;min-width:0;font-weight:500}
+/* v44 标的管理：类别副标 / 引用数徽标 / 锁定标记 */
+.mgr-item .mgr-sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:4px}
+.mgr-item .mgr-tag{font-size:10px;padding:1px 6px;border-radius:8px;background:#e0f2fe;color:#0369a1;white-space:nowrap;margin-right:4px}
+.mgr-item .mgr-lock{font-size:12px;opacity:.55;cursor:help}
+.mgr-item .mgr-merge{width:40px;height:40px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;cursor:pointer;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;transition:all var(--transition-fast)}
+.mgr-item .mgr-merge:hover{background:#ede9fe;border-color:#7c3aed;transform:scale(1.06)}
+.mgr-item .mgr-merge:active{transform:scale(.92)}
 .mgr-item:hover{background:#f0f9ff;border-color:#bae6fd;transform:translateY(-1px);box-shadow:0 2px 8px rgba(14,165,233,.12)}
 .mgr-item>span:first-child{font-size:13.5px;font-weight:500;color:var(--text)}
 .mgr-empty{text-align:center;padding:24px 12px;color:var(--dim);font-size:13px}
@@ -868,7 +875,6 @@ th.sortable.desc .arrow::after{content:'▼'}
       <button class="btn ghost sm" onclick="exportData()">⤓ 导出数据</button>
       <button class="btn ghost sm" onclick="resetEdits()">↺ 重置本地改动</button>
     </div>
-    <div id="inc-form" style="display:none;margin-top:8px"></div>
   </div>
 </div>
 
@@ -3742,7 +3748,9 @@ function computeIncomeAgg(){
   const recs=DATA.income.records||[];const now=new Date();const yr=now.getFullYear();
   const cnyOf=r=>{const a=Number(r.amount)||Number(r.cny)||0;const c=(r.currency||'CNY').toUpperCase();if(c==='USD'||c==='USDT')return a*(FX.USD_CNY||7.156);if(c==='HKD')return a/(FX.CNY_HKD||1.09);return a;};
   const TL={dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',salary:'工资',other:'其他收入'};
-  recs.forEach(r=>{r.cny=Math.round(cnyOf(r));r.type_label=TL[r.type]||r.type;});
+  /* v44 需求7：类型不允许为空。录入端 addInc 已默认 other；历史空值在展示层兜底为「其他收入」，
+     使收入列表 / 类型筛选按钮都不会出现空白项。此处只改展示，不改写原始 type 字段。 */
+  recs.forEach(r=>{r.cny=Math.round(cnyOf(r));r.type_label=TL[r.type]||r.type||'其他收入';});
   // 合并投资计划生成的「预计收入」待确认事项（FCN票息等）。HKD/USD 经 toCny 换算 CNY。
   // 已确认(confirmed)的待办会写入 DATA.income.records(inc_conf_*)，已在 recs 统计，避免重复；此处仅合并 pending。
   const incomeTodos=(typeof getTodos==='function'?getTodos():[]).filter(function(t){
@@ -4034,7 +4042,7 @@ function renderInc(){
   });
 
   // === 表格渲染（全部模式也用平铺列表，不再分组） ===
-  document.getElementById('inc-body').innerHTML=buildIncRows(filteredRecs)||'<tr><td colspan="9" style="color:#94a3b8">暂无收入记录</td></tr>';
+  document.getElementById('inc-body').innerHTML=buildIncRows(filteredRecs)||'<tr><td colspan="8" style="color:#94a3b8">暂无收入记录</td></tr>';
 
   try{renderIncChart();}catch(e){console.error(e)}
 }
@@ -4269,8 +4277,10 @@ function calMonthHTML(){const yk=String(calYr);const m=DATA.income.calendar.mont
   return `<div class="cal-grid" style="grid-template-columns:repeat(3,1fr)">${cells}</div>`;}
 function calYearHTML(){const y=DATA.income.calendar.yearly;const ys=Object.keys(y).sort();document.getElementById('cal-title').textContent='年度汇总';
   return '<table class="mtab"><thead><tr><th>年份</th><th>笔数</th><th>收入合计(CNY)</th></tr></thead><tbody>'+ys.map(yk=>`<tr><td><b>${yk}</b></td><td>${y[yk].count}</td><td class="gn">+${fmtCny(y[yk].income_cny)}</td></tr>`).join('')+'</tbody></table>';}
-function showIncForm(){const el=document.getElementById('inc-form');el.style.display='block';
-  el.innerHTML=`<div class="form-row"><b>添加收入：</b><input id="inc-date" type="date"><select id="inc-type"><option value="dividend">股票股息</option><option value="fcn_coupon">FCN票息</option><option value="fund_div">基金分红</option><option value="interest">利息</option><option value="other">其他</option></select><input id="inc-name" placeholder="标的/来源" style="min-width:110px"><input id="inc-amount" type="number" placeholder="金额" style="width:84px"><select id="inc-ccy"><option>CNY</option><option>USD</option><option>HKD</option></select><select id="inc-status"><option value="received">已到账</option><option value="projected">预计</option></select><button class="btn sm" onclick="addInc()">保存</button><button class="btn ghost sm" onclick="document.getElementById('inc-form').style.display='none'">取消</button></div>`;}
+/* v44: 旧内联收入表单 showIncForm 已删除。
+   它与 showIncModal 共用 inc-date/inc-type/inc-ccy/inc-status 等同名 id，
+   一旦两者同时进 DOM，getElementById 会抓错元素；且残留已废弃的「标的/来源」字段。
+   录入统一走 showIncModal()。 */
 function showIncModal(){
   const today=new Date().toISOString().slice(0,10);
   const catOpts='<option value="">— 可选 —</option>'+catNames().map(n=>`<option value="${n}">${escapeHtml(n)}</option>`).join('');
@@ -5312,7 +5322,7 @@ function renderTx(){
   const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整',edit:'编辑'};
   document.getElementById('tx-body').innerHTML=all.map(t=>{
     if(t._src==='edit'){
-      return `<tr><td>${t.date||'—'}</td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td>审计</td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
+      return `<tr><td>${t.date||'—'}</td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
     }
     let acc,dir,amt=t.amount||0,ccy=t.currency||'CNY';
     if(t.type==='transfer'){ acc=acctName(t.account_from)+' → '+acctName(t.account_to); dir='转账'; }
@@ -5320,11 +5330,11 @@ function renderTx(){
     else if(t.type==='dividend'){ acc=acctName(t.account); dir=t.name||''; }
     else if(t.type==='manual_adjust'){ acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     else { acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
-    const st=t.status?({received:'已到账',projected:'预计'})[t.status]||t.status:'';
+    /* v44 需求6：流水表已去掉「状态」列（记账软件不需要"等系统成交"），原 st 变量随之删除。 */
     const sign=(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
     const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':'t-afund';
     return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
-  }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
+  }).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
   let inc=0,buy=0,sell=0,trf=0,div=0;
   DATA.transactions.forEach(t=>{
     const v=toCny(t.amount||0,t.currency);
@@ -5798,7 +5808,6 @@ function renderMine(){
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 账户标签</div><div class="desc">增删改账户标签（境外券商 / A股 / 基金…）</div></div><button class="btn ghost sm" onclick="showAccountTypeManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</div><div class="desc">所有账户里的证券/基金/加密/现金标的汇成一张表：改名（一处改全站同步）、排序、合并同名、删除（无持仓自动消失，不留孤儿）</div></div><button class="btn ghost sm" onclick="showInstrumentManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-chart"/></svg> 投资项目</div><div class="desc">增删改投资项目分类（如纳斯达克100、黄金、REITs…）</div></div><button class="btn ghost sm" onclick="showProjectManager()">管理</button></div>`;
-  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 标的管理</div><div class="desc">排序 / 改名 / 合并同标的 / 删除（删后无处引用的标的自动消失，不留孤儿）</div></div><button class="btn ghost sm" onclick="showInstrumentManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 子账户排序</div><div class="desc">增删改、拖拽或 ▲▼ 调整子账户显示顺序（如场内ETF、场外基金、债券…）</div></div><button class="btn ghost sm" onclick="showCategoryManager()">排序</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 行情源管理</div><div class="desc">A股/港股/美股/加密 行情源的启用、优先级排序与自定义 URL（带安全校验）</div></div><button class="btn ghost sm" onclick="showQuoteSourceManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 汇率源管理</div><div class="desc">USD/CNY/HKD 及 USDT/USDC 实时汇率源：启用、排序、自定义 URL，失败自动回退手动值</div></div><button class="btn ghost sm" onclick="showFxSourceManager()">管理</button></div>`;
@@ -5810,7 +5819,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-01-v44';
+const APP_VERSION='2026-08-01-v44.1';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6061,20 +6070,20 @@ function showCashTypeManager(){
 function escapeAttr(s){return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function addCashType(){
   const i=document.getElementById('ctm-type-input');const v=(i&&i.value||'').trim();if(!v)return;
-  const arr=getCashTypes();if(!arr.includes(v))arr.push(v);saveCashTypes(arr);patchCashSchema();
+  const arr=getCashTypes();if(!arr.includes(v))arr.push(v);saveCashTypes(arr);patchAllSchema();
   showCashTypeManager();logActivity('添加资产类型',v);
 }
 function delCashType(t){
-  let arr=getCashTypes();arr=arr.filter(x=>x!==t);saveCashTypes(arr);patchCashSchema();
+  let arr=getCashTypes();arr=arr.filter(x=>x!==t);saveCashTypes(arr);patchAllSchema();
   showCashTypeManager();logActivity('删除资产类型',t);
 }
 function addCashCcy(){
   const i=document.getElementById('ctm-ccy-input');let v=(i&&i.value||'').trim().toUpperCase();if(!v)return;
-  const arr=getCashCcys();if(!arr.includes(v))arr.push(v);saveCashCcys(arr);patchCashSchema();
+  const arr=getCashCcys();if(!arr.includes(v))arr.push(v);saveCashCcys(arr);patchAllSchema();
   showCashTypeManager();logActivity('添加币种',v);
 }
 function delCashCcy(c){
-  let arr=getCashCcys();arr=arr.filter(x=>x!==c);saveCashCcys(arr);patchCashSchema();
+  let arr=getCashCcys();arr=arr.filter(x=>x!==c);saveCashCcys(arr);patchAllSchema();
   showCashTypeManager();logActivity('删除币种',c);
 }
 function resetCashTypes(){
@@ -6107,14 +6116,9 @@ function addProjItem(){const i=document.getElementById('proj-input');const v=(i&
 function delProjItem(p){let arr=getProjects();arr=arr.filter(x=>x!==p);saveProjects(arr);patchAllSchema();showProjectManager();}
 function resetProjs(){saveProjects(DEFAULT_PROJECTS.slice());patchAllSchema();showProjectManager();toast('已恢复默认');}
 /* 项目/分类删除后，把已不存在的标的排序项裁掉，避免孤儿（已无持仓的标的不再占排序位）。 */
-function pruneFamdashOrder(){
-  try{
-    const live=new Set();
-    (DATA.accounts||[]).forEach(a=>{ ['securities','fund_holdings','holdings','cash_holdings','crypto'].forEach(function(sec){ (a[sec]||[]).forEach(function(it){ var n=sec==='securities'?(it.asset_name||''):(it.name||''); if(n) live.add(String(n).trim().replace(/\s+/g,'').toUpperCase()); }); }); });
-    const o=(function(){try{return JSON.parse(localStorage.getItem(INSTR_ORDER_KEY))||[];}catch(e){return [];}})().filter(function(x){return live.has(String(x).trim().replace(/\s+/g,'').toUpperCase());});
-    localStorage.setItem('famdash_instrument_order',JSON.stringify(o));
-  }catch(e){}
-}
+/* pruneFamdashOrder 的实现下移到「标的管理」模块内（约 L6340），
+   与 buildInstrumentMap 共用同一套 key 格式。原先这里的版本用「裸名称」当 key，
+   与标的表的 sec::名称 格式对不上，会把用户排序整份误裁，且没有返回值导致调用方崩溃。 */
 
 /* ===== 子账户管理器 ===== */
 function catRefCount(id){let n=0;const A=Array.isArray(DATA.accounts)?DATA.accounts:[];const secs=['securities','fund_holdings','holdings','cash_holdings'];A.forEach(a=>{secs.forEach(s=>(a[s]||[]).forEach(it=>{if(it&&it.cat_id===id)n++;}));});(DATA.transactions||[]).forEach(t=>{if(t&&t.cat_id===id)n++;});if(DATA.income&&Array.isArray(DATA.income.records)){DATA.income.records.forEach(r=>{if(r&&r.cat_id===id)n++;});}return n;}
@@ -6208,8 +6212,15 @@ function addLocItem(){const i=document.getElementById('loc-input');const v=(i&&i
 function delLocItem(l){let arr=getLocations();arr=arr.filter(x=>x!==l);saveLocations(arr);patchAllSchema();showLocationManager();}
 function resetLocs(){saveLocations(DEFAULT_LOCATIONS.slice());patchAllSchema();showLocationManager();toast('已恢复 default');}
 /* ============ 通用「重命名并级联更新」 ============ */
+/* kind==='instrument' 时 oldName 传的是 {sec,raw} JSON 载荷（要带 sec 才知道改哪张表）。
+   直接塞进「当前名称」输入框会显示成一坨 JSON，这里解析出 raw 给人看，载荷仍原样回传。 */
+function _renameDisplayName(kind, oldName){
+  if(kind!=='instrument') return oldName;
+  try{ const p=JSON.parse(oldName); return (p&&p.raw)?p.raw:oldName; }catch(e){ return oldName; }
+}
 function showRenameModal(kind, oldName){
-  const html=`<div class="modal open" id="rename-modal" style="display:flex"><div class="box" style="max-width:380px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 重命名</h3><button class="x" aria-label="关闭" onclick="document.getElementById('rename-modal').remove()">×</button></div><div class="mbody"><div class="tx-form"><div class="row"><label>当前名称</label><input value="${escapeAttr(oldName)}" disabled style="background:#f3f4f6"></div><div class="row"><label>新名称</label><input id="rename-new" placeholder="输入新名称" style="flex:1"></div><button class="btn" onclick="_renameConfirm('${escapeAttr(kind)}','${escapeAttr(oldName)}')">保存</button><button class="btn ghost" onclick="document.getElementById('rename-modal').remove()">取消</button></div></div></div></div>`;
+  const shown=_renameDisplayName(kind,oldName);
+  const html=`<div class="modal open" id="rename-modal" style="display:flex"><div class="box" style="max-width:380px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 重命名</h3><button class="x" aria-label="关闭" onclick="document.getElementById('rename-modal').remove()">×</button></div><div class="mbody"><div class="tx-form"><div class="row"><label>当前名称</label><input value="${escapeAttr(shown)}" disabled style="background:#f3f4f6"></div><div class="row"><label>新名称</label><input id="rename-new" placeholder="输入新名称" style="flex:1"></div><button class="btn" onclick="_renameConfirm('${escapeAttr(kind)}','${escapeAttr(oldName)}')">保存</button><button class="btn ghost" onclick="document.getElementById('rename-modal').remove()">取消</button></div></div></div></div>`;
   const old=document.getElementById('rename-modal');if(old)old.remove();
   document.body.insertAdjacentHTML('beforeend',html);
   setTimeout(function(){const i=document.getElementById('rename-new');if(i)i.focus();},60);
@@ -6217,8 +6228,21 @@ function showRenameModal(kind, oldName){
 function _renameConfirm(kind,oldName){
   const nv=((document.getElementById('rename-new')||{}).value||'').trim();
   const m=document.getElementById('rename-modal');if(m)m.remove();
+  const shown=_renameDisplayName(kind,oldName);
   if(!nv){toast('请输入新名称');return;}
-  if(nv===oldName)return;
+  if(nv===shown)return;
+  /* 标的必须在 renameManaged 之前短路返回。
+     renameManaged 管的是 localStorage 里的名单类配置（项目/持有人/标签…），
+     它对 kind==='instrument' 会落到 else return false，于是下面 ok===false 直接弹
+     「重命名失败：原名称不存在」并 return —— 标的改名从来就没能执行到。
+     标的是从真实持仓派生的，改名要级联改写账户持仓 + 流水 asset_name + 收入 name，
+     统一交给 _renameConfirm_instrument → renameInstrument 处理。 */
+  if(kind==='instrument'){
+    const ok=_renameConfirm_instrument(oldName,nv);
+    showInstrumentManager();
+    toast(ok===false?('重命名失败：未找到「'+shown+'」的引用'):('已重命名：'+shown+' → '+nv));
+    return;
+  }
   const ok=renameManaged(kind,oldName,nv);
   if(ok===false){toast('重命名失败：原名称不存在');return;}
   if(kind==='category'||kind==='cat')showCategoryManager();
@@ -6226,20 +6250,23 @@ function _renameConfirm(kind,oldName){
   else if(kind==='holder')showHolderManager();
   else if(kind==='accountType')showAccountTypeManager();
   else if(kind==='location')showLocationManager();
-  else if(kind==='instrument'){ _renameConfirm_instrument(oldName,nv); showInstrumentManager(); }
   toast('已重命名：'+oldName+' → '+nv);
 }
 function renameManaged(kind,oldName,newName){
   if(!newName||newName===oldName)return false;
   let arr;
-  if(kind==='category'){
+  /* 'cat' 是 'category'（子账户分类）的历史别名。原来它走的是 getCustomCats/saveCustomCats——
+     这两个函数在本文件里根本不存在，一改名就 ReferenceError。合并到 category 分支。 */
+  if(kind==='category'||kind==='cat'){
     const list=getCategories();const c=list.find(x=>x.name===oldName);if(!c)return false;c.name=newName;saveCategories(list);
     try{patchAllSchema();}catch(e){}
+    try{cascadeRename('cat',oldName,newName);}catch(e){}
+    try{saveEditsLocal();}catch(e){}
+    try{recomputePortfolio();}catch(e){}
     toast('已重命名：'+oldName+' → '+newName);
     return true;
   }
-  if(kind==='cat')arr=getCustomCats();
-  else if(kind==='project')arr=getProjects();
+  if(kind==='project')arr=getProjects();
   else if(kind==='holder')arr=getHolders();
   else if(kind==='accountType')arr=getAccountTypes();
   else if(kind==='location')arr=getLocations();
@@ -6247,8 +6274,7 @@ function renameManaged(kind,oldName,newName){
   const i=arr.indexOf(oldName);
   if(i<0)return false;
   arr[i]=newName;
-  if(kind==='cat')saveCustomCats(arr);
-  else if(kind==='project')saveProjects(arr);
+  if(kind==='project')saveProjects(arr);
   else if(kind==='holder')saveHolders(arr);
   else if(kind==='accountType')saveAccountTypes(arr);
   else if(kind==='location')saveLocations(arr);
@@ -6333,8 +6359,10 @@ const _INSTR_SECS=[
 ];
 function getInstrumentOrder(){ try{const o=JSON.parse(localStorage.getItem(INSTR_ORDER_KEY));if(Array.isArray(o))return o;}catch(e){} return []; }
 function saveInstrumentOrder(arr){ try{localStorage.setItem(INSTR_ORDER_KEY,JSON.stringify(arr||[]));setSyncMeta(INSTR_ORDER_KEY,Date.now());}catch(e){} try{pruneFamdashOrder();}catch(e){} }
-/* 汇总全部标的（含引用计数）。key = sec + '::' + 归一名；display 取出现频次最高的原始写法。 */
-function getInstruments(){
+/* 汇总全部标的（含引用计数）。key = sec + '::' + 归一名；display 取首次出现的原始写法。
+   只负责「派生」，不做排序 —— 供 getInstruments 与 pruneFamdashOrder 共用同一套 key，
+   避免两处各算一套导致排序键对不上。 */
+function buildInstrumentMap(){
   const map={};  const accs=(Array.isArray(DATA.accounts)?DATA.accounts:[]);
   accs.forEach(a=>{
     _INSTR_SECS.forEach(s=>{
@@ -6352,25 +6380,65 @@ function getInstruments(){
   });
   (DATA.transactions||[]).forEach(t=>{ if(t&&t.asset_name){ const k='transaction::'+String(t.asset_name).trim().toUpperCase(); if(!map[k])map[k]={key:k,sec:'transaction',kind:'流水标的',ccy:'',name:t.asset_name,display:t.asset_name,count:0,accounts:new Set()}; map[k].count++; } });
   (DATA.income&&Array.isArray(DATA.income.records)?DATA.income.records:[]).forEach(r=>{ if(r&&r.name){ const k='income::'+String(r.name).trim().toUpperCase(); if(!map[k])map[k]={key:k,sec:'income',kind:'收入标的',ccy:'',name:r.name,display:r.name,count:0,accounts:new Set()}; map[k].count++; } });
+  return map;
+}
+/* 裁掉已无任何持仓 / 流水 / 收入引用的排序项（孤儿），并返回裁剪后的顺序数组。
+   「删除的标的如果持仓没有了，设置里的也对应没了，不要出现孤儿」——靠这里 + 派生式标的表共同保证。 */
+function pruneFamdashOrder(){
+  let out=[];
+  try{
+    const live=new Set(Object.keys(buildInstrumentMap()));
+    out=getInstrumentOrder().filter(k=>live.has(k));
+    localStorage.setItem(INSTR_ORDER_KEY,JSON.stringify(out));
+  }catch(e){ try{ out=getInstrumentOrder(); }catch(_){ out=[]; } }
+  return Array.isArray(out)?out:[];
+}
+function getInstruments(){
+  const map=buildInstrumentMap();
   const arr=Object.values(map).map(o=>({key:o.key,sec:o.sec,kind:o.kind,ccy:o.ccy,name:o.name,display:o.display,refCount:o.count,accounts:o.accounts.size}));
   // 排序：用户顺序在前，其余按引用数降序
   const ord=pruneFamdashOrder(); const pos={}; ord.forEach((k,i)=>pos[k]=i);
   arr.sort((x,y)=>{ const px=(x.key in pos)?pos[x.key]:1e9, py=(y.key in pos)?pos[y.key]:1e9; if(px!==py)return px-py; return y.refCount-x.refCount; });
   return arr;
 }
+/* 是否允许在标的管理里改名。
+   现金「通用桶」（名字就是币种代码，如 USD / HKD / CNY）锁定不可改：
+   它和收入里选的币种是同一个东西（需求5 的自动关联就靠这个），改掉就断链了。
+   自定义现金桶（如「天弘三月债」「USD 现金(分红入账)」）允许改名 ——
+   把它改成币种代码，等于并入该币种主桶。 */
+function instrCanRename(it){
+  if(!it) return false;
+  if(it.sec==='cash_holdings')
+    return String(it.display||'').trim().toUpperCase()!==String(it.ccy||'').trim().toUpperCase();
+  return true;
+}
+/* 是否允许删除。现金桶一律不给删（删现金 = 删钱），只能改名并入其它桶。 */
+function instrCanDelete(it){ return !!it && it.sec!=='cash_holdings'; }
+
 /* 改名：从 oldRaw（某 sec 下的原始名）改成 newRaw。同 sec、同归一名的其它写法一并统一。
-   改名后追加自愈合并，把同账户同标的的多条记录合计成一条，并写墓碑防复活。 */
+   「底层就一样，改一处其他地方一起更新」——除账户持仓外，同名的流水 asset_name
+   与收入记录 name 一并级联改写。改名后追加自愈合并，把同账户同标的的多条记录合计成一条，
+   并写墓碑防止旧名被其它设备同步回来复活。 */
 function renameInstrument(sec, oldRaw, newRaw){
   newRaw=(newRaw||'').trim(); if(!newRaw||!oldRaw) return false;
-  if(sec==='cash_holdings') return false; // 现金通用名不允许改名
+  const eqOld=v=>v!=null&&String(v).trim().toUpperCase()===String(oldRaw).trim().toUpperCase();
   const accs=(Array.isArray(DATA.accounts)?DATA.accounts:[]);
+  const meta=_INSTR_SECS.find(s=>s.key===sec);
   let changed=false;
-  accs.forEach(a=>{
-    const arr=a[sec]; if(!Array.isArray(arr))return;
-    arr.forEach(it=>{
-      const cur=it[_INSTR_SECS.find(s=>s.key===sec).nameField];
-      if(cur!=null && String(cur).trim().toUpperCase()===String(oldRaw).trim().toUpperCase()){ it[_INSTR_SECS.find(s=>s.key===sec).nameField]=newRaw; changed=true; }
+  if(meta){
+    accs.forEach(a=>{
+      const arr=a[sec]; if(!Array.isArray(arr))return;
+      arr.forEach(it=>{
+        // 通用现金桶不可改名，跳过（自定义现金桶可以，改成币种代码即并入主桶）
+        if(sec==='cash_holdings' && isGenericCash(it)) return;
+        if(eqOld(it[meta.nameField])){ it[meta.nameField]=newRaw; changed=true; }
+      });
     });
+  }
+  // 全站级联：流水与收入里引用同一名称的记录一起改，保证「一处改、处处变」
+  (DATA.transactions||[]).forEach(t=>{ if(t&&eqOld(t.asset_name)){ t.asset_name=newRaw; changed=true; } });
+  (DATA.income&&Array.isArray(DATA.income.records)?DATA.income.records:[]).forEach(r=>{
+    if(r&&eqOld(r.name)){ r.name=newRaw; changed=true; }
   });
   if(!changed) return false;
   dedupInstruments();   // 把同名（现统一为新名）的多条记录合并，金额合计
@@ -6415,7 +6483,8 @@ function dedupInstruments(){
 }
 /* 合并：把 srcRaw 这一标的并入 dstRaw（同 sec）。底层等于「把 src 改名为 dst 后去重」。 */
 function mergeInstrument(sec, srcRaw, dstRaw){
-  if(sec==='cash_holdings') return false;
+  // 现金桶不再一刀切禁止：renameInstrument 内部只锁「通用桶」，
+  // 自定义桶（如「USD 现金(分红入账)」）并入 USD 主桶正是需要的。
   if(!srcRaw||!dstRaw||String(srcRaw).trim().toUpperCase()===String(dstRaw).trim().toUpperCase()) return false;
   const ok=renameInstrument(sec, srcRaw, dstRaw); // 改完名后会自动 dedup
   if(ok) toast('已合并：'+srcRaw+' → '+dstRaw);
@@ -6456,13 +6525,18 @@ function showInstrumentManager(){
   const old=document.getElementById('instr-modal');if(old)old.remove();
   const list=getInstruments();
   const items=list.map((it)=>{
-    const lock=!instrCanRename(it);
+    const payload = escapeAttr(JSON.stringify({sec:it.sec,raw:it.display}));
     const mergeHint = it.refCount>1 ? `<span class="mgr-tag" title="该标的有多处引用">${it.refCount}处</span>` : '';
-    const renameBtn = lock ? '' : `<button class="mgr-edit" onclick="showRenameModal('instrument','${escapeAttr(JSON.stringify({sec:it.sec,raw:it.display}))}')" title="改名（一处改全站同步）" aria-label="改名"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`;
-    const delBtn = lock ? '' : `<button class="del" onclick="delInstrumentItem('${escapeAttr(JSON.stringify({sec:it.sec,raw:it.display}))}')" aria-label="删除">×</button>`;
-    return `<div class="mgr-item" draggable="true" data-key="${escapeAttr(it.key)}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(it.display)} <span class="mgr-sub">${it.kind}${it.ccy?(' · '+it.ccy):''}</span></span>${mergeHint}<span style="display:flex;gap:8px">${renameBtn}${delBtn}</span></div>`;
+    const renameBtn = instrCanRename(it)
+      ? `<button class="mgr-edit" onclick="showRenameModal('instrument','${payload}')" title="改名（一处改全站同步）" aria-label="改名"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`
+      : `<span class="mgr-lock" title="币种现金桶与收入币种是同一个，锁定不可改名">🔒</span>`;
+    const mergeBtn = instrCanMerge(it,list)
+      ? `<button class="mgr-merge" onclick="showMergeInstrumentModal('${payload}')" title="并入另一个标的（合并重复标的）" aria-label="合并">⇢</button>` : '';
+    const delBtn = instrCanDelete(it)
+      ? `<button class="del" onclick="delInstrumentItem('${payload}')" aria-label="删除">×</button>` : '';
+    return `<div class="mgr-item" draggable="true" data-key="${escapeAttr(it.key)}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(it.display)} <span class="mgr-sub">${it.kind}${it.ccy?(' · '+it.ccy):''}</span></span>${mergeHint}<span style="display:flex;gap:8px">${renameBtn}${mergeBtn}${delBtn}</span></div>`;
   }).join('');
-  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ⋮⋮ 调整显示顺序 · 改名会同步到所有账户与云端 · 删除后无持仓的标的自动消失</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
+  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ⋮⋮ 排序 · ✎ 改名（一处改，账户持仓/流水/收入全站同步）· ⇢ 合并到另一个标的 · × 删除（删后无持仓的标的自动消失，不留孤儿）· 🔒 币种现金桶与收入币种是同一个，锁定不可改</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
   document.querySelectorAll('#instr-modal .mgr-item').forEach(el=>{
     el.addEventListener('dragstart',instrDragStart);
@@ -6487,6 +6561,33 @@ function delInstrumentItem(payloadJson){
 function _renameConfirm_instrument(payloadJson, newName){
   let p; try{p=JSON.parse(payloadJson);}catch(e){return false;}
   return renameInstrument(p.sec, p.raw, newName);
+}
+/* 「合并」入口。底层 = 把来源改名成目标名 + 自愈去重，所以权限与改名完全一致：
+   通用现金桶（USD/HKD/CNY）锁定，不能当来源被合并掉（它是主桶，收入按币种就往它里落）；
+   但它可以当目标 —— 「USD 现金(分红入账)」并入「USD」正是需求 5 要的。 */
+function instrCanMerge(it, list){
+  if(!instrCanRename(it)) return false;
+  return (list||getInstruments()).some(o=>o.sec===it.sec && o.key!==it.key);
+}
+function showMergeInstrumentModal(payloadJson){
+  let p; try{p=JSON.parse(payloadJson);}catch(e){return;}
+  const same=v=>String(v||'').trim().toUpperCase();
+  const cands=getInstruments().filter(o=>o.sec===p.sec && same(o.display)!==same(p.raw));
+  if(!cands.length){toast('同类别下没有可合并的其它标的');return;}
+  const opts=cands.map(o=>`<option value="${escapeAttr(o.display)}">${escapeHtml(o.display)}${o.ccy?(' · '+escapeHtml(o.ccy)):''}（${o.refCount}处引用）</option>`).join('');
+  const html=`<div class="modal open" id="merge-modal" style="display:flex"><div class="box" style="max-width:420px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 合并标的</h3><button class="x" aria-label="关闭" onclick="document.getElementById('merge-modal').remove()">×</button></div><div class="mbody"><div class="tx-form"><div class="row"><label>来源</label><input value="${escapeAttr(p.raw)}" disabled style="background:#f3f4f6"></div><div class="row"><label>并入</label><select id="merge-target" style="flex:1">${opts}</select></div><div class="mgr-tip">合并后，来源标的在所有账户持仓、交易流水、收入记录里的引用都会改写成目标名称，同账户下的重复条目自动合计成一条，并写入删除墓碑防止其它设备把旧名同步回来。此操作会同步到云端。</div><button class="btn" onclick="_mergeInstrumentConfirm('${escapeAttr(payloadJson)}')">确认合并</button><button class="btn ghost" onclick="document.getElementById('merge-modal').remove()">取消</button></div></div></div></div>`;
+  const old=document.getElementById('merge-modal');if(old)old.remove();
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function _mergeInstrumentConfirm(payloadJson){
+  let p; try{p=JSON.parse(payloadJson);}catch(e){return;}
+  const sel=document.getElementById('merge-target');
+  const dst=sel?sel.value:'';
+  const m=document.getElementById('merge-modal');if(m)m.remove();
+  if(!dst){toast('请选择要并入的标的');return;}
+  const ok=mergeInstrument(p.sec, p.raw, dst);   // 成功时 mergeInstrument 内部已 toast
+  showInstrumentManager();
+  if(ok===false) toast('合并失败：未找到「'+p.raw+'」的引用');
 }
 
 /* 通用输入弹窗（替代 prompt，兼容 WebView） */
