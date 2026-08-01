@@ -3278,6 +3278,7 @@ function enrichExistingAssets(){
 const acct=aid=>DATA.accounts.find(x=>x.id===aid);
 function toast(msg){const t=document.getElementById('toast');if(!t)return;t.innerHTML=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
 function saveEditsLocal(){
+  try{ DATA.transactions=sanitizeTxns(DATA.transactions,DATA.income); }catch(e){}   // v44.2：保存前再滤一遍重复交易，确保推送干净的版本
   try{localStorage.setItem('famdash_v1',JSON.stringify({accounts:DATA.accounts,income:DATA.income.records,transactions:DATA.transactions,activity_log:JSON.parse(localStorage.getItem('famdash_activity_log')||'[]'),update_log:DATA.meta&&DATA.meta.update_log||[]}));setSyncMeta('famdash_v1',Date.now());setSyncMeta('famdash_activity_log',Date.now());}catch(e){}
   // 跨设备同步：记录本地修改时间并防抖推送云端（令牌未配置/同步关闭则跳过）
   try{const s=getSettings();if(s.syncEnabled!==false){localStorage.setItem('famdash_sync_localmod',String(Date.now()));try{sessionStorage.setItem('famdash_session_edited','1');}catch(e){}scheduleSyncPush();}}catch(e){}
@@ -5819,7 +5820,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-01-v44.1';
+const APP_VERSION='2026-08-01-v44.2';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6521,6 +6522,19 @@ function normalizeLegacyCashNames(){
   });
   return n;
 }
+/* v44.2 事务去重卫生：流水里不应出现「收入」记录本身。
+   正常流程(L4836)创建收入时不会把它 push 进 transactions，但历史污染曾把 21 条 inc* 记录
+   同时写进了 transactions（与 income.records 完全重合），导致流水透视/现金统计双计。
+   这里在「拉取云端」与「本地保存」两处统一剔除：凡是 id 落在收入记录集合里的交易，直接丢弃。
+   因为收入记录 id 形如 inc…，交易 id 形如 tx…，二者天然不重叠，剔除精确无副作用。 */
+function sanitizeTxns(txns, income){
+  if(!txns||!txns.length) return txns||[];
+  var recs=incomeRecordsFrom(income);            // 兼容 {records:[...]} 与数组两种形态
+  if(!recs||!recs.length) return txns;
+  var ids={}; for(var i=0;i<recs.length;i++){ if(recs[i]&&recs[i].id) ids[recs[i].id]=1; }
+  var out=[]; for(var j=0;j<txns.length;j++){ var t=txns[j]; if(t&&t.id&&ids[t.id]) continue; out.push(t); }
+  return out;
+}
 function showInstrumentManager(){
   const old=document.getElementById('instr-modal');if(old)old.remove();
   const list=getInstruments();
@@ -6947,6 +6961,7 @@ function applyCloudToData(snap, overwrite){
     }
     if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl); try{normalizeLegacyCashNames();}catch(_){} } // v44：云端落地的现金名也一并归一（防其他设备旧「美金」名复活）
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
+    o.transactions=sanitizeTxns(o.transactions,o.income);   // v44.2：剔除「收入记录本身」混入的重复交易，防删了又复活
     if(o.transactions)DATA.transactions=o.transactions;
     try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
   }catch(e){console.warn('applyCloudToData',e);return false;}
