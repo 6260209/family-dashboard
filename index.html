@@ -5235,6 +5235,18 @@ function recomputeCashAll(){
   });
   if(changed){ try{ saveEditsLocal(); }catch(e){} }
 }
+/* v45：现金自愈三件套（补钩子 → 剪跨账户钩子 → 按 本金+流水净额+钩子 重算金额）。
+   顺序不可调换，理由见各函数注释。
+   【必须在「任何一次 DATA 被整体替换/合并」之后调用】——启动时 startApp() 调一次还不够：
+   syncPullOnLoad() 是异步的，它在自愈跑完之后才把云端 cash_holdings 合并进来，
+   合并结果不会再被重算。历史事故：云端残留一条「断链转账自动建出的 CNY 20,000 现金桶」，
+   本地推导净额已修正为 0，但因为云端数据是在自愈之后才落地的，那 20,000 一直挂在账上，
+   全站总资产虚增 2 万，且刷新多少次都不消失。 */
+function healCashDerived(){
+  try{ autoCreditMissingIncomes(); }catch(e){ console.error('autoCreditMissingIncomes:',e); }
+  try{ pruneForeignIncomeHooks(); }catch(e){ console.error('pruneForeignIncomeHooks:',e); }
+  try{ recomputeCashAll(); }catch(e){ console.error('recomputeCashAll:',e); }
+}
 
 
 /* ============ 交易流水（三路合并） ============ */
@@ -7246,6 +7258,7 @@ function syncNow(){
     if(res.snap && _syncShouldApply(res.snap)){
       syncApply(res.snap);
       const merged=applyCloudToData(res.snap);
+      healCashDerived();                 // ← 手动同步拉回云端数据后同样要重跑现金自愈（放在 merged 判断前，保证回推的也是已重算的数据）
       localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
       if(merged){
         localStorage.setItem('famdash_sync_localmod',String(Date.now()));
@@ -7353,6 +7366,7 @@ function syncPullOnLoad(){
         syncApply(res.snap);
         const merged=applyCloudToData(res.snap);
         try{loadEditsLocal();}catch(e){}   // ← 拉完云端后重载 DATA 内存变量
+        healCashDerived();                 // ← 云端数据落地后必须重跑现金自愈，否则云端脏金额永不被重算
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
         if(merged) localStorage.setItem('famdash_sync_localmod',String(Date.now()));
         else localStorage.setItem('famdash_sync_localmod','0');
@@ -7428,9 +7442,7 @@ try{(DATA.accounts||[]).forEach(a=>normalizeAccount(a));}catch(e){console.error(
   try{ if(normalizeLegacyCashNames()>0){ try{saveEditsLocal();}catch(e){} } }catch(e){console.error('normalizeLegacyCashNames:',e)}   // v44 启动自愈：历史「美金/港币/人民币」现金名归一成 USD/HKD/CNY
 try{showArchived=!!getSettings().showArchived;}catch(e){}
 try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
-  try{ autoCreditMissingIncomes(); }catch(e){console.error('autoCreditMissingIncomes:',e)}
-  try{ pruneForeignIncomeHooks(); }catch(e){console.error('pruneForeignIncomeHooks:',e)}
-  try{ recomputeCashAll(); }catch(e){console.error('recomputeCashAll:',e)}
+  healCashDerived();   // 补收入钩子 → 剪跨账户钩子 → 重算现金金额（云端拉取后会再跑一次）
 /* 加载时即按【设置】重建子账户/地域/持有人等聚合分组（名称对齐设置项），保留文件权威总资产 */
 try{recomputeAggregations();}catch(e){console.error('recomputeAggregations on load:',e)}
 try{enrichExistingAssets();}catch(e){console.error('enrichExistingAssets:',e)}
