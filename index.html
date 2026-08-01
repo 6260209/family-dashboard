@@ -1735,12 +1735,26 @@ function normalizeSecPnl(a){
 function secValRaw(t){const c=t.currency||'CNY';let v=c==='CNY'?t.market_value_cny||0:c==='HKD'?t.market_value_hkd||0:t.market_value_usd||0;if(!v){const q=Number(t.quantity)||0,p=Number(t.price)||0;if(q>0&&p>0)v=q*p;}return v;}
 function usdToCny(u){return (u||0)*(FX.USD_CNY||7.156);}
 function hkdToCny(h){return (h||0)/(FX.CNY_HKD||1.09);}
+/* 一笔现金在数据模型里是「孪生双写」：holdings[] 存真源，cash_holdings[] 存现金桶，二者共享同一 id。
+   净值口径统一由 baseCashCny 从 cash_holdings 计取；凡在 holdings[] 里能找到现金桶孪生的条目，
+   loop1 必须跳过，否则同一笔钱被计两次（历史事故：yangxiaqin_binance USDT+USDC 双计 88,991 元）。
+   注意：判据是「有无孪生」而非「cat/source 是不是现金」——余额宝这类 cat=现金/source=fund
+   且无现金桶孪生的条目，跳过会导致两头都不计、资产凭空蒸发 11,013 元。 */
+function cashRouteOf(a, h){
+  if(!h) return 'holdings';
+  if((h.source||'')==='cash') return 'cash_holdings';
+  if(h.id){
+    const twins=(a&&a.cash_holdings)||[];
+    for(let i=0;i<twins.length;i++){ if(twins[i] && twins[i].id===h.id) return 'cash_holdings'; }
+  }
+  return 'holdings';
+}
 // 当账户无 summary 字段（如手动新建的账户）时，从持仓数组实时汇总总值（统一口径：直接读 holdings）
 function acctLiveTotalCny(a){
   let c=0;
   // 1) 加密/通用持仓（现金类持仓不在此计，避免与 baseCashCny 重复；现金统一走 baseCashCny）
   (a.holdings||[]).forEach(h=>{
-    if((h.source||'')==='cash') return;
+    if(cashRouteOf(a,h)==='cash_holdings') return;
     const ccy=_ccyOfH(h);
     let total=Number(h.value||0);
     if(h.source==='crypto'){
@@ -2983,12 +2997,27 @@ function getItemKey(sec, it){
   if(!it) return '';
   // v44：现金用「规范名」做键，使「美金 → USD」改名前后墓碑仍然命中，删除/合并可跨设备传播。
   if(sec==='cash_holdings') return 'cash:'+(it.currency||'')+':'+(typeof cashNameCanon==='function'?cashNameCanon(it):(it.name||''));
+  // v45：非现金键做 trim + 大写归一，避免「QQQI / qqqi / 前后空格」写出三个互不命中的墓碑。
+  // 【严禁】对既有 famdash_deleted_items 集合做批量归一化迁移：历史墓碑存的是当年删除时的
+  // 原始大小写（如小写 qqqi，指向早已删掉的重复条目），一旦归一化就会命中大写正品 QQQI，
+  // 把用户真实持仓（manual_1785298693676 的 20 股 QQQI，7,871.60 元）直接抹掉。
+  // 归一化只作用于「新写入」的键；旧键的兼容读取在 isItemDeleted 里做原样回退查。
   const nm = it.asset_name||it.name||it.symbol||it.product_id||it.id||'';
-  return sec+':'+nm;
+  return sec+':'+String(nm).trim().toUpperCase();
 }
 function getDeletedItems(){ try{ return JSON.parse(localStorage.getItem('famdash_deleted_items')||'[]'); }catch(e){ return []; } }
 function addDeletedItem(aid, sec, it){ if(!aid)return; const k=aid+'::'+getItemKey(sec,it); const s=new Set(getDeletedItems()); s.add(k); try{ localStorage.setItem('famdash_deleted_items', JSON.stringify([...s])); }catch(e){} }
-function isItemDeleted(aid, sec, it){ return getDeletedItems().indexOf(aid+'::'+getItemKey(sec,it))>=0; }
+/* 双查：新归一键 + 旧原样键。旧键按「当年写入时的原始字面」回退匹配，
+   因此小写墓碑 qqqi 只会命中同样小写的条目，不会误伤大写正品 QQQI。 */
+function isItemDeleted(aid, sec, it){
+  const del=getDeletedItems();
+  if(del.indexOf(aid+'::'+getItemKey(sec,it))>=0) return true;
+  if(sec!=='cash_holdings' && it){
+    const raw = it.asset_name||it.name||it.symbol||it.product_id||it.id||'';
+    if(del.indexOf(aid+'::'+sec+':'+raw)>=0) return true;
+  }
+  return false;
+}
 function purgeDeletedItems(accts){
   const del=getDeletedItems(); if(!del.length||!Array.isArray(accts))return accts;
   const secs=['securities','fund_holdings','holdings','cash_holdings','crypto','bond_holdings'];
@@ -3303,6 +3332,21 @@ function delHolding(aid,sec,idx){
   const name=item?(item.name||item.asset_name||item.product_id||`#${idx}`):`#${idx}`;
   if(a[sec])a[sec].splice(idx,1);
   addDeletedItem(aid, sec, item);   // 记入子项目 tombstone，确保删除跨同步/重登录持久化
+  // 删除必须作用于「同一笔钱」而非「某数组的某一行」：cash_holdings 与 holdings 是孪生双写，
+  // 只删一边会留下幽灵（真源还在算）或黑洞（两头都不计）。按共享 id 级联，并各自写墓碑。
+  // 历史事故：删 cash_holdings 的 USDC 后，墓碑键 aid::cash:USDC:USDC 与真源键 holdings:USDC
+  // 不相等 → 真源不删、现金桶被墓碑挡住不重建，该笔钱两头都不计（787.16 元凭空蒸发）。
+  try{
+    const twinSec = (sec==='cash_holdings') ? 'holdings' : (sec==='holdings' ? 'cash_holdings' : null);
+    if(twinSec && item && item.id && a[twinSec]){
+      for(let i=a[twinSec].length-1;i>=0;i--){
+        if(a[twinSec][i] && a[twinSec][i].id===item.id){
+          addDeletedItem(aid, twinSec, a[twinSec][i]);
+          a[twinSec].splice(i,1);
+        }
+      }
+    }
+  }catch(e){}
   afterEdit(aid);
   logActivity('删除'+ (labelMap[sec]||sec), `${acctName(aid)} · ${name}`);
 }
@@ -3787,10 +3831,15 @@ function computeIncomeAgg(){
  * 对当前 DATA 跑一组断言，返回结构化报告。
  * 「运行自检」按钮与无头测试(page.evaluate) 都调用它，保证“改动可验证、不靠肉眼”。
  */
+/* v45：判据必须与 acctLiveTotalCny 完全一致（走 cashRouteOf 的孪生判据）。
+   历史事故：此处曾自留一份 (h.source==='cash') 的老判据副本，acctLiveTotalCny 修好后忘了同步改，
+   导致 cat=现金/source=crypto 的 USDT/USDC 在这里被当成非现金累加 → 期望值 = 现金小计 + 非现金
+   凭空多出一份稳定币，自检对已修复的账户误报 🔴（币安 期望 276,486 vs 实际 187,494）。
+   凡是复刻净值口径的地方，一律复用 cashRouteOf，禁止再抄一份判据。 */
 function _selfNonCashCny(a){
   let c=0;
   (a.holdings||[]).forEach(h=>{
-    if((h.source||'')==='cash') return;
+    if(cashRouteOf(a,h)==='cash_holdings') return;
     const ccy=_ccyOfH(h);
     let total=Number(h.value||0);
     if(h.source==='crypto'){
@@ -5820,7 +5869,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-01-v44.2';
+const APP_VERSION='2026-08-01-v45';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6855,7 +6904,34 @@ function incomeRecordsFrom(src){
    _manual_base 胜方缺失时用败方补齐。其余字段仍以胜方为准。
    注意：amount 不在此处纠正，后续 recomputeCashAll() 会按
    amount = _manual_base + 交易净额 + _credits合计 统一重算，保持单一事实源。 */
-function mergeCashEntry(win, lose){
+/* #23 防上膛：_credits 并集是跨账户污染的注入口——别的账户的收入 id 被并进本桶后，
+   recomputeCashAccount(L5145) 的 incSum 不做账户校验，下次重算就把不属于本账户的钱加进余额。
+   这里在「写回前」按收入台账回查 rec.account，非本账户的钩子直接剔除。
+   aid 缺省时（调用方未提供账户上下文）不做剔除，避免误删。 */
+function filterOwnCredits(cred, aid){
+  if(!cred || !aid) return cred;
+  var recs=[]; try{ recs=(DATA&&DATA.income&&DATA.income.records)||[]; }catch(e){ recs=[]; }
+  if(!recs.length) return cred;
+  var byId={}; recs.forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+  var out={}, dropped=[];
+  Object.keys(cred).forEach(function(k){
+    var r=byId[k];
+    var own=null;
+    if(r){ try{ own=(typeof acctRes==='function')?acctRes(r.account):null; }catch(e){ own=null; } }
+    if(r && r.account && own && own.id && own.id!==aid){ dropped.push(k+'('+cred[k]+')'); return; }
+    out[k]=cred[k];
+  });
+  if(dropped.length){
+    try{ logActivity('剔除跨账户入账钩子', aid+' · '+dropped.join(', ')); }catch(e){}
+    try{ console.warn('[#23] '+aid+' 剔除跨账户 _credits: '+dropped.join(', ')); }catch(e){}
+  }
+  return out;
+}
+/* P0-d 语义拆分：原 mergeCashEntry 把两种完全不同的情况混为一谈。
+   reconcileSameEntry —— 同一条目的新旧两个版本（同键、同一笔钱）：字段取胜方，_credits 并集。
+   mergeDistinctEntries —— 两条本就不同的现金条目被误判同键：金额必须相加，否则一方凭空消失。
+   holdingMergeFor('cash_holdings') 维持指向 reconcile（= 现有行为，不改变任何金额）。 */
+function reconcileSameEntry(win, lose, aid){
   if(!lose) return win;
   if(!win) return lose;
   const out=Object.assign({}, lose, win); // 以胜方为主，败方仅补齐胜方没有的字段
@@ -6863,10 +6939,28 @@ function mergeCashEntry(win, lose){
   const cred={};
   Object.keys(cl).forEach(function(k){ cred[k]=cl[k]; });
   Object.keys(cw).forEach(function(k){ cred[k]=cw[k]; }); // 同一收入 id 冲突时胜方覆盖
-  if(Object.keys(cred).length) out._credits=cred; else delete out._credits;
+  const kept=filterOwnCredits(cred, aid);
+  if(kept && Object.keys(kept).length) out._credits=kept; else delete out._credits;
   if(win._manual_base==null && lose._manual_base!=null) out._manual_base=lose._manual_base;
   return out;
 }
+/* 两条不同条目被误判同键时的显式 API：金额相加并告警，绝不静默丢弃一方。 */
+function mergeDistinctEntries(a, b, aid){
+  if(!b) return a;
+  if(!a) return b;
+  const out=Object.assign({}, b, a);
+  const cred={};
+  Object.keys(b._credits||{}).forEach(function(k){ cred[k]=b._credits[k]; });
+  Object.keys(a._credits||{}).forEach(function(k){ cred[k]=a._credits[k]; });
+  const kept=filterOwnCredits(cred, aid);
+  if(kept && Object.keys(kept).length) out._credits=kept; else delete out._credits;
+  out.amount=+(Number(a.amount||0)+Number(b.amount||0)).toFixed(2);
+  out._manual_base=+(Number(a._manual_base||0)+Number(b._manual_base||0)).toFixed(2);
+  try{ logActivity('现金条目同键合并', (aid||'')+' · '+(a.name||'')+' + '+(b.name||'')+' → '+out.amount); }catch(e){}
+  return out;
+}
+// 向后兼容：保留原名，语义等同 reconcileSameEntry（同一条目的两个版本）。
+function mergeCashEntry(win, lose, aid){ return reconcileSameEntry(win, lose, aid); }
 // mergeFn 可选：同 key 冲突时不再丢弃后到者，而是交给 mergeFn 做字段级合并。
 function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
   keyFn=keyFn||function(x){return (x.symbol||x.name||x.id||'');};
@@ -6883,7 +6977,9 @@ function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
   });
   return out;
 }
-function holdingKeyFn(x){ return (x.symbol||x.name||x.id||''); }
+/* #3：旧键只有名字，没有币种段 —— 同名不同币（如港币计价与美元计价的同名标的）
+   在同步合并时互相挤掉，一方静默消失。加币种段并做 trim/大写归一。 */
+function holdingKeyFn(x){ return String((x.symbol||x.name||x.id||'')).trim().toUpperCase()+'|'+String((x&&(x.currency||x.ccy))||'').toUpperCase(); }
 /* v44：现金条目改用「币种 + 规范名」做合并键。
    旧实现用 name 当键，一旦某台设备把「美金」改名成「USD」，另一台仍叫「美金」的记录
    同步过来就会被当成另一条现金并入 → 同币种出现两条、账户现金凭空翻倍。
@@ -6891,8 +6987,36 @@ function holdingKeyFn(x){ return (x.symbol||x.name||x.id||''); }
    规范名不同，仍然各自独立，不会被误合并吞掉金额。 */
 function cashHoldingKeyFn(x){ return 'cash:'+String((x&&x.currency)||'CNY').toUpperCase()+':'+cashNameCanon(x); }
 function holdingKeyFor(key){ return key==='cash_holdings' ? cashHoldingKeyFn : holdingKeyFn; }
-// 现金走字段级合并，其余持仓维持原「先到者胜」语义，避免扩大改动面。
-function holdingMergeFor(key){ return key==='cash_holdings' ? mergeCashEntry : null; }
+/* #3：非现金持仓原先返回 null（= 同键冲突直接丢弃后到者，一方数据静默蒸发）。
+   改为字段级合并：胜方优先、缺失字段从败方补齐、_credits 取并集；
+   若两条 qty/value 均非空且不相等，说明它们其实是两笔不同持仓被误判同键 ——
+   此时返回 null 让上层 unionHoldings 保留先到者（双留，不合并），并记一条冲突告警。 */
+function mergeHoldingEntry(win, lose, aid){
+  if(!lose) return win;
+  if(!win) return lose;
+  const qw=win.qty, ql=lose.qty, vw=win.value, vl=lose.value;
+  const qBoth=(qw!=null&&qw!==''&&ql!=null&&ql!=='');
+  const vBoth=(vw!=null&&vw!==''&&vl!=null&&vl!=='');
+  if((qBoth&&Number(qw)!==Number(ql))||(vBoth&&Number(vw)!==Number(vl))){
+    try{ logActivity('持仓合并冲突', (aid||'')+' · '+(win.name||win.symbol||win.id||'')+
+      ' qty '+qw+'/'+ql+' value '+vw+'/'+vl+' → 双留'); }catch(e){}
+    return null;
+  }
+  const out=Object.assign({}, lose, win);
+  const cw=win._credits||{}, cl=lose._credits||{};
+  const cred={};
+  Object.keys(cl).forEach(function(k){ cred[k]=cl[k]; });
+  Object.keys(cw).forEach(function(k){ cred[k]=cw[k]; });
+  const kept=filterOwnCredits(cred, aid);
+  if(kept && Object.keys(kept).length) out._credits=kept; else delete out._credits;
+  if(win._manual_base==null && lose._manual_base!=null) out._manual_base=lose._manual_base;
+  return out;
+}
+// 现金走 reconcile（同一条目的两个版本），其余持仓走字段级合并 + 冲突双留。
+function holdingMergeFor(key, aid){
+  if(key==='cash_holdings') return function(w,l){ return reconcileSameEntry(w,l,aid); };
+  return function(w,l){ return mergeHoldingEntry(w,l,aid); };
+}
 function mergeV1Accounts(cloudAccounts, localAccounts){
   const localMap={}; (localAccounts||[]).forEach(function(a){ localMap[a.id||a.name]=a; });
   const out=[];
