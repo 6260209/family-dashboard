@@ -784,7 +784,7 @@ th.sortable.desc .arrow::after{content:'▼'}
     <div class="subtotal" id="tx-subtotal"></div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>日期</th><th>类型</th><th>账户</th><th>标的 / 方向</th><th>金额</th><th>币种</th><th>状态</th><th></th></tr></thead>
+        <thead><tr><th>日期</th><th>类型</th><th>账户</th><th>标的 / 方向</th><th>金额</th><th>币种</th><th></th></tr></thead>
         <tbody id="tx-body"></tbody>
       </table>
     </div>
@@ -858,7 +858,7 @@ th.sortable.desc .arrow::after{content:'▼'}
     <div class="subtotal" id="inc-subtotal"></div>
     <div class="tablewrap" style="margin-top:8px">
       <table class="sortable-table" data-sort-key="cny">
-        <thead><tr><th class="sortable" data-col="date" onclick="sortIncTable('date')">日期<span class="arrow"></span></th><th>类型</th><th>项目</th><th>账户</th><th>标的</th><th class="sortable" data-col="cny" onclick="sortIncTable('cny')">金额<span class="arrow"></span></th><th>币种</th><th>状态</th><th></th></tr></thead>
+        <thead><tr><th class="sortable" data-col="date" onclick="sortIncTable('date')">日期<span class="arrow"></span></th><th>类型</th><th>账户</th><th>持有人</th><th class="sortable" data-col="cny" onclick="sortIncTable('cny')">金额<span class="arrow"></span></th><th>币种</th><th>状态</th><th></th></tr></thead>
         <tbody id="inc-body"></tbody>
       </table>
     </div>
@@ -2975,7 +2975,8 @@ function purgeDeletedAccounts(arr){
  * （格式 aid::sec::key），在 mergeAccountsForPush / applyCloudToData / loadEditsLocal 三处剔除。 */
 function getItemKey(sec, it){
   if(!it) return '';
-  if(sec==='cash_holdings') return 'cash:'+(it.currency||'')+':'+(it.name||'');
+  // v44：现金用「规范名」做键，使「美金 → USD」改名前后墓碑仍然命中，删除/合并可跨设备传播。
+  if(sec==='cash_holdings') return 'cash:'+(it.currency||'')+':'+(typeof cashNameCanon==='function'?cashNameCanon(it):(it.name||''));
   const nm = it.asset_name||it.name||it.symbol||it.product_id||it.id||'';
   return sec+':'+nm;
 }
@@ -4049,7 +4050,7 @@ function buildIncRows(recs){
       :r._src==='计划确认'
         ?`<button class="del" onclick="unconfirmTodo('${r.id}')" aria-label="撤销">↩</button>`
         :`<button class="del" onclick="delInc('${r.id}')" aria-label="删除">×</button>`;
-    return `<tr><td>${r.date||'—'}</td><td>${r.type_label||r.type||'—'}</td><td style="max-width:80px">${r.project||'—'}</td><td style="max-width:70px">${acctName(r.account)}</td><td style="max-width:90px;overflow:hidden;text-overflow:ellipsis" title="${(r.name||'')}">${r.name||'—'}</td><td class="${stCls}">${r.amount!=null?r.amount:'—'}</td><td>${r.currency||'CNY'}</td><td>${stText}</td><td>${srcTag(r._src)}</td><td>${actions}</td></tr>`;
+    return `<tr><td>${r.date||'—'}</td><td>${r.type_label||r.type||'—'}</td><td style="max-width:70px">${acctName(r.account)}</td><td style="max-width:70px">${incRecHolder(r)||'—'}</td><td>${r.amount!=null?r.amount:'—'}</td><td>${r.currency||'CNY'}</td><td>${stText}</td><td>${actions}</td></tr>`;
   }).join('');
 }
 // 筛选标签切换
@@ -4277,23 +4278,9 @@ function showIncModal(){
     <div class="row"><label>日期</label><input id="inc-date" type="date" value="${today}"></div>
     <div class="row"><label>账户</label><select id="inc-account">${acctOptions('')}</select></div>
     <div class="row"><label>资产类型</label><select id="inc-type"><option value="dividend">股票股息</option><option value="fcn_coupon">FCN票息</option><option value="fund_div">基金分红</option><option value="interest">利息</option><option value="bond_interest">债券利息</option><option value="crypto_income">加密货币收益</option><option value="salary">工资</option><option value="other">其他</option></select></div>
-    <div class="row"><label>投资项目</label><select id="inc-project">
-      <option value="">— 选择项目（可选）—</option>
-      <option value="纳斯达克100">纳斯达克100（QQQ/QQQM/QDII纳指）</option>
-      <option value="标普500">标普500（SPY/VOO/标普QDII）</option>
-      <option value="债券">债券产品</option>
-      <option value="港股">港股持仓</option>
-      <option value="A股">A股持仓</option>
-      <option value="加密货币">加密货币</option>
-      <option value="现金/稳定币">现金/稳定币</option>
-      <option value="_custom">自定义...</option>
-    </select></div>
-    <div class="row" id="inc-custom-proj-row" style="display:none"><label>自定义项目</label><input id="inc-custom-proj" placeholder="输入项目名称" style="min-width:160px"></div>
     <div class="row"><label>子账户</label><select id="inc-category">${catOpts}</select></div>
-    <div class="row"><label>来源/标的</label><input id="inc-name" placeholder="如 NVDA 股息" style="min-width:160px"></div>
     <div class="row"><label>金额</label><input id="inc-amount" type="number" placeholder="金额"></div>
     <div class="row"><label>币种</label><select id="inc-ccy">${currencyOptions('CNY')}</select></div>
-    <div class="row"><label>所在地</label><select id="inc-location"><option value="">— 可选 —</option>${getLocations().map(o=>`<option value="${o}">${escapeHtml(o)}</option>`).join('')}</select></div>
     <div class="row"><label>状态</label><select id="inc-status"><option value="received">已到账</option><option value="projected">预计</option></select></div>
     <div class="row"><label>备注</label><input id="inc-note" placeholder="可选" style="min-width:160px"></div>
     <button class="btn" onclick="addInc();document.getElementById('inc-modal').remove()">保存</button><button class="btn ghost" onclick="document.getElementById('inc-modal').remove()">取消</button>
@@ -4305,9 +4292,9 @@ function showIncModal(){
 function addInc(){
   const editId=window._editIncId;
   const cat=(document.getElementById('inc-category')||{value:''}).value||'';
-  const r={id:editId||'inc'+Date.now(),date:document.getElementById('inc-date').value||new Date().toISOString().slice(0,10),type:document.getElementById('inc-type').value,account:document.getElementById('inc-account').value||'',holder:'',name:document.getElementById('inc-name').value,project:(document.getElementById('inc-project')||{value:''}).value,amount:Number(document.getElementById('inc-amount').value)||0,currency:document.getElementById('inc-ccy').value,status:document.getElementById('inc-status').value,location:(document.getElementById('inc-location')||{value:''}).value||'',note:document.getElementById('inc-note').value||'',asset_category:cat};
+  const incType=(document.getElementById('inc-type')||{value:'other'}).value||'other';
+  const r={id:editId||'inc'+Date.now(),date:document.getElementById('inc-date').value||new Date().toISOString().slice(0,10),type:incType,account:document.getElementById('inc-account').value||'',holder:'',name:(document.getElementById('inc-name')||{value:''}).value||'',project:(document.getElementById('inc-project')||{value:''}).value||'',amount:Number(document.getElementById('inc-amount').value)||0,currency:document.getElementById('inc-ccy').value,status:document.getElementById('inc-status').value,location:(document.getElementById('inc-location')||{value:''}).value||'',note:document.getElementById('inc-note').value||'',asset_category:cat};
   if(cat){r.cat_id=resolveCatId(cat);}
-  if(r.project==='_custom') r.project=(document.getElementById('inc-custom-proj')||{value:''}).value||'自定义';
   if(editId){
     const idx=DATA.income.records.findIndex(x=>x.id===editId);
     if(idx>=0) DATA.income.records[idx]=r;
@@ -4954,6 +4941,31 @@ function baseCashCny(a){
 }
 // 按 id 或账户名解析账户（兼容 income 记录里 account 存的是 name 还是 id 的历史不一致）
 function acctRes(x){ if(!x)return null; const a=acct(x); if(a)return a; try{ return DATA.accounts.find(z=>z.platform===x)||null; }catch(e){ return null; } }
+/* v44：现金子账户「标的名称」统一为币种代码（USD/HKD/CNY/USDT…）。
+   原因：现金子账户的名称此前是中文别名（美金/港币/人民币），而收入记录里选的是币种代码，
+   两者在 UI 上看起来毫无关系，用户无法把「收入选 USD」和「账户里的美金现金」对应起来。
+   底层匹配一直是按 currency 字段做的（见下方 find(x=>x.currency===ccy)），
+   把 name 也统一成币种代码后，UI 与底层口径一致，即「选 USD → 直接并入账户的 USD 现金」。 */
+function ccyCashName(ccy){ return String(ccy||'CNY').toUpperCase(); }
+/* 现金子账户名的「历史中文别名 → 币种代码」对照。
+   只用于判定「这条现金的名字其实就是币种本身」，不用于改写用户自定义的名字（如 活期/定期/保证金）。 */
+const CCY_CASH_ALIAS={'美金':'USD','美元':'USD','港币':'HKD','港元':'HKD','人民币':'CNY','日元':'JPY','欧元':'EUR','英镑':'GBP','泰达币':'USDT'};
+/* 把一条现金子账户归一成「用于比对/合并的名字」：
+   - 名字为空、等于币种代码、是该币种的中文别名、或是「USD现金」这类写法 → 一律归一成币种代码
+   - 其它自定义名字（活期/定期/保证金…）原样保留，保证同币种下的多个现金桶不会被误合并
+   这是「美金 → USD」改名能安全落地的前提：改名前后归一键不变，多设备同步不会把旧名字并成第二条。 */
+function cashNameCanon(x){
+  const ccy=String((x&&x.currency)||'CNY').toUpperCase();
+  const nm=String((x&&x.name)||'').trim();
+  if(!nm) return ccy;
+  if(nm.toUpperCase()===ccy) return ccy;
+  if(CCY_CASH_ALIAS[nm]===ccy) return ccy;
+  if(nm===ccy+'现金'||nm.toUpperCase()===ccy+'现金') return ccy;
+  if(CCY_CASH_ALIAS[nm.replace(/现金$/,'')]===ccy) return ccy;
+  return nm;
+}
+/* 该现金条目是否属于「币种通用现金」（可被安全归一化改名 / 合并）。 */
+function isGenericCash(x){ return cashNameCanon(x)===String((x&&x.currency)||'CNY').toUpperCase(); }
 // 把一笔 received 收入按币种记入对应现金子账户；用 income.id 做幂等（编辑/重复保存只入账一次）。
 function creditIncomeToCash(aid, inc){
   const a=acctRes(aid); if(!a||!inc) return;
@@ -4966,7 +4978,7 @@ function creditIncomeToCash(aid, inc){
     if(old._auto_credit && Math.abs(old.amount)<1e-6 && Object.keys(old._credits).length===0) a.cash_holdings=a.cash_holdings.filter(x=>x!==old); }
   // 2) 入账新金额
   let ch=a.cash_holdings.find(x=>(x.currency||'CNY').toUpperCase()===ccy);
-  if(!ch){ const _ccyName={USD:'美金',HKD:'港币',CNY:'人民币',USDT:'USDT',EUR:'欧元',JPY:'日元',GBP:'英镑'}[ccy]||ccy; ch={name:_ccyName,amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_auto_credit:true,_credits:{}}; a.cash_holdings.push(ch); }
+  if(!ch){ ch={name:ccyCashName(ccy),amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_auto_credit:true,_credits:{}}; a.cash_holdings.push(ch); }
   ch._credits=ch._credits||{};
   ch.amount=+(Number(ch.amount)+amt).toFixed(2);
   ch._credits[id]=amt;
@@ -4999,7 +5011,7 @@ function calibrateCashFromTx(aid){
     let ch=a.cash_holdings.find(x=>(x.currency||'CNY').toUpperCase()===ccy && x._calibrated);
     if(ch && ch._txsig===sig) return;
     if(ch){ ch.amount=+(Number(ch.amount)-(Number(ch._txnet||0))).toFixed(2); }
-    else { ch={name:({USD:'美金',HKD:'港币',CNY:'人民币',USDT:'USDT'}[ccy]||ccy),amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_calibrated:true}; a.cash_holdings.push(ch); }
+    else { ch={name:ccyCashName(ccy),amount:0,currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_calibrated:true}; a.cash_holdings.push(ch); }
     ch.amount=+(Number(ch.amount)+m[ccy]).toFixed(2); ch._txnet=m[ccy]; ch._txsig=sig;
   });
   saveEditsLocal(); if(typeof renderTx==='function') renderTx(); if(typeof recomputePortfolio==='function') recomputePortfolio(); if(typeof jRecomputeSummary==='function') jRecomputeSummary(a); openAcct(aid);
@@ -5132,8 +5144,7 @@ function recomputeCashAccount(aid){
     const net=txDerivedNet(aid, ccy);
     if(Math.abs(net)<1e-6) return;
     if(a.cash_holdings.some(ch=>(ch.currency||'CNY').toUpperCase()===ccy)) return;
-    const _ccyName={USD:'美金',HKD:'港币',CNY:'人民币',USDT:'USDT',EUR:'欧元',JPY:'日元',GBP:'英镑'}[ccy]||ccy;
-    a.cash_holdings.push({name:_ccyName,amount:+(net).toFixed(2),currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_manual_base:0});
+    a.cash_holdings.push({name:ccyCashName(ccy),amount:+(net).toFixed(2),currency:ccy,type:'现金',profit:0,return_pct:0,asset_category:'现金',_manual_base:0});
   });
 }
 function autoCash(){
@@ -5312,7 +5323,7 @@ function renderTx(){
     const st=t.status?({received:'已到账',projected:'预计'})[t.status]||t.status:'';
     const sign=(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
     const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':'t-afund';
-    return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${st}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
+    return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
   }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
   let inc=0,buy=0,sell=0,trf=0,div=0;
   DATA.transactions.forEach(t=>{
@@ -5785,7 +5796,9 @@ function renderMine(){
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 货币管理</div><div class="desc">HKD/USD 改汇率，或添加其他货币（JPY/EUR/GBP…）</div></div><button class="btn ghost sm" onclick="showCurrencyManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-user"/></svg> 持有人</div><div class="desc">维护子账户分类与持有人标签</div></div><div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="showCategoryManager()">子账户</button><button class="btn ghost sm" onclick="showHolderManager()">持有人</button></div></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 账户标签</div><div class="desc">增删改账户标签（境外券商 / A股 / 基金…）</div></div><button class="btn ghost sm" onclick="showAccountTypeManager()">管理</button></div>`;
+  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</div><div class="desc">所有账户里的证券/基金/加密/现金标的汇成一张表：改名（一处改全站同步）、排序、合并同名、删除（无持仓自动消失，不留孤儿）</div></div><button class="btn ghost sm" onclick="showInstrumentManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-chart"/></svg> 投资项目</div><div class="desc">增删改投资项目分类（如纳斯达克100、黄金、REITs…）</div></div><button class="btn ghost sm" onclick="showProjectManager()">管理</button></div>`;
+  h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 标的管理</div><div class="desc">排序 / 改名 / 合并同标的 / 删除（删后无处引用的标的自动消失，不留孤儿）</div></div><button class="btn ghost sm" onclick="showInstrumentManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-tag"/></svg> 子账户排序</div><div class="desc">增删改、拖拽或 ▲▼ 调整子账户显示顺序（如场内ETF、场外基金、债券…）</div></div><button class="btn ghost sm" onclick="showCategoryManager()">排序</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-globe"/></svg> 行情源管理</div><div class="desc">A股/港股/美股/加密 行情源的启用、优先级排序与自定义 URL（带安全校验）</div></div><button class="btn ghost sm" onclick="showQuoteSourceManager()">管理</button></div>`;
   h+=`<div class="set-row"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 汇率源管理</div><div class="desc">USD/CNY/HKD 及 USDT/USDC 实时汇率源：启用、排序、自定义 URL，失败自动回退手动值</div></div><button class="btn ghost sm" onclick="showFxSourceManager()">管理</button></div>`;
@@ -5797,7 +5810,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-31-v43';
+const APP_VERSION='2026-08-01-v44';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6093,6 +6106,15 @@ function moveProj(idx,dir){const list=getProjects();const j=idx+dir;if(j<0||j>=l
 function addProjItem(){const i=document.getElementById('proj-input');const v=(i&&i.value||'').trim();if(!v)return;const arr=getProjects();if(!arr.includes(v))arr.push(v);saveProjects(arr);patchAllSchema();showProjectManager();logActivity('添加投资项目',v);}
 function delProjItem(p){let arr=getProjects();arr=arr.filter(x=>x!==p);saveProjects(arr);patchAllSchema();showProjectManager();}
 function resetProjs(){saveProjects(DEFAULT_PROJECTS.slice());patchAllSchema();showProjectManager();toast('已恢复默认');}
+/* 项目/分类删除后，把已不存在的标的排序项裁掉，避免孤儿（已无持仓的标的不再占排序位）。 */
+function pruneFamdashOrder(){
+  try{
+    const live=new Set();
+    (DATA.accounts||[]).forEach(a=>{ ['securities','fund_holdings','holdings','cash_holdings','crypto'].forEach(function(sec){ (a[sec]||[]).forEach(function(it){ var n=sec==='securities'?(it.asset_name||''):(it.name||''); if(n) live.add(String(n).trim().replace(/\s+/g,'').toUpperCase()); }); }); });
+    const o=(function(){try{return JSON.parse(localStorage.getItem(INSTR_ORDER_KEY))||[];}catch(e){return [];}})().filter(function(x){return live.has(String(x).trim().replace(/\s+/g,'').toUpperCase());});
+    localStorage.setItem('famdash_instrument_order',JSON.stringify(o));
+  }catch(e){}
+}
 
 /* ===== 子账户管理器 ===== */
 function catRefCount(id){let n=0;const A=Array.isArray(DATA.accounts)?DATA.accounts:[];const secs=['securities','fund_holdings','holdings','cash_holdings'];A.forEach(a=>{secs.forEach(s=>(a[s]||[]).forEach(it=>{if(it&&it.cat_id===id)n++;}));});(DATA.transactions||[]).forEach(t=>{if(t&&t.cat_id===id)n++;});if(DATA.income&&Array.isArray(DATA.income.records)){DATA.income.records.forEach(r=>{if(r&&r.cat_id===id)n++;});}return n;}
@@ -6204,6 +6226,7 @@ function _renameConfirm(kind,oldName){
   else if(kind==='holder')showHolderManager();
   else if(kind==='accountType')showAccountTypeManager();
   else if(kind==='location')showLocationManager();
+  else if(kind==='instrument'){ _renameConfirm_instrument(oldName,nv); showInstrumentManager(); }
   toast('已重命名：'+oldName+' → '+nv);
 }
 function renameManaged(kind,oldName,newName){
@@ -6283,6 +6306,189 @@ function cascadeRename(kind,oldName,newName){
     if(kind==='project'&&nrm(r.project)===nrm(oldName))r.project=newName;
   }
 }
+/* ============ 标的管理器（v44，需求4：改名/排序/合并/删除联动） ============
+   设计要点（来自产品官评审 + 用户澄清）：
+   - 底层统一：改名一处，所有引用该标的的持仓/交易/收入同步更新（cascadeRename 已覆盖）。
+   - 不出现孤儿：标的库是从真实持仓「实时派生」的集合，没有任何持仓的标的自然不在列表里，
+     删除标的 = 把所有引用处清空（级联置空），而非保留一条无主记录。
+   - 合并同标的：金币大小写/空格不同（如 QQQI vs qqqi）被判定为疑似重复，用户一键合并 →
+     同一账户内同名条目合并为一条（证券累加数量与市值，基金/加密/现金累加金额）。
+   - 排序：用 famdash_instrument_order（已是同步键）持久化用户顺序，且每次重建会裁掉孤儿。 */
+const INSTR_ORDER_KEY='famdash_instrument_order';
+/* ============ 标的管理（v44） ============
+   设计目标（对应用户第二轮澄清第 3、4 点）：
+   - 把所有账户里的证券 / 基金 / 加密 / 现金子账户标的汇成一张「标的表」，可排序 / 改名 / 合并 / 删除。
+   - 改名走「底层统一」：把一处名称改掉后，所有引用该标的地方自动跟着变（含云端其它设备的记录）。
+   - 删除去孤儿：标的表本身是从持仓数据「派生」出来的，没有持仓的标的自然不会出现在表里，
+     因此不会出现「设置里还残留、但实际已无持仓」的孤儿。
+   - 合并同名：大小写 / 别名不同但实为同一标的（如 QQQI / qqqi、美金 / USD），合并进同一名称，
+     同账户同标的的持仓金额合计，并写墓碑防止旧名字被其它设备同步回来「复活」。 */
+
+/* 各持仓数组里「标的名称」字段名不同，这里集中映射，改名时只改对应字段。现金通用桶（名字即币种）不在 UI 改名。 */
+const _INSTR_SECS=[
+  {key:'securities',   nameField:'asset_name', kind:'证券'},
+  {key:'fund_holdings',nameField:'name',       kind:'基金'},
+  {key:'crypto',       nameField:'name',       kind:'加密'},
+  {key:'cash_holdings',nameField:'name',       kind:'现金'}
+];
+function getInstrumentOrder(){ try{const o=JSON.parse(localStorage.getItem(INSTR_ORDER_KEY));if(Array.isArray(o))return o;}catch(e){} return []; }
+function saveInstrumentOrder(arr){ try{localStorage.setItem(INSTR_ORDER_KEY,JSON.stringify(arr||[]));setSyncMeta(INSTR_ORDER_KEY,Date.now());}catch(e){} try{pruneFamdashOrder();}catch(e){} }
+/* 汇总全部标的（含引用计数）。key = sec + '::' + 归一名；display 取出现频次最高的原始写法。 */
+function getInstruments(){
+  const map={};  const accs=(Array.isArray(DATA.accounts)?DATA.accounts:[]);
+  accs.forEach(a=>{
+    _INSTR_SECS.forEach(s=>{
+      (a[s.key]||[]).forEach(it=>{
+        const raw=it[s.nameField]; if(raw==null||raw==='')return;
+        const eq={sec:s.key,ccy:(it.currency||'CNY'),name:raw};
+        let key;
+        if(s.key==='cash_holdings') key='cash:'+String((it.currency||'CNY')).toUpperCase()+'::'+cashNameCanon(it);
+        else key=s.key+'::'+String(raw).trim().toUpperCase();
+        if(!map[key]) map[key]={key:key,sec:s.key,kind:s.kind,ccy:(it.currency||'CNY'),name:raw,display:raw,count:0,accounts:new Set()};
+        map[key].count++; map[key].accounts.add(a.id||a.name);
+        // 选「显示名」：取首次出现的写法（保持用户原始大小写），后续同 key 不再覆盖
+      });
+    });
+  });
+  (DATA.transactions||[]).forEach(t=>{ if(t&&t.asset_name){ const k='transaction::'+String(t.asset_name).trim().toUpperCase(); if(!map[k])map[k]={key:k,sec:'transaction',kind:'流水标的',ccy:'',name:t.asset_name,display:t.asset_name,count:0,accounts:new Set()}; map[k].count++; } });
+  (DATA.income&&Array.isArray(DATA.income.records)?DATA.income.records:[]).forEach(r=>{ if(r&&r.name){ const k='income::'+String(r.name).trim().toUpperCase(); if(!map[k])map[k]={key:k,sec:'income',kind:'收入标的',ccy:'',name:r.name,display:r.name,count:0,accounts:new Set()}; map[k].count++; } });
+  const arr=Object.values(map).map(o=>({key:o.key,sec:o.sec,kind:o.kind,ccy:o.ccy,name:o.name,display:o.display,refCount:o.count,accounts:o.accounts.size}));
+  // 排序：用户顺序在前，其余按引用数降序
+  const ord=pruneFamdashOrder(); const pos={}; ord.forEach((k,i)=>pos[k]=i);
+  arr.sort((x,y)=>{ const px=(x.key in pos)?pos[x.key]:1e9, py=(y.key in pos)?pos[y.key]:1e9; if(px!==py)return px-py; return y.refCount-x.refCount; });
+  return arr;
+}
+/* 改名：从 oldRaw（某 sec 下的原始名）改成 newRaw。同 sec、同归一名的其它写法一并统一。
+   改名后追加自愈合并，把同账户同标的的多条记录合计成一条，并写墓碑防复活。 */
+function renameInstrument(sec, oldRaw, newRaw){
+  newRaw=(newRaw||'').trim(); if(!newRaw||!oldRaw) return false;
+  if(sec==='cash_holdings') return false; // 现金通用名不允许改名
+  const accs=(Array.isArray(DATA.accounts)?DATA.accounts:[]);
+  let changed=false;
+  accs.forEach(a=>{
+    const arr=a[sec]; if(!Array.isArray(arr))return;
+    arr.forEach(it=>{
+      const cur=it[_INSTR_SECS.find(s=>s.key===sec).nameField];
+      if(cur!=null && String(cur).trim().toUpperCase()===String(oldRaw).trim().toUpperCase()){ it[_INSTR_SECS.find(s=>s.key===sec).nameField]=newRaw; changed=true; }
+    });
+  });
+  if(!changed) return false;
+  dedupInstruments();   // 把同名（现统一为新名）的多条记录合并，金额合计
+  try{saveEditsLocal();}catch(e){}
+  try{recomputePortfolio();}catch(e){}
+  try{patchAllSchema();}catch(e){}
+  try{logActivity('重命名标的',oldRaw+' → '+newRaw);}catch(e){}
+  return true;
+}
+/* 同账户、同 sec、同归一名的多条记录合并为一条（金额/数量合计；现金保留 _credits 合并）。 */
+function dedupInstruments(){
+  const accs=(Array.isArray(DATA.accounts)?DATA.accounts:[]);
+  accs.forEach(a=>{
+    _INSTR_SECS.forEach(s=>{
+      const arr=a[s.key]; if(!Array.isArray(arr))return;
+      const groups={};
+      arr.forEach(it=>{
+        let gk;
+        if(s.key==='cash_holdings') gk='cash:'+(it.currency||'CNY').toUpperCase()+'::'+cashNameCanon(it);
+        else gk=String(it[s.nameField]||'').trim().toUpperCase();
+        (groups[gk]=groups[gk]||[]).push(it);
+      });
+      const out=[];
+      Object.keys(groups).forEach(gk=>{
+        const items=groups[gk];
+        if(items.length===1){ out.push(items[0]); return; }
+        // 合并：保留第一条为主，其余金额/数量累加到主条，并写墓碑
+        const main=items[0];
+        for(let i=1;i<items.length;i++){
+          const it=items[i];
+          if(s.key==='cash_holdings'){ const merged=mergeCashEntry(main,it); Object.assign(main,merged); }
+          else if(s.key==='securities'){ main.quantity=(Number(main.quantity||0)+Number(it.quantity||0)); main.cost_price=it.cost_price!=null?it.cost_price:main.cost_price; }
+          else if(s.key==='fund_holdings'){ main.amount=(Number(main.amount||0)+Number(it.amount||0)); main.profit=(Number(main.profit||0)+Number(it.profit||0)); }
+          else if(s.key==='crypto'){ main.amount=(Number(main.amount||0)+Number(it.amount||0)); main.cost_price=it.cost_price!=null?it.cost_price:main.cost_price; }
+          addDeletedItem(a.id||a.name, s.key, it); // 旧条目写墓碑，防多设备同步复活
+        }
+        out.push(main);
+      });
+      a[s.key]=out;
+    });
+  });
+}
+/* 合并：把 srcRaw 这一标的并入 dstRaw（同 sec）。底层等于「把 src 改名为 dst 后去重」。 */
+function mergeInstrument(sec, srcRaw, dstRaw){
+  if(sec==='cash_holdings') return false;
+  if(!srcRaw||!dstRaw||String(srcRaw).trim().toUpperCase()===String(dstRaw).trim().toUpperCase()) return false;
+  const ok=renameInstrument(sec, srcRaw, dstRaw); // 改完名后会自动 dedup
+  if(ok) toast('已合并：'+srcRaw+' → '+dstRaw);
+  return ok;
+}
+/* 删除标的：把该 sec 下所有该名称的引用清空（置空），再自愈去重。
+   因为标的表是派生出来的，置空后该标的自然不再出现在表里 —— 即「删除的标的若无持仓则设置里也无」。 */
+function deleteInstrument(sec, raw){
+  if(sec==='cash_holdings') return false;
+  const accs=(Array.isArray(DATA.accounts)?DATA.accounts:[]);
+  accs.forEach(a=>{
+    const arr=a[sec]; if(!Array.isArray(arr))return;
+    arr.forEach(it=>{ const cur=it[_INSTR_SECS.find(s=>s.key===sec).nameField]; if(cur!=null && String(cur).trim().toUpperCase()===String(raw).trim().toUpperCase()){ it[_INSTR_SECS.find(s=>s.key===sec).nameField]=''; } });
+  });
+  // 交易流水 / 收入里的同名引用也一并清空
+  (DATA.transactions||[]).forEach(t=>{ if(t&&t.asset_name && String(t.asset_name).trim().toUpperCase()===String(raw).trim().toUpperCase()) t.asset_name=''; });
+  (DATA.income&&Array.isArray(DATA.income.records)?DATA.income.records:[]).forEach(r=>{ if(r&&r.name && String(r.name).trim().toUpperCase()===String(raw).trim().toUpperCase()) r.name=''; });
+  dedupInstruments();
+  try{saveEditsLocal();}catch(e){}
+  try{recomputePortfolio();}catch(e){}
+  try{patchAllSchema();}catch(e){}
+  try{logActivity('删除标的',raw);}catch(e){}
+  return true;
+}
+/* v44 启动自愈：把历史「中文别名现金名」（美金/港币/人民币…）归一成币种代码。
+   只动「名字就是币种本身」的条目，自定义名（活期/定期…）不动；不动金额。
+   这样老数据（名叫「美金」的现金）打开即变成「USD」，且合并键认得出，不会双份。 */
+function normalizeLegacyCashNames(){
+  let n=0;
+  (Array.isArray(DATA.accounts)?DATA.accounts:[]).forEach(a=>{
+    (a.cash_holdings||[]).forEach(ch=>{
+      if(ch && isGenericCash(ch) && String(ch.name||'').trim()!==String((ch.currency||'CNY')).toUpperCase()){ ch.name=String((ch.currency||'CNY')).toUpperCase(); n++; }
+    });
+  });
+  return n;
+}
+function showInstrumentManager(){
+  const old=document.getElementById('instr-modal');if(old)old.remove();
+  const list=getInstruments();
+  const items=list.map((it)=>{
+    const lock=!instrCanRename(it);
+    const mergeHint = it.refCount>1 ? `<span class="mgr-tag" title="该标的有多处引用">${it.refCount}处</span>` : '';
+    const renameBtn = lock ? '' : `<button class="mgr-edit" onclick="showRenameModal('instrument','${escapeAttr(JSON.stringify({sec:it.sec,raw:it.display}))}')" title="改名（一处改全站同步）" aria-label="改名"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`;
+    const delBtn = lock ? '' : `<button class="del" onclick="delInstrumentItem('${escapeAttr(JSON.stringify({sec:it.sec,raw:it.display}))}')" aria-label="删除">×</button>`;
+    return `<div class="mgr-item" draggable="true" data-key="${escapeAttr(it.key)}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(it.display)} <span class="mgr-sub">${it.kind}${it.ccy?(' · '+it.ccy):''}</span></span>${mergeHint}<span style="display:flex;gap:8px">${renameBtn}${delBtn}</span></div>`;
+  }).join('');
+  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ⋮⋮ 调整显示顺序 · 改名会同步到所有账户与云端 · 删除后无持仓的标的自动消失</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  document.querySelectorAll('#instr-modal .mgr-item').forEach(el=>{
+    el.addEventListener('dragstart',instrDragStart);
+    el.addEventListener('dragover',instrDragOver);
+    el.addEventListener('drop',instrDrop);
+    el.addEventListener('dragend',instrDragEnd);
+  });
+}
+let _instrDragFrom=null;
+function instrDragStart(e){_instrDragFrom=this.dataset.key;this.classList.add('dragging');e.dataTransfer.effectAllowed='move';}
+function instrDragOver(e){e.preventDefault();}
+function instrDrop(e){e.preventDefault();const to=this.dataset.key;if(!_instrDragFrom||_instrDragFrom===to)return;const ord=getInstrumentOrder();let fi=ord.indexOf(_instrDragFrom),ti=ord.indexOf(to);if(fi<0){ord.push(_instrDragFrom);fi=ord.length-1;}if(ti<0){ord.push(to);ti=ord.length-1;}const [mv]=ord.splice(fi,1);ord.splice(ti,0,mv);saveInstrumentOrder(ord);showInstrumentManager();}
+function instrDragEnd(){_instrDragFrom=null;document.querySelectorAll('#instr-modal .mgr-item').forEach(el=>el.classList.remove('dragging'));}
+function delInstrumentItem(payloadJson){
+  let p; try{p=JSON.parse(payloadJson);}catch(e){return;}
+  if(!confirm('删除标的「'+p.raw+'」？所有账户里该名称的引用会被清空（无持仓后将不再出现）。此操作可同步到云端。')) return;
+  deleteInstrument(p.sec, p.raw);
+  showInstrumentManager();
+  toast('已删除标的：'+p.raw);
+}
+/* 通用重命名弹窗在 kind==='instrument' 时解析 {sec,raw} 载荷并调用 renameInstrument。 */
+function _renameConfirm_instrument(payloadJson, newName){
+  let p; try{p=JSON.parse(payloadJson);}catch(e){return false;}
+  return renameInstrument(p.sec, p.raw, newName);
+}
+
 /* 通用输入弹窗（替代 prompt，兼容 WebView） */
 let _inputModalCallback=null;
 function showInputModal(opts){
@@ -6563,6 +6769,13 @@ function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
   return out;
 }
 function holdingKeyFn(x){ return (x.symbol||x.name||x.id||''); }
+/* v44：现金条目改用「币种 + 规范名」做合并键。
+   旧实现用 name 当键，一旦某台设备把「美金」改名成「USD」，另一台仍叫「美金」的记录
+   同步过来就会被当成另一条现金并入 → 同币种出现两条、账户现金凭空翻倍。
+   规范名把币种别名折叠掉之后，改名对同步完全透明；而「活期 / 定期」这类自定义名
+   规范名不同，仍然各自独立，不会被误合并吞掉金额。 */
+function cashHoldingKeyFn(x){ return 'cash:'+String((x&&x.currency)||'CNY').toUpperCase()+':'+cashNameCanon(x); }
+function holdingKeyFor(key){ return key==='cash_holdings' ? cashHoldingKeyFn : holdingKeyFn; }
 // 现金走字段级合并，其余持仓维持原「先到者胜」语义，避免扩大改动面。
 function holdingMergeFor(key){ return key==='cash_holdings' ? mergeCashEntry : null; }
 function mergeV1Accounts(cloudAccounts, localAccounts){
@@ -6573,7 +6786,7 @@ function mergeV1Accounts(cloudAccounts, localAccounts){
     if(la){
       const m=Object.assign({},c);
       ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(k){
-        if(la[k]&&la[k].length) m[k]=unionHoldings(la[k], c[k]||[], holdingKeyFn, holdingMergeFor(k));
+        if(la[k]&&la[k].length) m[k]=unionHoldings(la[k], c[k]||[], holdingKeyFor(k), holdingMergeFor(k));
         else if(c[k]) m[k]=c[k];
       });
       out.push(m); delete localMap[c.id||c.name];
@@ -6631,7 +6844,7 @@ function applyCloudToData(snap, overwrite){
         o.income={records:mergeRecordsById(cloudInc, localInc, function(x){return x.id;})};
       }
     }
-    if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl);}
+    if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl); try{normalizeLegacyCashNames();}catch(_){} } // v44：云端落地的现金名也一并归一（防其他设备旧「美金」名复活）
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     if(o.transactions)DATA.transactions=o.transactions;
     try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
@@ -6660,7 +6873,7 @@ function mergeAccountsForPush(localAcc, cloudAcc){
     if(c){
       const m=Object.assign({},a);
       ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
-        m[key]=unionHoldings(a[key]||[], c[key]||[], holdingKeyFn, holdingMergeFor(key));
+        m[key]=unionHoldings(a[key]||[], c[key]||[], holdingKeyFor(key), holdingMergeFor(key));
       });
       out.push(m);
     } else out.push(a);
@@ -6957,6 +7170,7 @@ if(DATA && DATA.income && Array.isArray(DATA.income)) DATA.income={records:DATA.
 if(DATA && DATA.income && !DATA.income.records) DATA.income.records=[];
 try{loadEditsLocal();}catch(e){console.error('loadEditsLocal:',e)}
 try{(DATA.accounts||[]).forEach(a=>normalizeAccount(a));}catch(e){console.error('normalizeAccount:',e)}
+  try{ if(normalizeLegacyCashNames()>0){ try{saveEditsLocal();}catch(e){} } }catch(e){console.error('normalizeLegacyCashNames:',e)}   // v44 启动自愈：历史「美金/港币/人民币」现金名归一成 USD/HKD/CNY
 try{showArchived=!!getSettings().showArchived;}catch(e){}
 try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
   try{ autoCreditMissingIncomes(); }catch(e){console.error('autoCreditMissingIncomes:',e)}
