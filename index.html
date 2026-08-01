@@ -1793,8 +1793,34 @@ let cryptoPriceCache = quoteCache;
 function cryptoLiveUnitPrice(h){ return quoteLiveUnitPrice('crypto', h.name); }
 // 取某证券记录的实时单价(原生币种)：按市场分组查缓存（与 QUOTE_SOURCES 的 market key 对应：astock/hk/us）
 // 代码优先用 r.code，缺失时回退 r.asset_name（仅在智能选择器未回填代码时）
+/* 市场标签归一化（v43）
+   病灶：数据里 market 字段混用三套词汇 —— 英文码(US/HK/CN)、中文标签(美股/港股/A股)、空值。
+   写入侧表单存的是中文(见资产表单 market 选项)，而取价侧只认英文码，
+   于是 secLivePrice 对「美股/港股」一律 return null，静默回退成本价 ——
+   页面显示的是买入价而不是现价，且不报任何错，极难察觉。
+   对策：统一走 normMarket()，中英文与空值都能落到 astock/hk/us 三个行情缓存 key 上；
+   market 缺失时按计价币种兜底推断。现金类条目直接排除（不该去拉股票行情）。 */
+function normMarket(m, ccy){
+  const s=String(m==null?'':m).trim().toUpperCase();
+  if(s==='US'||s==='USA'||s==='美股'||s==='NASDAQ'||s==='NYSE') return 'us';
+  if(s==='HK'||s==='HKEX'||s==='港股'||s==='香港') return 'hk';
+  if(s==='CN'||s==='ASTOCK'||s==='A股'||s==='沪深'||s==='A-SHARE') return 'astock';
+  if(s==='CRYPTO'||s==='加密货币') return null;   // 加密货币走 COIN_IDS，不经证券行情
+  // market 缺失/未知：按计价币种兜底（USD→美股、HKD→港股、CNY→A股）
+  const c=String(ccy==null?'':ccy).trim().toUpperCase();
+  if(c==='USD') return 'us';
+  if(c==='HKD') return 'hk';
+  if(c==='CNY'||c==='RMB') return 'astock';
+  return null;
+}
+// 现金/类现金条目不应参与股票行情取价（历史脏数据里有现金被误存进 securities 的情况）
+function _isCashLike(r){
+  const cat=String((r&&r.asset_category)||'');
+  return cat==='现金'||cat==='流动现金'||cat==='货币基金';
+}
 function secLivePrice(r){
-  const mktMap = (r.market==='HK')?'hk':(r.market==='US')?'us':(r.market==='CN')?'astock':null;
+  if(!r || _isCashLike(r)) return null;
+  const mktMap = normMarket(r.market, r.currency);
   if(!mktMap) return null;
   const code = (r.code&&r.code.trim()) ? r.code.trim() : (r.asset_name||'');
   if(!code) return null;
@@ -1816,8 +1842,8 @@ function _allCryptoSymbols(){
 function _allSecSymbols(market){
   const s = new Set();
   const match = function(t){
-    if(!t) return;
-    const m = (t.market==='HK')?'hk':(t.market==='US')?'us':(t.market==='CN')?'astock':null;
+    if(!t || _isCashLike(t)) return;
+    const m = normMarket(t.market, t.currency);   // v43：兼容中文标签与空 market，见 normMarket
     if(m!==market) return;
     const code = (t.code&&t.code.trim()) ? t.code.trim() : (t.asset_name||'');
     if(code) s.add(code);
@@ -5021,6 +5047,51 @@ function revertIncomeCash(aid, incId){
     if(ch._auto_credit && Math.abs(ch.amount)<1e-6 && Object.keys(ch._credits).length===0) a.cash_holdings=a.cash_holdings.filter(x=>x!==ch);
   }});
 }
+/* ============ 启动自愈·剪枝：清除串户/失效的入账钩子（v43） ============
+   为什么需要它：v42 把 cash_holdings 的同名合并从「整对象取胜方」改成字段级并集，
+   _credits 按收入 id 取并集 —— 这修好了「钩子被同名空壳整体挤掉」的丢失问题，
+   但同时带来一个对称的副作用：钩子只增不减。
+   一旦某个钩子挂错了账户（历史上多设备竞态、收入改归属被推送回滚等造成），
+   哪怕在云端 sync.json 里把它删掉，任一脏设备本地只要还留着这条钩子，
+   下次同步合并就会把它并回云端 —— 删除传播不出去，钱被重复计算。
+   对策：与 autoCreditMissingIncomes 完全对称的反向核查，每次启动本地跑一遍（幂等）。
+   凡 _credits 里的钩子，都回查收入台账 DATA.income.records：
+     · 收入已不存在（孤儿）        → 撤销
+     · 收入状态已非 received       → 撤销
+     · 收入归属账户 ≠ 钩子所在账户 → 撤销（串户）
+   顺序要求：必须在 autoCreditMissingIncomes() 之后（先把该补的补齐，再剪该剪的），
+   且在 recomputeCashAll() 之前（由后者按 _manual_base + 交易净额 + _credits 统一重算金额）。 */
+function pruneForeignIncomeHooks(){
+  let pruned=0; const detail=[];
+  try{
+    const byId={};
+    ((DATA.income&&DATA.income.records)||[]).forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+    const todo=[];
+    (DATA.accounts||[]).forEach(function(a){
+      if(!a||!a.id) return;
+      (a.cash_holdings||[]).forEach(function(ch){
+        const cr=ch&&ch._credits; if(!cr) return;
+        Object.keys(cr).forEach(function(incId){
+          const r=byId[incId]; let bad='';
+          if(!r) bad='收入已删除';
+          else if(r.status!=='received') bad='状态非已收';
+          else { const own=acctRes(r.account); if(!own||own.id!==a.id) bad='串户(真属 '+((own&&own.id)||r.account||'?')+')'; }
+          if(bad) todo.push([a.id, incId, bad, cr[incId], ch.name]);
+        });
+      });
+    });
+    // 先收集再执行：revertIncomeCash 内部可能重建 cash_holdings 数组，不能在遍历中直接改
+    todo.forEach(function(p){
+      revertIncomeCash(p[0], p[1]); pruned++;
+      detail.push(p[0]+'/'+p[4]+' '+p[1]+'('+p[3]+') → '+p[2]);
+    });
+  }catch(e){ console.error('pruneForeignIncomeHooks:',e); }
+  if(pruned){
+    try{ console.info('[自愈·剪枝] 清除串户/失效收入钩子 '+pruned+' 条\n  '+detail.join('\n  ')); }catch(e){}
+    try{ saveEditsLocal(); }catch(e){}
+  }
+  return pruned;
+}
 
 /* ============ 买/卖/转账/手动录入 自动改写现金（v21） ============
    模型：每个现金子账户 amount = _manual_base(手动本金) + 交易净额(buy/sell/transfer/manual_adjust) + 收入_credits
@@ -5726,7 +5797,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-07-31-v42';
+const APP_VERSION='2026-07-31-v43';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6889,6 +6960,7 @@ try{(DATA.accounts||[]).forEach(a=>normalizeAccount(a));}catch(e){console.error(
 try{showArchived=!!getSettings().showArchived;}catch(e){}
 try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
   try{ autoCreditMissingIncomes(); }catch(e){console.error('autoCreditMissingIncomes:',e)}
+  try{ pruneForeignIncomeHooks(); }catch(e){console.error('pruneForeignIncomeHooks:',e)}
   try{ recomputeCashAll(); }catch(e){console.error('recomputeCashAll:',e)}
 /* 加载时即按【设置】重建子账户/地域/持有人等聚合分组（名称对齐设置项），保留文件权威总资产 */
 try{recomputeAggregations();}catch(e){console.error('recomputeAggregations on load:',e)}
