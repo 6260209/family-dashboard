@@ -5107,7 +5107,7 @@ function autoCreditMissingIncomes(){
   }catch(e){ console.error('autoCreditMissingIncomes:',e); }
   if(fixed){
     try{ console.info('[自愈] 补回收入入账钩子 '+fixed+' 条'); }catch(e){}
-    try{ saveEditsLocal(); }catch(e){}
+    if(!_healNoSave){ try{ saveEditsLocal(); }catch(e){} }
   }
   return fixed;
 }
@@ -5160,7 +5160,7 @@ function pruneForeignIncomeHooks(){
   }catch(e){ console.error('pruneForeignIncomeHooks:',e); }
   if(pruned){
     try{ console.info('[自愈·剪枝] 清除串户/失效收入钩子 '+pruned+' 条\n  '+detail.join('\n  ')); }catch(e){}
-    try{ saveEditsLocal(); }catch(e){}
+    if(!_healNoSave){ try{ saveEditsLocal(); }catch(e){} }
   }
   return pruned;
 }
@@ -5233,8 +5233,11 @@ function recomputeCashAll(){
     recomputeCashAccount(a.id);
     if(JSON.stringify(a.cash_holdings)!==before) changed=true;
   });
-  if(changed){ try{ saveEditsLocal(); }catch(e){} }
+  if(changed && !_healNoSave){ try{ saveEditsLocal(); }catch(e){} }
 }
+/* v46：净化开关。为「推送快照」跑自愈时置 true：只净化数据、不写 localStorage
+   （此时 DATA 上挂的是临时快照数据，绝不能落盘覆盖真实本地数据）。 */
+let _healNoSave=false;
 /* v45：现金自愈三件套（补钩子 → 剪跨账户钩子 → 按 本金+流水净额+钩子 重算金额）。
    顺序不可调换，理由见各函数注释。
    【必须在「任何一次 DATA 被整体替换/合并」之后调用】——启动时 startApp() 调一次还不够：
@@ -5896,7 +5899,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-01-v45';
+const APP_VERSION='2026-08-01-v46';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7116,6 +7119,13 @@ function applyCloudToData(snap, overwrite){
     if(o.transactions)DATA.transactions=o.transactions;
     try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
   }catch(e){console.warn('applyCloudToData',e);return false;}
+  /* v46 架构收口：本函数是【云端数据落地本地的唯一入口】（syncPullOnLoad / 手动同步 /
+     强制拉取 / 恢复备份 / 推送后回灌 五条路径全部经过这里）。云端可能携带未重算的脏现金桶
+     （如断链转账遗留），必须在落地后立即重跑现金自愈，否则脏金额会被渲染并在下次推送时回流云端。
+     历史教训：在各调用点分散补自愈必然漏（v35「删了又复活」、v45 富途 CNY 20000 事故皆源于此），
+     故在此处一次性收口——今后任何新增的云端应用路径都自动获得净化，无需再逐处补。
+     幂等：数据已干净时 recomputeCashAll 的 changed=false，不落盘、不触发推送，天然收敛。 */
+  try{ healCashDerived(); }catch(e){ console.warn('applyCloudToData heal', e); }
   return mergedLocal;
 }
 function getDeviceLabel(){
@@ -7167,6 +7177,30 @@ function buildPushSnapshot(localSnap, cloudSnap){
   });
   return out;
 }
+/* v46：净化「即将上传的快照」——buildPushSnapshot 会把云端 cash_holdings 并集回来，
+   其中可能含断链转账遗留的脏桶（amount 未重算）。若不净化，脏金额会被原样推回云端，
+   下次同步再并回本地，形成「每次同步都复活」的死循环（富途 CNY 20000 事故）。
+   做法：把快照 v1 临时挂到 DATA 上跑现金自愈，写回快照后立刻还原 DATA，全程不落盘。 */
+function healPushSnapshot(sp){
+  try{
+    const v1=snapV1(sp);
+    if(!v1||!Array.isArray(v1.accounts)) return sp;
+    const _sa=DATA.accounts, _st=DATA.transactions, _si=DATA.income, _sg=_healNoSave;
+    try{
+      DATA.accounts=v1.accounts;
+      DATA.transactions=v1.transactions||[];
+      DATA.income=v1.income||{records:[]};
+      _healNoSave=true;
+      healCashDerived();
+      v1.accounts=DATA.accounts; v1.transactions=DATA.transactions; v1.income=DATA.income;
+      sp.keys=sp.keys||{};
+      sp.keys.famdash_v1={updatedAt:Date.now(), value:JSON.stringify(v1)};
+    } finally {
+      _healNoSave=_sg; DATA.accounts=_sa; DATA.transactions=_st; DATA.income=_si;
+    }
+  }catch(e){ console.warn('healPushSnapshot skipped', e); }
+  return sp;
+}
 let _syncLock=null;
 function syncPush(){
   const tok=getSyncToken();if(!tok){toast('未配置同步令牌，请到「我的 → <svg class="ic-svg" width="14" height="14"><use href="#i-gear"/></svg> 配置」填入');return Promise.resolve(false);}
@@ -7188,6 +7222,7 @@ function _doSyncPush(tok,attempt){
       try{
         if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); snapToPush=buildPushSnapshot(snap, cs); }
         else { snapToPush=snap; } // 首次推送：云端无文件，直接推本地
+        snapToPush=healPushSnapshot(snapToPush); // v46：上传前净化现金桶，避免把云端脏桶原样推回（见函数注释）
       }catch(e){
         // 合并异常：宁可中止推送，也绝不让「仅本地」快照覆盖云端独有数据（防账户/流水丢失）
         console.error('syncPush merge failed, abort to protect cloud', e);
@@ -7207,7 +7242,7 @@ function _doSyncPush(tok,attempt){
         try{
           // 让本地与「合并后上传」的云端保持一致（本地 = 云端，避免下次拉取又出现分歧）
           const mv=snapV1(snapToPush);
-          if(mv){ localStorage.setItem('famdash_v1', JSON.stringify(mv)); applyCloudToData(snapToPush); }
+          if(mv){ localStorage.setItem('famdash_v1', JSON.stringify(mv)); applyCloudToData(snapToPush); healCashDerived(); } // v46：回灌后再自愈一次（内存双保险，此处需落盘故不设 _healNoSave）
           localStorage.setItem('famdash_sync_localmod','0');localStorage.setItem('famdash_sync_lastpull',String(Date.now()));try{sessionStorage.removeItem('famdash_session_edited');}catch(e){}
         }catch(e){}
         toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 已同步到云端'); return true;
