@@ -5171,6 +5171,19 @@ function pruneForeignIncomeHooks(){
    - 交易变动后自动重算，无需「校准」按钮（彻底取消校准步骤）
    - 与收入 creditIncomeToCash 共用 _credits 命名空间，互不冲突
 */
+/* v45：转账的对手方账户必须真实存在，否则该笔转账是「断链数据」，不得参与任何余额推导。
+   transfer 的语义是账户之间搬钱——一边减、一边加，总额守恒。若对手方账户已不存在
+   （残留的示例/种子数据、或对手账户被删除后流水未级联清理），这笔转账就只剩单边：
+   收款方 net 凭空 +N，全站总资产虚增 N，且永远对不平。
+   历史事故：种子流水 tx_seed_1「示例：杨夏勤现金账户转入富途用于打新」CNY 20,000，
+   转出方 yangxiaqin_cash 根本不在账户表里，却让富途被自动建出一个 20,000 元的 CNY 现金桶。
+   注意：真正的「外部资金转入」应记 manual_adjust（单边调整，语义正确），不是 transfer。 */
+function _txPeerAlive(t){
+  if(!t || t.type!=='transfer') return true;
+  const accs=DATA.accounts||[];
+  const alive=id=>!id || accs.some(x=>x&&x.id===id);
+  return alive(t.account_from) && alive(t.account_to);
+}
 function txDerivedNet(aid, ccy){
   let net=0;
   (DATA.transactions||[]).forEach(t=>{
@@ -5180,7 +5193,7 @@ function txDerivedNet(aid, ccy){
     const v=Number(t.amount||0), f=Number(t.fee||0);
     if(t.type==='buy'&&t.account===aid) net-=(v+f);
     else if(t.type==='sell'&&t.account===aid) net+=(v-f);
-    else if(t.type==='transfer'){ if(t.account_from===aid) net-=v; if(t.account_to===aid) net+=v; }
+    else if(t.type==='transfer'){ if(!_txPeerAlive(t)) return; if(t.account_from===aid) net-=v; if(t.account_to===aid) net+=v; }
     else if(t.type==='manual_adjust'&&t.account===aid) net+=v;
   });
   return net;
@@ -5197,8 +5210,10 @@ function recomputeCashAccount(aid){
     ch.amount=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
   });
   // 2) 为「有交易净额但尚无现金子账户」的币种新建（如转账收款方币种）
+  //    断链转账（对手方账户不存在）不得触发建桶——见 _txPeerAlive 注释。
   (DATA.transactions||[]).forEach(t=>{
     if(!t) return;
+    if(!_txPeerAlive(t)) return;
     if(t.account!==aid && !(t.type==='transfer'&&(t.account_from===aid||t.account_to===aid))) return;
     const ccy=(t.currency||'CNY').toUpperCase();
     const net=txDerivedNet(aid, ccy);
