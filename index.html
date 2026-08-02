@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v54';
+const APP_VERSION='2026-08-02-v55';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7682,7 +7682,7 @@ function syncPush(){
 }
 function _doSyncPush(tok,attempt){
   const snap=syncCollect();
-  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok}})
+  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
     .then(function(r){return r.ok?r.json():null;})
     .then(function(meta){
       // 合并云端数据后再上传：避免「本地未拉取过的云端账户/流水/收入」被整体覆盖（此前多设备竞态会丢数据）。
@@ -7723,7 +7723,7 @@ function _doSyncPush(tok,attempt){
 function syncPull(retry){
   retry=retry||0;
   const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false});}
-  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok}})
+  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
     .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
     .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};})
     .catch(function(e){
@@ -7810,7 +7810,7 @@ function showSyncHistory(){
   const tok=getSyncToken();
   if(!tok){toast('未配置同步令牌，请到「我的 → <svg class="ic-svg" width="14" height="14"><use href="#i-gear"/></svg> 配置」填入');return;}
   toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 读取同步历史…');
-  fetch('https://api.github.com/repos/'+SYNC_REPO+'/commits?path='+SYNC_FILE+'&per_page=10',{headers:{'Authorization':'token '+tok}})
+  fetch('https://api.github.com/repos/'+SYNC_REPO+'/commits?path='+SYNC_FILE+'&per_page=10',{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
     .then(function(r){return r.ok?r.json():[];})
     .then(function(list){
       if(!Array.isArray(list)||!list.length){toast('暂无同步历史');return;}
@@ -7833,7 +7833,7 @@ function restoreFromCommit(sha){
   const tok=getSyncToken();if(!tok){toast('未配置同步令牌');return;}
   if(!window.confirm('确定恢复到该历史版本？\n恢复后该版本会成为最新并同步到云端（其他设备随后拉取即可）。'))return;
   toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 正在恢复历史版本…');
-  fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?ref='+sha,{headers:{'Authorization':'token '+tok}})
+  fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?ref='+sha,{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
     .then(function(r){if(!r.ok)throw new Error('拉取历史 '+r.status);return r.json();})
     .then(function(meta){
       const snap=JSON.parse(_b64decode(meta.content));
