@@ -2687,6 +2687,7 @@ function openAcct(aid){
   function _rowOf(it){
     const r=it.record, sec=it.section;
     let type='',name='',proj='',qty='',cost='',price='',mv='',mvCny=0,pnl='',pnlCls='',pct='',pctCls='',ccy='',cat='',loc='',notes='',edt='',del='';
+    let amountVal=0,pnlVal=0;
     if(sec==='securities'){
       ccy=r.currency||'CNY';
       name=r.asset_name||'(未命名)'; qty=r.quantity||'';   // v47：无名条目也要出现在表里，不能因没名字就不显示这笔钱
@@ -2696,11 +2697,13 @@ function openAcct(aid){
       const lp=secLivePrice(r);
       const livePrice=(lp!=null)?lp:(r.price?Number(r.price):(costN!=null?costN:null));
       const totalMv=(livePrice!=null && qtyN!=null)? qtyN*livePrice : secValRaw(r);
+      amountVal=totalMv;
       cost=(costN!=null)?fmtNative(costN,ccy):'—';
       price=(livePrice!=null)?fmtNative(livePrice,ccy):'—';
       mv=fmtNative(totalMv,ccy);
       mvCny=toCny(totalMv,ccy);
       let p=null; if(livePrice!=null && costN!=null && qtyN!=null) p=(livePrice-costN)*qtyN;
+      pnlVal=p||0;
       pnl=(p!=null)?((p>=0?'+':'')+fmtNative(p,ccy)):'—'; pnlCls=(p!=null&&p>=0)?'gn':'rd';
       let pp=null; if(p!=null && costN!=null && qtyN!=null && (costN*qtyN)!==0) pp=(p/(costN*qtyN))*100;
       pct=(pp!=null)?((pp>=0?'+':'')+pp.toFixed(2)+'%'):''; pctCls=(pp!=null&&pp>=0)?'gn':'rd';
@@ -2709,8 +2712,9 @@ function openAcct(aid){
     } else if(sec==='fund_holdings'){
       ccy=r.currency||'CNY';
       name=r.name||''; qty='—'; cost='—'; price='—';
+      amountVal=Number(r.amount||0);
       mv=fmtNative(r.amount||0,ccy);
-      const p=r.profit||0;
+      const p=r.profit||0; pnlVal=p;
       mvCny=toCny(r.amount||0,ccy);
       pnl=(p>=0?'+':'')+fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
       const pp=r.pct;
@@ -2720,8 +2724,9 @@ function openAcct(aid){
     } else if(sec==='cash_holdings'){
       ccy=r.currency||'CNY';
       name=r.name||'现金类资产'; qty='—'; cost='—'; price='—';
+      amountVal=Number(r.amount||0);
       mv=fmtMV(r.amount||0,ccy);
-      const p=r.profit||0;
+      const p=r.profit||0; pnlVal=p;
       mvCny=toCny(r.amount||0,ccy);
       pnl=fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
       pct=(r.return_pct||0)+'%';
@@ -2737,6 +2742,7 @@ function openAcct(aid){
       let livePrice=(lp!=null)?lp:(r.value_usdt!=null?Number(r.value_usdt):(r.price?Number(r.price):null));
       if(livePrice==null && r.qty && r.value) livePrice=Number(r.value)/Number(r.qty);
       const totalMv=(livePrice!=null && r.qty!=null)?Number(r.qty)*livePrice:Number(r.value||0);
+      amountVal=totalMv;
       // 现价显示【原生币种单位】，不折算成人民币（拉取什么货币就显示什么单位）
       price=(livePrice!=null)?(fmt(livePrice)+' '+ccy):'—';
       mv=fmtMV(totalMv,ccy);
@@ -2744,6 +2750,7 @@ function openAcct(aid){
       const costN=(r.cost_price!=null)?Number(r.cost_price):null;
       let p=null;
       if(livePrice!=null && costN!=null && r.qty!=null) p=(livePrice-costN)*Number(r.qty);
+      pnlVal=p||0;
       pnl=(p!=null)?((p>=0?'+':'')+fmt(p)):'—'; pnlCls=(p!=null && p>=0)?'gn':'rd';
       let pp=null;
       if(p!=null && costN!=null && r.qty!=null && (costN*Number(r.qty))!==0) pp=(p/(costN*Number(r.qty)))*100;
@@ -2754,7 +2761,7 @@ function openAcct(aid){
       edt=editBtn(editSec,it.idx); del=delBtn(editSec,it.idx);
     }
     const ccyTag=ccy?('<span class="tag '+(ccy==='HKD'?'t-hk':ccy==='USD'?'t-us':ccy==='USDT'?'t-crypto':'t-astock')+'">'+ccy+'</span>'):'—';
-    return {name,proj,qty,cost,price,mv,ccyTag,pnl,pnlCls,pct,pctCls,cat,loc,notes,edt,del,mvCny};
+    return {name,proj,qty,cost,price,mv,ccyTag,pnl,pnlCls,pct,pctCls,cat,loc,notes,edt,del,mvCny,amountVal,pnlVal,ccy};
   }
   function _rowId(li,it){
     if(it.section==='securities') return 'sec-row-'+it.idx;
@@ -2766,14 +2773,24 @@ function openAcct(aid){
   orderedCats.forEach(catName=>{
     const items=catItems[catName]||[];
     if(!items.length) return;
+    const isFund=catModeOf(catName)==='fund';
     h+='<div class="mt" style="margin-top:16px;font-size:14px;font-weight:700">'+escapeHtml(catName)+' <span style="font-size:11px;color:var(--dim);font-weight:400">'+items.length+'项</span></div>';
-    h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>数量</th><th>成本价</th><th>现价</th><th>市值</th><th>币种</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
+    if(isFund){
+      h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>金额（原币种）</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
+    } else {
+      h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>数量</th><th>成本价</th><th>现价</th><th>市值</th><th>币种</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
+    }
     let catCny=0;
     items.forEach((it,li)=>{
       const r=_rowOf(it); catCny+=r.mvCny||0;
       const projTag=r.proj?('<span class="tag t-qdii" style="font-size:10px">'+(r.proj.length>10?r.proj.slice(0,9)+'…':escapeHtml(r.proj))+'</span>'):'—';
       const catTag=r.cat?('<span class="tag t-afund" style="font-size:10px">'+escapeHtml(r.cat)+'</span>'):'—';
-      h+=`<tr id="${_rowId(li,it)}"><td>${li+1}</td><td><b>${escapeHtml(r.name)}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.proj)}">${projTag}</td><td>${r.qty}</td><td>${r.cost}</td><td>${r.price}</td><td>${r.mv}</td><td>${r.ccyTag}</td><td class="${r.pnlCls}">${r.pnl}</td><td class="${r.pctCls}">${r.pct}</td><td>${catTag}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${r.loc||'—'}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.notes)}">${r.notes||'—'}</td><td>${r.edt}${r.del}</td></tr>`;
+      if(isFund){
+        const pnlFund=(r.pnlVal>=0?'+':'')+fmtNative(r.pnlVal,r.ccy);
+        h+=`<tr id="${_rowId(li,it)}"><td>${li+1}</td><td><b>${escapeHtml(r.name)}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.proj)}">${projTag}</td><td>${fmtNative(r.amountVal,r.ccy)}</td><td class="${r.pnlCls}">${pnlFund}</td><td class="${r.pctCls}">${r.pct}</td><td>${catTag}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${r.loc||'—'}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.notes)}">${r.notes||'—'}</td><td>${r.edt}${r.del}</td></tr>`;
+      } else {
+        h+=`<tr id="${_rowId(li,it)}"><td>${li+1}</td><td><b>${escapeHtml(r.name)}</b></td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.proj)}">${projTag}</td><td>${r.qty}</td><td>${r.cost}</td><td>${r.price}</td><td>${r.mv}</td><td>${r.ccyTag}</td><td class="${r.pnlCls}">${r.pnl}</td><td class="${r.pctCls}">${r.pct}</td><td>${catTag}</td><td style="max-width:60px;overflow:hidden;text-overflow:ellipsis">${r.loc||'—'}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.notes)}">${r.notes||'—'}</td><td>${r.edt}${r.del}</td></tr>`;
+      }
     });
     h+='</tbody></table></div>';
     // 分类合计小计（统一表格下，给一个合并的本位币小计）
@@ -6234,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v50';
+const APP_VERSION='2026-08-02-v53';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7636,7 +7653,7 @@ function syncPush(){
 }
 function _doSyncPush(tok,attempt){
   const snap=syncCollect();
-  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{headers:{'Authorization':'token '+tok}})
+  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok}})
     .then(function(r){return r.ok?r.json():null;})
     .then(function(meta){
       // 合并云端数据后再上传：避免「本地未拉取过的云端账户/流水/收入」被整体覆盖（此前多设备竞态会丢数据）。
@@ -7656,7 +7673,7 @@ function _doSyncPush(tok,attempt){
       const content=_b64encode(JSON.stringify(snapToPush));
       const body={message:'sync: '+fmtSyncTime(snap.syncedAt)+' · '+getDeviceLabel(),content:content};
       if(meta&&meta.sha)body.sha=meta.sha;
-      return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{
+      return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{
         method:'PUT',headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},body:JSON.stringify(body)
       }).then(function(r){
         if(!r.ok){
@@ -7677,7 +7694,7 @@ function _doSyncPush(tok,attempt){
 function syncPull(retry){
   retry=retry||0;
   const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false});}
-  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{headers:{'Authorization':'token '+tok}})
+  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok}})
     .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
     .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};})
     .catch(function(e){
