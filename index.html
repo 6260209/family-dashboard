@@ -2214,6 +2214,12 @@ function genHid(){return 'h-'+Math.random().toString(36).slice(2,9);}
 function _ccyOfH(h){return (String(h.ccy||h.currency||'CNY')).toUpperCase();}
 function normalizeAccount(a){
   if(!a||!Array.isArray(a.holdings))return a;
+  /* v49 启动自愈：清掉历史同步产生的重复持仓（同 id 多行）。
+     不清的话 jRecomputeSummary 按 holdings[].value 求和会把账户总额虚增几十倍
+     （盈立新加坡实测 1158 条 → 实际只有 5 条），且下次推送会把重复固化回云端。 */
+  const _hb=a.holdings.length;
+  a.holdings=dedupeHoldingsById(a.holdings, a.id||a.name, 'holdings', false);
+  if(a.holdings.length!==_hb){ try{ jRecomputeSummary(a); }catch(e){} try{ window._fdDedupeDirty=true; }catch(e){} }
   const H=a.holdings;
   a.securities=[]; a.fund_holdings=[]; a.cash_holdings=[];
   a.crypto=[];
@@ -4043,6 +4049,30 @@ function runSelfCheck(){
     // 6) 数据完整性
     rec('数据完整性', !!(DATA.accounts&&DATA.income&&DATA.transactions),
       `账户 ${(DATA.accounts||[]).length} · 收入记录 ${(DATA.income.records||[]).length} · 流水 ${(DATA.transactions||[]).length}`);
+    /* 7) v49 回归门禁：持仓不得存在同 id 重复行。
+       历史事故：unionHoldings 冲突双留的新行未登记进索引，同步一次重复翻一倍，
+       账户总额几何级虚增（盈立新加坡 holdings 7→1158，用户「不录入钱也一直涨」）。 */
+    let dupTotal=0; const dupWho=[];
+    (DATA.accounts||[]).forEach(a=>{
+      const seen={}; let d=0;
+      (a.holdings||[]).forEach(h=>{ if(!h||!h.id)return; const k=String(h.id); if(seen[k])d++; else seen[k]=1; });
+      if(d>0){ dupTotal+=d; dupWho.push(acctName(a.id)+' '+d+' 条'); }
+    });
+    rec('持仓无同 id 重复（同步防增殖）', dupTotal===0,
+      dupTotal===0?'全部账户 holdings 无重复行':('重复 '+dupTotal+' 条：'+dupWho.slice(0,5).join('；')),
+      dupTotal===0?'🟢':'🔴');
+    /* 8) v49 回归门禁：同步合并必须幂等 —— 本地快照与自身（模拟云端）合并后条数不得增加。
+       这正是「刷新一次涨一次」的直接复现路径。 */
+    let notIdem=0; const idemWho=[];
+    (DATA.accounts||[]).forEach(a=>{
+      const src=(a.holdings||[]); if(src.length<2) return;
+      const copy=JSON.parse(JSON.stringify(src));
+      let merged=[]; try{ merged=unionHoldings(src, copy, holdingKeyFn, holdingMergeFor('holdings', a.id)); }catch(e){ merged=[]; }
+      if(merged.length>src.length){ notIdem++; idemWho.push(acctName(a.id)+' '+src.length+'→'+merged.length); }
+    });
+    rec('同步合并幂等（自我合并不增行）', notIdem===0,
+      notIdem===0?'全部账户自我合并后条数不变':('非幂等 '+notIdem+' 个账户：'+idemWho.slice(0,5).join('；')),
+      notIdem===0?'🟢':'🔴');
   }catch(e){
     rec('自检执行异常', false, String(e&&e.stack||e));
   }
@@ -6156,7 +6186,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v48';
+const APP_VERSION='2026-08-02-v49';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7248,10 +7278,66 @@ function mergeDistinctEntries(a, b, aid){
 }
 // 向后兼容：保留原名，语义等同 reconcileSameEntry（同一条目的两个版本）。
 function mergeCashEntry(win, lose, aid){ return reconcileSameEntry(win, lose, aid); }
+/* v49 根治「不录入、只刷新，账户金额自己一直往上涨」——
+   病根在下面 unionHoldings 的 idx 只记「key → 单个下标」：
+   mergeFn 返回 null（判定两条不是同一笔）时走 out.push(x)，却**没有把这一新行登记进 idx**，
+   于是后续同 key 的条目永远只跟「先到者 out[idx[k]]」比对，比不过就再 push 一行。
+   盈立新加坡恰好有 QQQI 90 股、QQQI 60 股两笔真实持仓，键同为 'QQQI|USD'：
+     本地[A90,B60] + 云端[A90,B60] → A 与 A 合并、B 与 A 冲突 push、B' 与 A 冲突再 push → 出现 2 个 B。
+     下一轮本地已 2 个 B、云端 2 个 B → 4 个 B …… 每同步一次翻一倍。
+   实测该账户 holdings 条数 7→10→16→28→52→76→148→292→580→1156→1158，
+   而 jRecomputeSummary 直接按 holdings[].value 求和 → 账户总额同步几何级虚增。
+   两层修法：
+   ① idx 改为「key → 下标数组」，冲突双留的新行也登记进桶；后到者依次与桶内每一条尝试合并，
+      全都合不上才新起一行 → 重复不再增殖，同时保住 90/60 两笔真实持仓各自独立。
+   ② 同 id 硬去重：持仓条目 id（h-xxxxxx）全局唯一，同 id 必是同一条目的两个版本，
+      任何情况下都只能合并或取先到者，绝不允许产生第二行。 */
+function dedupeHoldingsById(arr, aid, label, idOnly){
+  if(!Array.isArray(arr)||arr.length<2) return arr;
+  const seen={}; const out=[]; let dropped=0;
+  for(const x of arr){
+    if(!x||typeof x!=='object') continue;
+    const id=(x.id!=null&&x.id!=='')?String(x.id):'';
+    let sig;
+    if(id) sig='id:'+id;
+    else if(idOnly){ out.push(x); continue; }   // 现金桶无 id 时不做指纹去重（同名同额可能是两个真实桶）
+    // 无 id 的历史条目：用 键+数量+市值 做指纹，完全一致才算重复（90 股/60 股 指纹不同，不会被误吞）
+    else sig='sig:'+holdingKeyFn(x)+'|'+String(x.qty==null?'':x.qty)+'|'+String(x.value==null?'':x.value)+'|'+String(x.amount==null?'':x.amount);
+    if(sig in seen){ dropped++; continue; }
+    seen[sig]=1; out.push(x);
+  }
+  if(dropped>0){ try{ logActivity('重复持仓自愈', (aid||'')+' · '+(label||'holdings')+' 清除重复 '+dropped+' 条，保留 '+out.length+' 条'); }catch(e){} }
+  return dropped>0?out:arr;
+}
+// 对一组账户的所有持仓数组做同 id 去重（启动加载 / 云端落地 / 推送前 三处收口，任一路径都自愈）
+function healHoldingDupes(accounts, tag){
+  let total=0;
+  (accounts||[]).forEach(function(a){
+    if(!a||typeof a!=='object') return;
+    let hit=0;
+    ['holdings','securities','crypto_holdings','cryptos','crypto','fund_holdings','bond_holdings'].forEach(function(k){
+      if(!Array.isArray(a[k])||a[k].length<2) return;
+      const before=a[k].length;
+      a[k]=dedupeHoldingsById(a[k], a.id||a.name, k, false);
+      hit+=(before-a[k].length);
+    });
+    if(Array.isArray(a.cash_holdings)&&a.cash_holdings.length>1){
+      const before=a.cash_holdings.length;
+      a.cash_holdings=dedupeHoldingsById(a.cash_holdings, a.id||a.name, 'cash_holdings', true);
+      hit+=(before-a.cash_holdings.length);
+    }
+    // 仅对真的去掉了重复的账户重算汇总，否则虚增总额会留在 summary 里
+    if(hit>0){ try{ jRecomputeSummary(a); }catch(e){} total+=hit; }
+  });
+  if(total>0){ try{ console.warn('[healHoldingDupes]'+(tag?' '+tag:'')+' 清除重复条目 '+total+' 条'); }catch(e){} }
+  return total;
+}
 // mergeFn 可选：同 key 冲突时不再丢弃后到者，而是交给 mergeFn 做字段级合并。
 function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
   keyFn=keyFn||function(x){return (x.symbol||x.name||x.id||'');};
-  const idx={}; const out=[];
+  const idx={};      // v49：key → **下标数组**（旧版是单个下标，冲突双留的行不登记 → 重复无限增殖）
+  const idIdx={};    // v49：id → 下标，同 id 硬去重
+  const out=[];
   /* v47：mergeFn 返回 null 的语义是「两条其实不是同一笔，双留，让上层保留先到者」
      （见 mergeHoldingEntry 注释）。原实现直接 out[idx[k]]=null，把先到者也抹成 null，
      意图「两条都留」实现成「两条都没了」，还在数组里留下 null 洞，
@@ -7259,11 +7345,29 @@ function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
      改为：能合并就写回；返回 null 时保留先到者不动，后到者另起一行追加。 */
   const _put=function(x){
     if(!x) return;  // v48：跳过数组里的 null 洞（v46 脏数据遗留），否则 keyFn(x) 崩 TypeError
+    const xid=(x.id!=null&&x.id!=='')?String(x.id):'';
+    // v49 ②：同 id 必是同一条目的两个版本 → 合得上就并，合不上保留先到者（本地先入即本地优先），绝不新增行
+    if(xid && (xid in idIdx)){
+      const p=idIdx[xid];
+      const m=mergeFn?mergeFn(out[p], x):null;
+      if(m) out[p]=m;
+      return;
+    }
     const k=keyFn(x);
-    if(!(k in idx)){ idx[k]=out.length; out.push(x); return; }
-    if(!mergeFn) return;
-    const m=mergeFn(out[idx[k]], x);
-    if(m) out[idx[k]]=m; else out.push(x);
+    let bucket=idx[k];
+    if(!bucket){ bucket=idx[k]=[]; }
+    if(bucket.length){
+      if(!mergeFn) return;   // 无 mergeFn：沿用「先到者胜、后到者丢弃」旧语义
+      // v49 ①：与桶内每一条依次尝试合并，合上即并回（重复被吸收），全都合不上才新起一行
+      for(let i=0;i<bucket.length;i++){
+        const m=mergeFn(out[bucket[i]], x);
+        if(m){ out[bucket[i]]=m; if(xid) idIdx[xid]=bucket[i]; return; }
+      }
+    }
+    // 确为不同的一笔（如 QQQI 90 股 与 QQQI 60 股）→ 新起一行，并登记进桶与 id 索引
+    bucket.push(out.length);
+    if(xid) idIdx[xid]=out.length;
+    out.push(x);
   };
   (localArr||[]).forEach(_put);
   (cloudArr||[]).forEach(_put);
@@ -7381,7 +7485,9 @@ function applyCloudToData(snap, overwrite){
         o.income={records:mergeRecordsById(cloudInc, localInc, function(x){return x.id;})};
       }
     }
-    if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl); try{normalizeLegacyCashNames();}catch(_){} } // v44：云端落地的现金名也一并归一（防其他设备旧「美金」名复活）
+    if(o.accounts){DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));
+      try{ healHoldingDupes(DATA.accounts,'cloud-apply'); o.accounts=DATA.accounts; }catch(_){}   // v49：云端可能带着别的设备推上来的重复持仓，落地即去重，并写回快照防止再推回去
+      DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl); try{normalizeLegacyCashNames();}catch(_){} } // v44：云端落地的现金名也一并归一（防其他设备旧「美金」名复活）
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     o.transactions=sanitizeTxns(o.transactions,o.income);   // v44.2：剔除「收入记录本身」混入的重复交易，防删了又复活
     if(o.transactions)DATA.transactions=o.transactions;
@@ -7424,7 +7530,9 @@ function mergeAccountsForPush(localAcc, cloudAcc){
     } else out.push(a);
   });
   cloudAcc.forEach(function(a){ const k=a.id||a.name; if(!(k in seen) && !isAccountDeleted(k)) out.push(a); });
-  return purgeDeletedItems(out);   // 剔除已删子项目，避免云端版本把删除的现金/持仓并回
+  const res=purgeDeletedItems(out);   // 剔除已删子项目，避免云端版本把删除的现金/持仓并回
+  try{ healHoldingDupes(res,'push-snapshot'); }catch(e){}   // v49：推送前最后一道闸，重复持仓绝不上云
+  return res;
 }
 // 构造「推送到云端」的快照：把云端数据合并进本地，保证云端独有账户/流水/收入不被覆盖。
 // famdash_v1 走账户并集 + 流水/收入按 id 合并（云端优先、本地覆盖同名 → 本地改动不丢）；
@@ -7757,6 +7865,7 @@ if(DATA && DATA.income && Array.isArray(DATA.income)) DATA.income={records:DATA.
 if(DATA && DATA.income && !DATA.income.records) DATA.income.records=[];
 try{loadEditsLocal();}catch(e){console.error('loadEditsLocal:',e)}
 try{(DATA.accounts||[]).forEach(a=>normalizeAccount(a));}catch(e){console.error('normalizeAccount:',e)}
+  try{ if(window._fdDedupeDirty){ saveEditsLocal(); console.warn('[v49] 启动已清除重复持仓并落盘'); } }catch(e){}   // v49：去重结果必须落盘，否则下次推送又把重复带上云
   try{ if(normalizeLegacyCashNames()>0){ try{saveEditsLocal();}catch(e){} } }catch(e){console.error('normalizeLegacyCashNames:',e)}   // v44 启动自愈：历史「美金/港币/人民币」现金名归一成 USD/HKD/CNY
 try{showArchived=!!getSettings().showArchived;}catch(e){}
 try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
