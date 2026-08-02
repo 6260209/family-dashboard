@@ -2569,6 +2569,23 @@ function openAcct(aid){
   const delBtn=(sec,idx)=>`<button class="del" title="删除" onclick="delHolding('${aid}','${sec}',${idx})" aria-label="删除">×</button>`;
   const editBtn=(sec,idx)=>`<button class="edt" title="编辑" onclick="showAddForm('${aid}','${sec}',${idx})" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`;
   const addBtn=(sec)=>`<span class="addsec" onclick="showAddForm('${aid}','${sec}')">＋ 添加</span>`;
+  /* v47：合并显示行（cashMerged / secMerged）背后可能是多条原始记录，下标全在 rec._merged。
+     删除必须删掉整组（否则剩下的继续计钱，破坏「明细加总 = 账户总额」）；
+     编辑则必须拦住 —— 表单回填的是合计数量/金额，保存时按 schema 整体写回第一条记录，
+     会把合计值写成单条值、剩余记录原样保留，等于凭空造钱。宁可少算不可造钱，先拦截。 */
+  const _mgIdxs=(r)=>(r&&Array.isArray(r._merged)&&r._merged.length>1)?r._merged:null;
+  const delBtnOf=(sec,r,idx)=>{
+    const m=_mgIdxs(r);
+    return m
+      ? `<button class="del" title="删除（该行合并了 ${m.length} 条记录，将一并删除）" onclick="delHoldingMerged('${aid}','${sec}','${m.join(',')}')" aria-label="删除">×</button>`
+      : delBtn(sec,idx);
+  };
+  const editBtnOf=(sec,r,idx)=>{
+    const m=_mgIdxs(r);
+    return m
+      ? `<button class="edt" title="该行由 ${m.length} 条记录合并显示，整行编辑会造成金额重复，已禁用" onclick="toast('该行由 ${m.length} 条记录合并显示，无法整行编辑；请先删除后重新录入')" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`
+      : editBtn(sec,idx);
+  };
 
   // ===== 按子账户分类收集所有持仓（同币种现金、同标的证券合并显示） =====
   const catItems={}; // catName -> [{section, record, idx}]
@@ -2577,42 +2594,71 @@ function openAcct(aid){
     if(!catItems[cat]) catItems[cat]=[];
     catItems[cat].push({section:sec, record, idx});
   }
-  // 合并同币种现金（金额相加，编辑/删除指向第一条原始记录）
+  /* 合并现金（金额相加，编辑/删除作用于该组的全部原始记录）
+     v47：原实现只按币种分组、完全忽略名称 —— 「活期 CNY + 定期 CNY」会被并成一行，
+     而删除只摘掉第一条，剩下那条继续计钱，v47 刚建立的「明细加总 = 账户总额」等式
+     在用户第一次删合并行时当场破掉。改为按「币种 + 规范名」分组，与同步侧的合并键
+     cashHoldingKeyFn 完全同源（都走 cashNameCanon），禁止在渲染层另抄一份现金归并判据：
+     同一个桶在页面上是一行、在云端也是一条，删/改/同步三处口径一致。
+     「美金 → USD」这类改名仍被 cashNameCanon 折叠，不会因改名分裂成两行。 */
   const cashMerged=(function(){
     const arr=a.cash_holdings||[], map={};
     arr.forEach((c,i)=>{
-      const ccy=(c.currency||'CNY').toUpperCase();
-      if(!map[ccy]){ map[ccy]={rec:Object.assign({},c), idx:i, amount:0}; }
-      map[ccy].amount+=Number(c.amount||0);
-      map[ccy].rec._merged=(map[ccy].rec._merged||[]).concat(i);
+      const k=(typeof cashHoldingKeyFn==='function')
+        ? cashHoldingKeyFn(c)
+        : ('cash:'+String((c&&c.currency)||'CNY').toUpperCase()+':'+((c&&c.name)||''));
+      if(!map[k]){ map[k]={rec:Object.assign({},c), idx:i, amount:0}; }
+      map[k].amount+=Number(c.amount||0);
+      map[k].rec._merged=(map[k].rec._merged||[]).concat(i);
     });
     return Object.values(map).map(x=>{ x.rec.amount=+(x.amount.toFixed(2)); return {rec:x.rec, idx:x.idx}; });
   })();
-  // 合并同标的证券（数量相加，加权成本，编辑/删除指向第一条原始记录）
+  /* 合并同标的证券（数量相加，加权成本，编辑/删除指向第一条原始记录）
+     v47 两处修正，均为「显示口径」与「总额口径」对齐（详情页每一行都必须是看得见=算得到）：
+     ① 无 asset_name 的条目原先被 `if(!key) return` 静默丢弃 —— 这些条目在 a.holdings 里
+        是实打实计了钱的（yangxiaqin_za 三条共 619.30 USD ≈ ¥4,190），丢掉就是「算了钱却不显示」。
+        现改为退化成按下标的唯一键，让它照常出现在表里（名称列显示「(未命名)」）。
+     ② 原先无条件把 quantity/cost_price 写成合计数，把 null 强制成 0；而 _rowOf 的证券分支是
+        「qtyN 与 livePrice 都非 null 就用 qty×price」——null 被改成 0 后，市值恒等于 0×0=0，
+        再也走不到 secValRaw(r) 的存量市值兜底（yangxiaqin_binance QQQM 显示 $0、实则计了 1,111.9 USD）。
+        现保持 null 语义：整组都没数量时不写 quantity/cost_price。
+     ③ 市值合计原先只累加 market_value_cny，USD/HKD 计价的多条同标的合并后会漏计，一并补上。 */
   const secMerged=(function(){
     const arr=a.securities||[], map={};
     arr.forEach((s,i)=>{
-      const key=(s.asset_name||'').trim().toUpperCase();
-      if(!key) return;
-      if(!map[key]){ map[key]={rec:Object.assign({},s), idx:i, qty:0, costSum:0, mvSum:0}; }
+      const key=(s.asset_name||'').trim().toUpperCase() || ('\u0000noname'+i);
+      if(!map[key]){ map[key]={rec:Object.assign({},s), idx:i, qty:0, costSum:0, mvSum:0, mvUsd:0, mvHkd:0, hasQty:false}; }
       const q=Number(s.quantity||0), c=Number(s.cost_price||0);
+      if(s.quantity!=null && s.quantity!=='') map[key].hasQty=true;
       map[key].qty+=q;
       map[key].costSum+=q*c;
       map[key].mvSum+=Number(s.market_value_cny||0);
+      map[key].mvUsd+=Number(s.market_value_usd||0);
+      map[key].mvHkd+=Number(s.market_value_hkd||0);
       map[key].rec._merged=(map[key].rec._merged||[]).concat(i);
     });
     return Object.values(map).map(x=>{
-      x.rec.quantity=+(x.qty.toFixed(6));
-      x.rec.cost_price=x.qty?+(x.costSum/x.qty).toFixed(6):0;
+      if(x.hasQty){
+        x.rec.quantity=+(x.qty.toFixed(6));
+        x.rec.cost_price=x.qty?+(x.costSum/x.qty).toFixed(6):0;
+      }else{
+        x.rec.quantity=null; x.rec.cost_price=null;   // 保持 null，交给 secValRaw 用存量市值兜底
+      }
       x.rec.market_value_cny=+(x.mvSum.toFixed(2));
+      if(x.mvUsd) x.rec.market_value_usd=+(x.mvUsd.toFixed(2));
+      if(x.mvHkd) x.rec.market_value_hkd=+(x.mvHkd.toFixed(2));
       return {rec:x.rec, idx:x.idx};
     });
   })();
   secMerged.forEach(x=>_addCatItem('securities',x.rec,x.idx));
   (a.fund_holdings||[]).forEach((f,i)=>_addCatItem('fund_holdings',f,i));
   cashMerged.forEach(x=>_addCatItem('cash_holdings',x.rec,x.idx));
-  // 加密货币统一走 a.holdings（source==='crypto'），a.crypto 已在 syncHoldingsFromLegacy 中合并并清空
-  (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto')_addCatItem('holdings',h,i);});
+  /* 加密货币统一走 a.holdings（source==='crypto'），a.crypto 已在 syncHoldingsFromLegacy 中合并并清空。
+     v47：走现金路由的稳定币（USDT/USDC 在 holdings 与 cash_holdings 里孪生双写）必须跳过 ——
+     否则它既被 cashMerged 收进「现金」分类、又被这里收进来，同一笔钱在详情页显示两次
+     （yangxiaqin_binance 重复显示 ¥84,127.78），而总额侧 acctLiveTotalCny 早已按同一判据跳过。
+     判据直接复用 cashRouteOf，禁止在渲染层另抄一份「哪些算现金」的副本。 */
+  (a.holdings||[]).forEach((h,i)=>{if(h.source==='crypto' && cashRouteOf(a,h)!=='cash_holdings')_addCatItem('holdings',h,i);});
 
   // ===== 按子账户顺序渲染区块 =====
   const cats=getCategories();
@@ -2636,7 +2682,7 @@ function openAcct(aid){
     let type='',name='',proj='',qty='',cost='',price='',mv='',mvCny=0,pnl='',pnlCls='',pct='',pctCls='',ccy='',cat='',loc='',notes='',edt='',del='';
     if(sec==='securities'){
       ccy=r.currency||'CNY';
-      name=r.asset_name||''; qty=r.quantity||'';
+      name=r.asset_name||'(未命名)'; qty=r.quantity||'';   // v47：无名条目也要出现在表里，不能因没名字就不显示这笔钱
       const qtyN=(r.quantity!=null)?Number(r.quantity):null;
       const costN=(r.cost_price!=null)?Number(r.cost_price):null;
       // 实时行情覆盖：缓存有该证券实时价则用它重算 现价/市值/盈亏；否则回退存储价(r.price) → 成本价
@@ -2652,7 +2698,7 @@ function openAcct(aid){
       let pp=null; if(p!=null && costN!=null && qtyN!=null && (costN*qtyN)!==0) pp=(p/(costN*qtyN))*100;
       pct=(pp!=null)?((pp>=0?'+':'')+pp.toFixed(2)+'%'):''; pctCls=(pp!=null&&pp>=0)?'gn':'rd';
       proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
-      edt=editBtn('securities',it.idx); del=delBtn('securities',it.idx);
+      edt=editBtnOf('securities',r,it.idx); del=delBtnOf('securities',r,it.idx);
     } else if(sec==='fund_holdings'){
       ccy=r.currency||'CNY';
       name=r.name||''; qty='—'; cost='—'; price='—';
@@ -2673,7 +2719,7 @@ function openAcct(aid){
       pnl=fmtNative(p,ccy); pnlCls=p>=0?'gn':'rd';
       pct=(r.return_pct||0)+'%';
       proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
-      edt=editBtn('cash_holdings',it.idx); del=delBtn('cash_holdings',it.idx);
+      edt=editBtnOf('cash_holdings',r,it.idx); del=delBtnOf('cash_holdings',r,it.idx);
     } else if(sec==='crypto' || (sec==='holdings' && r.source==='crypto')){
       // 统一持仓模型下，crypto 已并入 a.holdings（source==='crypto'），字段：
       //   qty=数量, cost_price=成本价, price=单价(=总市值/数量), value=总市值(原生币种), pnl=盈亏, pnl_pct=收益率
@@ -3325,30 +3371,58 @@ function afterEdit(aid){
   openAcct(aid);
   toast('已更新 · 点"导出数据"可保存到文件');
 }
-function delHolding(aid,sec,idx){
-  const a=acct(aid);
-  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
+/* 删除一条持仓的「原子动作」：摘除本行 + 写墓碑 + 按共享 id 级联删除所有孪生。
+   不做 afterEdit / 不写日志，供 delHolding（单行）与 delHoldingMerged（合并行）复用，
+   保证两条入口的删除语义完全一致——禁止在两处各写一份删除判据。 */
+function _delHoldingOne(a, aid, sec, idx){
   const item=a[sec]&&a[sec][idx];
-  const name=item?(item.name||item.asset_name||item.product_id||`#${idx}`):`#${idx}`;
+  const name=item?(item.name||item.asset_name||item.product_id||('#'+idx)):('#'+idx);
   if(a[sec])a[sec].splice(idx,1);
   addDeletedItem(aid, sec, item);   // 记入子项目 tombstone，确保删除跨同步/重登录持久化
-  // 删除必须作用于「同一笔钱」而非「某数组的某一行」：cash_holdings 与 holdings 是孪生双写，
+  // 删除必须作用于「同一笔钱」而非「某数组的某一行」：明细数组与 holdings 是孪生双写，
   // 只删一边会留下幽灵（真源还在算）或黑洞（两头都不计）。按共享 id 级联，并各自写墓碑。
   // 历史事故：删 cash_holdings 的 USDC 后，墓碑键 aid::cash:USDC:USDC 与真源键 holdings:USDC
   // 不相等 → 真源不删、现金桶被墓碑挡住不重建，该笔钱两头都不计（787.16 元凭空蒸发）。
+  /* v47：原实现的 twinSec 三元只覆盖 cash_holdings ↔ holdings，securities / fund_holdings
+     全部落到 null —— 证券/基金删除根本没有孪生级联。本地靠 syncHoldingsFromLegacy 重建掩盖，
+     一过云端并集就现形（幽灵仍在 holdings 里计钱）。更要命的是 v47 新增的 healDetailHoldings ②
+     会照着幸存的 holdings 幽灵把明细行重建出来，等于把用户删掉的资产复活。
+     改为：按共享 id 在其余所有数组里级联。用 id 匹配而非名字匹配，零误杀。 */
   try{
-    const twinSec = (sec==='cash_holdings') ? 'holdings' : (sec==='holdings' ? 'cash_holdings' : null);
-    if(twinSec && item && item.id && a[twinSec]){
-      for(let i=a[twinSec].length-1;i>=0;i--){
-        if(a[twinSec][i] && a[twinSec][i].id===item.id){
-          addDeletedItem(aid, twinSec, a[twinSec][i]);
-          a[twinSec].splice(i,1);
+    if(item && item.id){
+      ['holdings','cash_holdings','securities','fund_holdings'].forEach(function(ts){
+        if(ts===sec || !a[ts]) return;
+        for(let i=a[ts].length-1;i>=0;i--){
+          if(a[ts][i] && a[ts][i].id===item.id){
+            addDeletedItem(aid, ts, a[ts][i]);
+            a[ts].splice(i,1);
+          }
         }
-      }
+      });
     }
   }catch(e){}
+  return name;
+}
+function delHolding(aid,sec,idx){
+  const a=acct(aid);
+  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
+  const name=_delHoldingOne(a, aid, sec, idx);
   afterEdit(aid);
   logActivity('删除'+ (labelMap[sec]||sec), `${acctName(aid)} · ${name}`);
+}
+/* v47：详情页的现金/证券行是「合并显示」的（cashMerged / secMerged），一行背后可能对应
+   多条原始记录（下标存在 rec._merged 里）。原先删除按钮只传合并组的第一个下标，
+   删一次只删掉其中一条，剩下的继续计钱 —— 用户第一次删合并行，v47 刚建立的
+   「明细加总 = 账户总额」等式就当场破掉。这里按 _merged 全量倒序删除，逐条写墓碑。 */
+function delHoldingMerged(aid,sec,idxsStr){
+  const a=acct(aid); if(!a)return;
+  const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
+  const idxs=String(idxsStr||'').split(',').map(Number).filter(function(n){return !isNaN(n);})
+    .sort(function(x,y){return y-x;});   // 必须倒序，否则 splice 会让后面的下标全部错位
+  let name='';
+  idxs.forEach(function(i,k){ const n=_delHoldingOne(a, aid, sec, i); if(!k) name=n; });
+  afterEdit(aid);
+  logActivity('删除'+ (labelMap[sec]||sec), `${acctName(aid)} · ${name}（合并行，共 ${idxs.length} 条）`);
 }
 function showAddForm(aid,sec,idx,presetCat,preMappedVals){
   let sc=SEC_SCHEMA[sec];if(!sc)return;
@@ -3624,7 +3698,20 @@ function addHolding(aid,sec,vals,idx){
     normCryptoPnl(o); }
   // 空字符串的可选字段不存（保持数据干净）
   ['currency','project','asset_category','location','notes'].forEach(k=>{if(o[k]==='')delete o[k];});
-  if(isEdit){a[sec][idx]=o;}else{a[sec].push(o);}
+  /* v47 根因修复：编辑走的是「按 schema 重建整个对象再整体替换」，而 SEC_SCHEMA 里
+     根本没有 id 字段 —— 于是每编辑一次证券/基金，该条目的 id 就被抹掉一次。
+     后果链：id 丢失 → 下次同步 holdingKeyFn 取不到 id（证券记录用 asset_name，不是 name/symbol，
+     所以键退化成 '|USD'）→ 与云端原件不同键 → unionHoldings 判为两条不同持仓「双留」→
+     详情页 secMerged 按标的名合并显示成双倍数量，而总额只认 a.holdings 里的原件。
+     实测三笔（futu QQQM / binance QQQM / usmart_sg QQQI）合计虚增显示 ¥133,169。
+     修法：id 等「schema 管不到的身份字段」在编辑时必须原样带过去。
+     只补 o 里没有的键，不动 L3626 主动删除的可选字段（否则清空备注会失效）。 */
+  if(isEdit){
+    ['id','cat_id','_credits','_manual_base'].forEach(k=>{
+      if(o[k]===undefined && oldItem && oldItem[k]!==undefined) o[k]=oldItem[k];
+    });
+    a[sec][idx]=o;
+  }else{a[sec].push(o);}
   afterEdit(aid);
   // 详细日志
   const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
@@ -5245,7 +5332,171 @@ let _healNoSave=false;
    合并结果不会再被重算。历史事故：云端残留一条「断链转账自动建出的 CNY 20,000 现金桶」，
    本地推导净额已修正为 0，但因为云端数据是在自愈之后才落地的，那 20,000 一直挂在账上，
    全站总资产虚增 2 万，且刷新多少次都不消失。 */
+/* v47 明细数组 ↔ holdings 对账自愈（幂等，必须能反复跑）。
+   为什么非做不可：详情页渲染读 a.securities / a.fund_holdings，总额 acctLiveTotalCny 读 a.holdings，
+   两边是「孪生双写」但云端数据落地时没有任何对账 —— syncHoldingsFromLegacy 只在本地编辑后才跑。
+   于是云端脏数据一旦漂移，就会出现「显示了却不算钱」和「算了钱却不显示」。
+   更要命的是这两种漂移都是【地雷】：下一次用户随便编辑一下该账户，afterEdit → syncHoldingsFromLegacy
+   会按明细数组整体重建 holdings，届时
+     · 明细多出来的（无 id 副本）会被塞进 holdings → 总额凭空暴涨（实测三笔共 ¥133,169）；
+     · holdings 多出来的（明细里没有的）会被直接删掉 → 这笔钱凭空蒸发（实测两处共 ¥22,755）。
+   所以必须在数据落地时就把两边对齐，把地雷拆掉，而不是只在渲染层遮一下。
+   本函数只做「对齐」，不做「估值」：金额一律沿用 holdings 里的既有真值，不重新折算。 */
+/* v47 验收硬要求：采纳「无 id 副本」的数量之前，必须在活动日志里找到对应的
+   「数量 X→Y」编辑记录（addHolding 编辑分支会写）。找不到凭证的一律回退到带 id 的原件值。
+   宁可少算不可造钱 —— 自愈只允许消除重复，不允许凭空把数量改大。 */
+function _hasQtyEditEvidence(aid, name, qty){
+  if(qty==null||qty==='') return false;
+  try{
+    const logs=JSON.parse(localStorage.getItem('famdash_activity_log')||'[]');
+    const an=acctName(aid)||'', nm=String(name||'').trim().toUpperCase(), q=String(Number(qty));
+    return logs.some(function(l){
+      const d=String((l&&(l.detail||l.text))||'');
+      if(nm && d.toUpperCase().indexOf(nm)<0) return false;
+      if(an && d.indexOf(an)<0) return false;
+      const m=d.match(/数量\s*([\d.]+)\s*→\s*([\d.]+)/);
+      return !!(m && String(Number(m[2]))===q);
+    });
+  }catch(e){ return false; }
+}
+// 该 id 是否已经在任意明细数组里「看得见」（跨数组查，不限于 source 指向的那一个）
+function _idVisibleInDetails(a, id, name){
+  if(!id) return false;
+  const nm = name ? String(name).trim().toUpperCase() : null;
+  return ['securities','fund_holdings','cash_holdings'].some(function(k){
+    return (a[k]||[]).some(function(x){
+      if(!x || x.id !== id) return false;
+      // id 不是唯一身份：基金区可能存在「同 id 但异名」的合法记录（撞 id），
+      // 不能因撞 id 就把同 id 的幽灵误判为可见而跳过清理。名字一起对上才算看得见。
+      if(nm && x.name !== undefined && String(x.name || '').trim().toUpperCase() !== nm) return false;
+      return true;
+    });
+  });
+}
+function healDetailHoldings(){
+  let changed=0; const notes=[];
+  (DATA.accounts||[]).forEach(a=>{
+    if(!a || !Array.isArray(a.holdings) || !a.holdings.length) return; // 无统一持仓的老账户交给 syncHoldingsFromLegacy
+    const byId={}; a.holdings.forEach(h=>{ if(h && h.id) byId[h.id]=h; });
+
+    /* ① 明细里「没有 id」的证券条目 —— addHolding 编辑时抹掉 id 造成的副本（已在 v47 修根因）。
+       指纹：同账户存在同标的、同币种、同现价、同成本价的带 id 兄弟，且该兄弟在 holdings 里有真源。
+       这种副本是用户最后一次编辑的结果，数量以副本为准合并回原件，然后删掉副本。 */
+    const secs=a.securities||[];
+    for(let i=secs.length-1;i>=0;i--){
+      const s=secs[i]; if(!s || s.id) continue;
+      const nm=(s.asset_name||'').trim().toUpperCase();
+      const sib=nm?secs.find(x=>x&&x.id&&(x.asset_name||'').trim().toUpperCase()===nm
+        && String(x.currency||'')===String(s.currency||'')
+        && Number(x.price||0)===Number(s.price||0)
+        && Number(x.cost_price||0)===Number(s.cost_price||0)):null;
+      if(sib && byId[sib.id]){
+        const h=byId[sib.id], oldQty=sib.quantity;
+        /* 副本一定要删（它是 id 被抹掉后同步双留出来的重复行），
+           但「是否采纳副本的数量」必须有据：只有活动日志里存在对应的
+           「数量 oldQty→s.quantity」编辑记录，才说明这是用户真实改过的值。
+           查无凭证 → 只删重复、保留原件数量，绝不把数量改大。 */
+        const adopt=_hasQtyEditEvidence(a.id, s.asset_name, s.quantity);
+        if(adopt){
+          sib.quantity=s.quantity;
+          if(s.market_value_cny!=null) sib.market_value_cny=s.market_value_cny;
+          if(s.market_value_usd!=null) sib.market_value_usd=s.market_value_usd;
+          if(s.market_value_hkd!=null) sib.market_value_hkd=s.market_value_hkd;
+          h.qty=s.quantity;
+          h.value=_fwdVal(sib, sib.currency||'CNY');
+        }
+        secs.splice(i,1);
+        changed++;
+        notes.push(acctName(a.id)+'·'+(s.asset_name||'')+(adopt
+          ? ' 合并重复副本(有编辑凭证，数量 '+oldQty+'→'+s.quantity+')'
+          : ' 删除重复副本(无编辑凭证，保留原件数量 '+oldQty+'，未采纳副本 '+s.quantity+')'));
+      }else{
+        // 不是副本：补 id 并建 holdings 孪生，让这笔「看得见的钱」进总额
+        const nid=genHid(); s.id=nid;
+        const ccy=s.currency||'CNY';
+        a.holdings.push({id:nid,source:'sec',name:s.asset_name||'',code:s.code||'',qty:s.quantity,
+          cost_price:s.cost_price,price:s.price,value:_fwdVal(s,ccy),pnl:s.pnl_amount,
+          cat:s.asset_category||marketToCat(s.market)||'美股',cat_id:s.cat_id||'',ccy:ccy,currency:ccy,
+          holder:a.holder,location:s.location||'',project:s.project||'',market:s.market||'',asset_type:s.asset_type||''});
+        byId[nid]=a.holdings[a.holdings.length-1];
+        changed++; notes.push(acctName(a.id)+'·'+(s.asset_name||'')+' 补建持仓真源');
+      }
+    }
+
+    /* ② holdings 里有、明细数组里没有的条目 —— 计了钱却在详情页看不见。
+       补一条明细记录让它现形；金额字段直接照抄 holdings 的真值，保证显示=计算。 */
+    for(let hi=a.holdings.length-1; hi>=0; hi--){
+      const h=a.holdings[hi];
+      if(!h || !h.id) continue;
+      const ccy=h.ccy||h.currency||'CNY';
+      const tsec=(h.source==='sec') ? 'securities'
+                :((h.source==='fund'||h.source==='struct') ? 'fund_holdings' : null);
+      if(!tsec) continue;   // crypto / cash 各有既有链路（cashRouteOf / recomputeCashAccount），此处不碰
+      /* 定向墓碑回查：只在清理 holdings 时做，并严格按 h.source 定向到对应的 sec 墓碑。
+         反向（清 securities 时回查 holdings 墓碑）禁止；也不做跨类对称匹配 ——
+         否则 securities:VGT 会误命中 fund_holdings 里的 VGT（用户同时持证券版与基金版被连坐）。
+         命中墓碑说明用户删过这笔资产，此处应当删掉幸存的 holdings 幽灵，而不是把它复活。
+
+         【顺序铁律】本段必须排在 _idVisibleInDetails 与补建分支【之前】。
+         历史顺序（先查可见性、再查墓碑）有致命竞态，实测钉死：
+         启动期自愈（L7714）跑在云端墓碑到达之前，那一轮墓碑还没落地，
+         幽灵被判成「holdings 有、明细缺」→ 补建出一条明细行；
+         等墓碑到齐后再跑，_idVisibleInDetails 因为那条【自己补出来的】行返回 true，
+         直接 continue，墓碑分支永远走不到 —— 清理永远追不上补建
+         （实测 alipay h-hvtbnw7 广发纳指C 即走此路径：云端快照基金区本无此 id，
+         页面里却出现了，正是补建产物）。顺序颠倒后，命中墓碑就先删，绝不进入补建。 */
+      const probe={id:h.id, asset_name:h.name||'', name:h.name||'', symbol:h.code||'', code:h.code||'', currency:ccy};
+      if(typeof isItemDeleted==='function' && isItemDeleted(a.id, tsec, probe)){
+        a.holdings.splice(hi,1);
+        /* 连带清掉此前轮次可能已补建出来的同 id 明细行：
+           否则真源删了、补建行还留在详情页，变成「显示但不计数」的反向分裂。
+           两道收窄，防止误杀用户真数据：
+           ① 只在定向的 tsec 数组里清（不扫全部四个数组）—— 跨类的同名真持仓不受牵连，
+              与「禁止跨类对称匹配」同一条纪律贯穿到底；
+           ② 只按 id 精确匹配（不按名字）—— 同名异物不连坐。
+           注：能走到这里说明该 id 命中了 tsec 墓碑，而 purgeDeletedItems 已按同一
+           key 清过 tsec，故此处残留的同 id 行只可能是本函数自己补建出来的产物。 */
+        if(Array.isArray(a[tsec])){
+          for(let k=a[tsec].length-1;k>=0;k--){ if(a[tsec][k] && a[tsec][k].id===h.id) a[tsec].splice(k,1); }
+        }
+        changed++; notes.push(acctName(a.id)+'·'+(h.name||h.id)+' 命中删除墓碑，清除残留持仓幽灵');
+        continue;
+      }
+      /* 必须跨数组查 id：明细行未必落在 source 指向的那个数组里。
+         实测 yangxiaqin_binance 的 QQQM（id h-bdmy7eu，source='fund'）明细其实在 securities 里，
+         只按 fund_holdings 查会判定「缺失」而补一条，于是 QQQM 在详情页被显示两次
+         （美股小计 ¥15,914 = 2×¥7,957），总额却只算一次 → 反而制造出 ¥7,958 的新分裂。
+         只要这笔钱在任意明细数组里看得见，就已满足「显示 = 计算」，不再补。 */
+      if(_idVisibleInDetails(a, h.id)) continue;
+      if(tsec==='securities'){
+        a.securities=a.securities||[];
+        const rec={id:h.id,asset_name:h.name||'',code:h.code||'',market:h.market||'',currency:ccy,
+          quantity:h.qty,price:h.price,cost_price:h.cost_price,asset_category:h.cat||'',
+          cat_id:h.cat_id||'',location:h.location||'',project:h.project||'',notes:''};
+        const nat=Number(h.value||0);   // 无 qty/price 时靠 secValRaw 读市值字段兜底，按币种回填
+        if(ccy==='HKD') rec.market_value_hkd=nat;
+        else if(ccy==='USD'||ccy==='USDT'||ccy==='USDC') rec.market_value_usd=nat;
+        else rec.market_value_cny=nat;
+        a.securities.push(rec);
+        changed++; notes.push(acctName(a.id)+'·'+(h.name||h.id)+' 补建证券明细');
+      }else{
+        a.fund_holdings=a.fund_holdings||[];
+        a.fund_holdings.push({id:h.id,name:h.name||'',code:h.code||'',currency:ccy,
+          amount:Number(h.value||0),profit:(h.pnl==null||h.pnl==='')?0:Number(h.pnl),
+          asset_category:h.cat||'基金',cat_id:h.cat_id||'',location:h.location||'',
+          project:h.project||'',notes:''});
+        changed++; notes.push(acctName(a.id)+'·'+(h.name||h.id)+' 补建基金明细');
+      }
+    }
+  });
+  if(changed && !_healNoSave){
+    try{ logActivity('明细/持仓对账自愈', notes.join('; ')); }catch(e){}
+    try{ saveEditsLocal(); }catch(e){}
+  }
+  return changed;
+}
 function healCashDerived(){
+  try{ healDetailHoldings(); }catch(e){ console.error('healDetailHoldings:',e); }
   try{ autoCreditMissingIncomes(); }catch(e){ console.error('autoCreditMissingIncomes:',e); }
   try{ pruneForeignIncomeHooks(); }catch(e){ console.error('pruneForeignIncomeHooks:',e); }
   try{ recomputeCashAll(); }catch(e){ console.error('recomputeCashAll:',e); }
@@ -5757,6 +6008,12 @@ function getGoals(){try{return JSON.parse(localStorage.getItem(GOALS_KEY))||{};}
 function saveGoals(g){try{localStorage.setItem(GOALS_KEY,JSON.stringify(g));setSyncMeta(GOALS_KEY,Date.now());}catch(e){}}
 function renderGoal(){
   const el=document.getElementById('goal-content'); if(!el)return;
+  /* R1（v47 裁决③，防御性守卫）：目标卡只在 mine tab 渲染，但 renderGoal 在切 tab 与启动期都会被
+     调用。若元素当前不可见（mine 未激活）也不处于焦点，则跳过本次重渲染——
+     避免不可见时读到的中间态 DATA.total 被写进卡片、等用户切到 mine 看到旧数。
+     注意：DATA.total 在 startApp 的 recomputePortfolio（L7721）已按加载期自愈后的值刷新，
+     此处守卫仅作时序兜底，不引入任何第二数据源——cur 仍取 DATA.total.cny 单一真值。 */
+  if(el.offsetParent===null && document.activeElement!==el && !el.contains(document.activeElement)) return;
   const g=getGoals();const target=Number(g.target)||0;const cur=DATA.total.cny||0;
   const pct=target>0?Math.min(100,Math.round(cur/target*100)):0;
   const miles=(g.milestones||[]);
@@ -5899,7 +6156,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-01-v46';
+const APP_VERSION='2026-08-01-v47';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6995,21 +7252,31 @@ function mergeCashEntry(win, lose, aid){ return reconcileSameEntry(win, lose, ai
 function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
   keyFn=keyFn||function(x){return (x.symbol||x.name||x.id||'');};
   const idx={}; const out=[];
-  (localArr||[]).forEach(function(x){
+  /* v47：mergeFn 返回 null 的语义是「两条其实不是同一笔，双留，让上层保留先到者」
+     （见 mergeHoldingEntry 注释）。原实现直接 out[idx[k]]=null，把先到者也抹成 null，
+     意图「两条都留」实现成「两条都没了」，还在数组里留下 null 洞，
+     下游 secMerged 的 (s.asset_name||'') / normalizeSecurityMv 会直接 TypeError。
+     改为：能合并就写回；返回 null 时保留先到者不动，后到者另起一行追加。 */
+  const _put=function(x){
     const k=keyFn(x);
-    if(!(k in idx)){ idx[k]=out.length; out.push(x); }
-    else if(mergeFn){ out[idx[k]]=mergeFn(out[idx[k]], x); }
-  });
-  (cloudArr||[]).forEach(function(x){
-    const k=keyFn(x);
-    if(!(k in idx)){ idx[k]=out.length; out.push(x); }
-    else if(mergeFn){ out[idx[k]]=mergeFn(out[idx[k]], x); }
-  });
+    if(!(k in idx)){ idx[k]=out.length; out.push(x); return; }
+    if(!mergeFn) return;
+    const m=mergeFn(out[idx[k]], x);
+    if(m) out[idx[k]]=m; else out.push(x);
+  };
+  (localArr||[]).forEach(_put);
+  (cloudArr||[]).forEach(_put);
   return out;
 }
 /* #3：旧键只有名字，没有币种段 —— 同名不同币（如港币计价与美元计价的同名标的）
    在同步合并时互相挤掉，一方静默消失。加币种段并做 trim/大写归一。 */
-function holdingKeyFn(x){ return String((x.symbol||x.name||x.id||'')).trim().toUpperCase()+'|'+String((x&&(x.currency||x.ccy))||'').toUpperCase(); }
+/* v47：补 asset_name。证券明细记录的标的字段名是 asset_name（不是 name/symbol），
+   原实现取不到 → 回退到 id。配合 L3656 的「编辑保 id」修复会出事：
+   本地证券恢复了 id → 键变 'H-ABC|USD'，而云端存量副本仍无 id、键仍是 '|USD' →
+   两键不等 → unionHoldings 判为两条不同持仓双双保留 → 本地刚合并掉的重复，
+   首次推送就被并集原样写回云端，重复被固化。加上 asset_name 后，同一只证券
+   不论哪端有没有 id，键恒为 'QQQI|USD'，本地/云端一致，转换期不产生重复。 */
+function holdingKeyFn(x){ return String((x.symbol||x.name||x.asset_name||x.id||'')).trim().toUpperCase()+'|'+String((x&&(x.currency||x.ccy))||'').toUpperCase(); }
 /* v44：现金条目改用「币种 + 规范名」做合并键。
    旧实现用 name 当键，一旦某台设备把「美金」改名成「USD」，另一台仍叫「美金」的记录
    同步过来就会被当成另一条现金并入 → 同币种出现两条、账户现金凭空翻倍。
@@ -7394,6 +7661,17 @@ function syncPullOnLoad(){
         // 墓碑写入后立即清理内存中的脏数据，并标记需要重渲染
         if(DATA.accounts && DATA.accounts.length){
           DATA.accounts=purgeDeletedAccounts(purgeDeletedItems(DATA.accounts));
+          /* v47：purgeDeletedItems 是「按数组各自键空间」清理的 —— 删证券写的墓碑是
+             securities:VGT，而孪生 holdings 条目的键是 holdings:VGT，永远不命中，
+             于是明细行被清、holdings 真源留存 → 计进总额却在详情页看不见（实测
+             xiejunchen_usmart_hk VGT -7,644.33、xiejunchen_alipay 广发纳指C+易方达标普C
+             -15,111.00）。启动期 L7714 的自愈跑在云端墓碑到达之前，那时明细还在、无事可做；
+             等墓碑随本次拉取落地并 purge 之后，若 _syncShouldApply 为假就走下面的 else 分支，
+             只重渲染、再也不自愈，幽灵就永久留在总额里。
+             此处补跑一次收口自愈：判据仍只有 healDetailHoldings 分支②那一处（按 h.source
+             定向回查对应墓碑），不在本处复制任何业务判断，只是把它放到墓碑状态变更之后执行。
+             幂等：数据干净时 changed=0，不落盘、不推送。 */
+          try{ healCashDerived(); }catch(e){ console.warn('syncPullOnLoad heal after purge', e); }
         }
       }
       if(res.snap && _syncShouldApply(res.snap)){
