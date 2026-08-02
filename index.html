@@ -5320,6 +5320,11 @@ function txDerivedNet(aid, ccy){
   });
   return net;
 }
+function holdingsCashValue(aid, ccy){
+  const a=DATA.accounts.find(x=>x.id===aid); if(!a||!Array.isArray(a.holdings)) return null;
+  const h=a.holdings.find(x=>(x.source==='cash'||x.cat==='现金') && (x.currency||x.ccy||'').toUpperCase()===(ccy||'').toUpperCase());
+  return h!=null?Number(h.value||0):null;
+}
 function recomputeCashAccount(aid){
   const a=DATA.accounts.find(x=>x.id===aid); if(!a) return;
   a.cash_holdings=a.cash_holdings||[];
@@ -5332,13 +5337,17 @@ function recomputeCashAccount(aid){
       ch._manual_base=+(Number(ch.amount||0)-incSum-net).toFixed(2);
     } else {
       // v51 自愈：仅当 _manual_base 为明显异常的巨大负值（旧版本遗留脏值，如富途 HKD 的 -79690、
-      // USD 的 -27193.6）时才丢弃并依「归一化后的当前金额(来自统一持仓 holdings 真值)」重算。
-      // 正常账户本金为正、且金额已由 _manual_base+净额+收入钩子自洽，绝不误伤收入加成。
-      // 否则脏 _manual_base 会覆盖正常归一化结果，造成"改了余额却数值没有变"的回滚 bug。
+      // USD 的 -27193.6）且其推导金额与「统一持仓 holdings 真值」不符时，丢弃并依 holdings 真值重算。
+      // 正常账户本金为正、金额已由 _manual_base+净额+收入钩子自洽，绝不误伤收入加成。
+      // 否则脏 _manual_base 会覆盖归一化结果，造成"改了余额却数值没有变"的回滚 bug。
       const _proj=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
-      if(ch._manual_base < -10000 && Math.abs(_proj-Number(ch.amount||0))>0.01){
+      const held=holdingsCashValue(aid, ccy);
+      const _bad = ch._manual_base < -10000 && (held!=null ? Math.abs(_proj-held)>0.01 : Math.abs(_proj-Number(ch.amount||0))>0.01);
+      if(_bad){
         delete ch._manual_base;
-        ch._manual_base=+(Number(ch.amount||0)-incSum-net).toFixed(2);
+        const target=(held!=null)?held:Number(ch.amount||0);
+        ch.amount=+target.toFixed(2);
+        ch._manual_base=+(ch.amount-incSum-net).toFixed(2);
       }
     }
     ch.amount=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
