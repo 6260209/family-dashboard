@@ -2310,8 +2310,8 @@ function syncHoldingsFromLegacy(a){
   (a.holdings||[]).forEach(h=>{ if(h&&h.id) prevMap[h.id]={value:Number(h.value||0),pnl:(h.pnl==null?'':h.pnl)}; });
   const pv=(id,fbVal,fbPnl)=>{const p=id&&prevMap[id];return p?{value:p.value,pnl:p.pnl}:{value:fbVal,pnl:fbPnl};};
   (a.securities||[]).forEach(t=>{const ccy=t.currency||'CNY';const f=pv(t.id,_fwdVal(t,ccy),t.pnl_amount);H.push({id:t.id||genHid(),name:t.asset_name,code:t.code,qty:t.quantity,cost_price:t.cost_price,price:t.price,value:f.value,pnl:f.pnl,cat:t.asset_category||marketToCat(t.market)||'美股',cat_id:t.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:t.location||'',project:t.project||'',source:'sec',market:t.market||'',asset_type:t.asset_type||''});});
-  (a.fund_holdings||[]).forEach(f=>{const ccy=f.currency||'CNY';const v=Number(f.amount||0);const f2=pv(f.id,v,f.profit);H.push({id:f.id||genHid(),name:f.name,code:f.code,qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:f.asset_category||'基金',cat_id:f.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:f.location||'',project:f.project||'',source:'fund',market:'',asset_type:''});});
-  (a.cash_holdings||[]).forEach(c=>{const ccy=c.currency||'CNY';const v=Number(c.amount||0);const f2=pv(c.id,v,c.profit);H.push({id:c.id||genHid(),name:c.name,code:'',qty:null,cost_price:null,price:null,value:f2.value,pnl:f2.pnl,cat:c.asset_category||'现金',cat_id:c.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:c.location||'',project:c.project||'',source:'cash',market:'',asset_type:c.type||''});});
+  (a.fund_holdings||[]).forEach(f=>{const ccy=f.currency||'CNY';const v=Number(f.amount||0);const f2=pv(f.id,v,f.profit);H.push({id:f.id||genHid(),name:f.name,code:f.code,qty:null,cost_price:null,price:null,value:v,pnl:f2.pnl,cat:f.asset_category||'基金',cat_id:f.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:f.location||'',project:f.project||'',source:'fund',market:'',asset_type:''});});
+  (a.cash_holdings||[]).forEach(c=>{const ccy=c.currency||'CNY';const v=Number(c.amount||0);const f2=pv(c.id,v,c.profit);H.push({id:c.id||genHid(),name:c.name,code:'',qty:null,cost_price:null,price:null,value:v,pnl:f2.pnl,cat:c.asset_category||'现金',cat_id:c.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:c.location||'',project:c.project||'',source:'cash',market:'',asset_type:c.type||''});});
   (a.crypto||[]).forEach(x=>{
     const ccy=x.currency||'USD';
     // value_usdt 在旧数据中表示该加密货币的【总市值】（数量 × 现价），不是单价
@@ -3716,6 +3716,8 @@ function addHolding(aid,sec,vals,idx){
     ['id','cat_id','_credits','_manual_base'].forEach(k=>{
       if(o[k]===undefined && oldItem && oldItem[k]!==undefined) o[k]=oldItem[k];
     });
+    // 现金/固收金额被手动修改时，清除 _manual_base 让 recomputeCashAccount 按新金额自洽重算
+    if(sec==='cash_holdings' && oldItem && oldItem.amount!==o.amount) delete o._manual_base;
     a[sec][idx]=o;
   }else{a[sec].push(o);}
   afterEdit(aid);
@@ -3868,6 +3870,9 @@ function editCashInline(aid,idx){
 function saveCashInline(aid,idx){
   const a=acct(aid); const c=a.cash_holdings[idx]; if(!c)return;
   c.amount=Number(document.getElementById('cash-amt-'+idx).value)||0;
+  // 手动修改现金金额后，让 recomputeCashAccount 按新金额重新提取 _manual_base，
+  // 避免旧 _manual_base 把金额覆盖回去。
+  delete c._manual_base;
   c.currency=document.getElementById('cash-ccy-'+idx).value||c.currency||'CNY';
   c.ccy=c.currency;
   c.type=document.getElementById('cash-type-'+idx).value||c.type||'现金';
@@ -6186,7 +6191,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v49';
+const APP_VERSION='2026-08-02-v50';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
