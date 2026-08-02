@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v53';
+const APP_VERSION='2026-08-02-v54';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7578,9 +7578,31 @@ function _b64encode(str){return btoa(unescape(encodeURIComponent(str)));}
 function _b64decode(b64){return decodeURIComponent(escape(atob(b64.replace(/\s/g,''))));}
 // 把一个同步快照里的 famdash_v1 还原成对象
 function snapV1(snap){ const e=snap&&snap.keys&&snap.keys.famdash_v1; if(!e)return null; const v=(e&&e.value!=null)?e.value:e; return (typeof v==='string')?JSON.parse(v):v; }
-// 推送前合并云端账户：本地优先，但保留云端独有账户；匹配账户的持仓/子账户做并集，避免云端持仓被整体覆盖。
-function mergeAccountsForPush(localAcc, cloudAcc){
+// 推送前合并云端账户：默认本地优先，但保留云端独有账户；匹配账户的持仓/子账户做并集，避免云端持仓被整体覆盖。
+// 当 cloudWins=true（云端时间戳比本地修改时间更新）时，云端账户整体优先，本地仅补充「云端没有的账户」，
+// 防止旧设备/旧基线把已修复的云端数值又覆盖回去。
+function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
   localAcc=localAcc||[]; cloudAcc=cloudAcc||[];
+  if(cloudWins){
+    const lMap={}; localAcc.forEach(function(a){lMap[a.id||a.name]=a;});
+    const out=[]; const seen={};
+    cloudAcc.forEach(function(a){
+      const k=a.id||a.name; if(k)seen[k]=true;
+      const la=lMap[k];
+      if(la){
+        const m=Object.assign({},a);
+        ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
+          // 云端在前：同一条目以云端为准，本地仅补充云端没有的字段/条目
+          m[key]=unionHoldings(a[key]||[], la[key]||[], holdingKeyFor(key), holdingMergeFor(key));
+        });
+        out.push(m);
+      } else out.push(a);
+    });
+    localAcc.forEach(function(a){ const k=a.id||a.name; if(!(k in seen) && !isAccountDeleted(k)) out.push(a); });
+    const res=purgeDeletedItems(out);
+    try{ healHoldingDupes(res,'push-snapshot-cloud-wins'); }catch(e){}
+    return res;
+  }
   const cMap={}; cloudAcc.forEach(function(a){cMap[a.id||a.name]=a;});
   const out=[]; const seen={};
   localAcc.forEach(function(a){
@@ -7604,8 +7626,15 @@ function mergeAccountsForPush(localAcc, cloudAcc){
 // 其余同步键按 updatedAt 取较新一方，避免把云端更新的设置/持有人等回退成旧值。
 function buildPushSnapshot(localSnap, cloudSnap){
   const lv1=snapV1(localSnap)||{}; const cv1=snapV1(cloudSnap)||{};
+  // 判断本次合并是否应以云端为准：云端 sync 时间比本地任何未推送修改都新时，避免旧本地覆盖新云端。
+  let cloudWins=false;
+  try{
+    const cloudT=new Date(cloudSnap.syncedAt).getTime()||0;
+    const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
+    cloudWins=cloudT>0 && cloudT>localMod;
+  }catch(e){}
   const mergedV1={
-    accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts),
+    accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts, cloudWins),
     transactions: mergeRecordsById(cv1.transactions||[], lv1.transactions||[], function(x){return x.id;}, true),
     income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;}, true)}
   };
