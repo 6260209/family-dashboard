@@ -6156,7 +6156,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-01-v47';
+const APP_VERSION='2026-08-02-v48';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7258,6 +7258,7 @@ function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
      下游 secMerged 的 (s.asset_name||'') / normalizeSecurityMv 会直接 TypeError。
      改为：能合并就写回；返回 null 时保留先到者不动，后到者另起一行追加。 */
   const _put=function(x){
+    if(!x) return;  // v48：跳过数组里的 null 洞（v46 脏数据遗留），否则 keyFn(x) 崩 TypeError
     const k=keyFn(x);
     if(!(k in idx)){ idx[k]=out.length; out.push(x); return; }
     if(!mergeFn) return;
@@ -7276,13 +7277,13 @@ function unionHoldings(localArr, cloudArr, keyFn, mergeFn){
    两键不等 → unionHoldings 判为两条不同持仓双双保留 → 本地刚合并掉的重复，
    首次推送就被并集原样写回云端，重复被固化。加上 asset_name 后，同一只证券
    不论哪端有没有 id，键恒为 'QQQI|USD'，本地/云端一致，转换期不产生重复。 */
-function holdingKeyFn(x){ return String((x.symbol||x.name||x.asset_name||x.id||'')).trim().toUpperCase()+'|'+String((x&&(x.currency||x.ccy))||'').toUpperCase(); }
+function holdingKeyFn(x){ if(!x||typeof x!=='object') return ''; return String((x.symbol||x.name||x.asset_name||x.id||'')).trim().toUpperCase()+'|'+String((x.currency||x.ccy)||'').toUpperCase(); }
 /* v44：现金条目改用「币种 + 规范名」做合并键。
    旧实现用 name 当键，一旦某台设备把「美金」改名成「USD」，另一台仍叫「美金」的记录
    同步过来就会被当成另一条现金并入 → 同币种出现两条、账户现金凭空翻倍。
    规范名把币种别名折叠掉之后，改名对同步完全透明；而「活期 / 定期」这类自定义名
    规范名不同，仍然各自独立，不会被误合并吞掉金额。 */
-function cashHoldingKeyFn(x){ return 'cash:'+String((x&&x.currency)||'CNY').toUpperCase()+':'+cashNameCanon(x); }
+function cashHoldingKeyFn(x){ if(!x||typeof x!=='object') return 'cash:'; return 'cash:'+String((x.currency)||'CNY').toUpperCase()+':'+cashNameCanon(x); }
 function holdingKeyFor(key){ return key==='cash_holdings' ? cashHoldingKeyFn : holdingKeyFn; }
 /* #3：非现金持仓原先返回 null（= 同键冲突直接丢弃后到者，一方数据静默蒸发）。
    改为字段级合并：胜方优先、缺失字段从败方补齐、_credits 取并集；
@@ -7517,12 +7518,16 @@ function _doSyncPush(tok,attempt){
     })
     .catch(function(e){console.error('syncPush failed',e);toast('同步失败：'+(e&&e.message||e));return false;});
 }
-function syncPull(){
+function syncPull(retry){
+  retry=retry||0;
   const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false});}
   return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE,{headers:{'Authorization':'token '+tok}})
     .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
     .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};})
-    .catch(function(e){console.warn('syncPull failed',e);return {snap:null,changed:false};});
+    .catch(function(e){
+      if(retry<2){ console.warn('syncPull 重试#'+retry, e.message); return new Promise(function(res){ setTimeout(function(){ res(syncPull(retry+1)); }, 1500); }); }
+      console.warn('syncPull failed',e);return {snap:null,changed:false};
+    });
 }
 function _syncShouldApply(snap){
   const cloudV1=snapGet(snap,'famdash_v1');
