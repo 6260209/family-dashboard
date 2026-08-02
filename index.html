@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v56';
+const APP_VERSION='2026-08-02-v57';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7720,12 +7720,37 @@ function _doSyncPush(tok,attempt){
     })
     .catch(function(e){console.error('syncPush failed',e);toast('同步失败：'+(e&&e.message||e));return false;});
 }
+// v57：syncPull 改走 git-blob API（refs→commit→tree→blob，内容寻址），绕过 contents API 的 CDN 陈旧缓存，
+// 保证拉取到的永远是 canonical 最新 blob；仅在 git-blob 失败时回退 contents API。
+async function gitBlobSnap(tok){
+  const base='https://api.github.com/repos/'+SYNC_REPO;
+  const ref=await fetch(base+'/git/refs/heads/main',{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}});
+  if(!ref.ok) throw new Error('ref '+ref.status);
+  const refJ=await ref.json();
+  const commit=await fetch(base+'/git/commits/'+refJ.object.sha,{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}});
+  if(!commit.ok) throw new Error('commit '+commit.status);
+  const commitJ=await commit.json();
+  const tree=await fetch(base+'/git/trees/'+commitJ.tree.sha+'?recursive=1',{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}});
+  if(!tree.ok) throw new Error('tree '+tree.status);
+  const treeJ=await tree.json();
+  const e=treeJ.tree.find(t=>t.path===SYNC_FILE);
+  if(!e) throw new Error('blob not found');
+  const blob=await fetch(base+'/git/blobs/'+e.sha,{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}});
+  if(!blob.ok) throw new Error('blob '+blob.status);
+  const blobJ=await blob.json();
+  return JSON.parse(_b64decode(blobJ.content));
+}
 function syncPull(retry){
   retry=retry||0;
   const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false});}
-  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
-    .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
-    .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};})
+  return gitBlobSnap(tok)
+    .then(function(snap){return {snap:snap,changed:false};})
+    .catch(function(e){
+      console.warn('syncPull git-blob 失败，回退 contents API:', e.message);
+      return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
+        .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
+        .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};});
+    })
     .catch(function(e){
       if(retry<2){ console.warn('syncPull 重试#'+retry, e.message); return new Promise(function(res){ setTimeout(function(){ res(syncPull(retry+1)); }, 1500); }); }
       console.warn('syncPull failed',e);return {snap:null,changed:false};
