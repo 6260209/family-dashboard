@@ -148,6 +148,7 @@ tbody tr:hover{background:#f8fafc}
 .t-crypto{background:rgba(245,158,11,.16);color:#d97706}
 .t-cash{background:rgba(100,116,139,.16);color:#475569}
 .t-struct{background:rgba(239,68,68,.12);color:#dc2626}
+.t-bal{background:rgba(99,102,241,.16);color:#6366f1}
 
 /* pivot */
 #pivot-table th,#pivot-table td{padding:7px 9px;font-size:12px}
@@ -3869,9 +3870,11 @@ function editCashInline(aid,idx){
 }
 function saveCashInline(aid,idx){
   const a=acct(aid); const c=a.cash_holdings[idx]; if(!c)return;
-  c.amount=Number(document.getElementById('cash-amt-'+idx).value)||0;
+  const _oldAmt=Number(c.amount||0);
+  const _newAmt=Number(document.getElementById('cash-amt-'+idx).value)||0;
   // 手动修改现金金额后，让 recomputeCashAccount 按新金额重新提取 _manual_base，
   // 避免旧 _manual_base 把金额覆盖回去。
+  c.amount=_newAmt;
   delete c._manual_base;
   c.currency=document.getElementById('cash-ccy-'+idx).value||c.currency||'CNY';
   c.ccy=c.currency;
@@ -3881,8 +3884,23 @@ function saveCashInline(aid,idx){
   c.location=document.getElementById('cash-loc-'+idx).value.trim();
   c.profit=Number(document.getElementById('cash-pft-'+idx).value)||0;
   c.notes=document.getElementById('cash-notes-'+idx).value.trim();
+  // v52：直接改现金余额时写一条「余额变更」流水，保留 改前→改后 的审计轨迹，便于平账。
+  // 以前手动改余额不产生任何流水，无法对账。该流水不参与现金推导（txDerivedNet/recomputeCashAccount 均不含 balance_change），仅作记录，不会重复计入金额。
+  if(Math.abs(_newAmt-_oldAmt)>1e-6){
+    DATA.transactions=DATA.transactions||[];
+    DATA.transactions.push({
+      id:'bc'+Date.now()+'-'+Math.floor(Math.random()*1000),
+      type:'balance_change', date:new Date().toISOString().slice(0,10),
+      account:aid, currency:c.currency,
+      from:+_oldAmt.toFixed(2), to:+_newAmt.toFixed(2),
+      amount:+(_newAmt-_oldAmt).toFixed(2),
+      note:'余额变更: '+_oldAmt.toFixed(2)+' → '+_newAmt.toFixed(2),
+      ts:Date.now(), src:'cash_inline'
+    });
+  }
   afterEdit(aid);
-  logActivity('修改现金持仓',`${acctName(aid)} · ${c.name} · ¥${c.amount} ${c.currency}`);
+  try{ renderTx(); }catch(e){}
+  logActivity('修改现金持仓',`${acctName(aid)} · ${c.name} · ${c.currency} ${_oldAmt.toFixed(2)} → ${_newAmt.toFixed(2)}`);
 }
 
 
@@ -5069,7 +5087,7 @@ function delTx(id){
   saveEditsLocal(); renderTx(); renderInc(); renderCalendar();
   recomputePortfolio();
   toast('已删除一条流水');
-  if(t) logActivity('删除流水',`${t.date} ${({income:'收入',transfer:'转账',buy:'买入',sell:'卖出'})[t.type]||t.type} ¥${t.amount||0}`);
+  if(t) logActivity('删除流水',`${t.date} ${({income:'收入',transfer:'转账',buy:'买入',sell:'卖出',balance_change:'余额变更',manual_adjust:'手动调整',dividend:'股息',adjust:'数量调整'})[t.type]||t.type} ¥${t.amount||0}`);
 }
 function txCashDelta(aid){
   const a=acct(aid);
@@ -5602,12 +5620,12 @@ function renderLedger(){
   // 合并+排序
   const all=[...txRows,...todoRows,...incRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const typeTag=t=>{
-    const m={买入:'t-astock',卖出:'t-struct',收入:'t-afund',转账:'t-cash',股息:'t-bond',编辑:'t-bond'};
+    const m={买入:'t-astock',卖出:'t-struct',收入:'t-afund',转账:'t-cash',股息:'t-bond',编辑:'t-bond',余额变更:'t-bal'};
     return `<span class="tag ${m[t.type]||'t-qdii'}">${t.type}</span>`;
   };
   const maxShow=ledgerExpanded?all.length:Math.min(all.length,6);
   const rows=all.slice(0,maxShow).map((t,i)=>{
-    const sign=(t.typeRaw==='edit')?'':(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':(t.typeRaw==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
+    const sign=(t.typeRaw==='edit')?'':(t.typeRaw==='balance_change')?(Number(t.amount)>=0?'+':'−'):(t.typeRaw==='sell'||t.typeRaw==='income'||t.typeRaw==='todo_income'||t.typeRaw==='manual_inc'||t.typeRaw==='dividend')?'+':(t.typeRaw==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
     const cls=(t.typeRaw==='edit')?'':(sign==='+'?'gn':'rd');
     const more=all.length>6&&!ledgerExpanded&&i===5?
       `<tr><td colspan="9" style="text-align:center;padding:8px"><button class="btn sm ghost" onclick="ledgerExpanded=true;renderLedger()">展开更多 ${all.length-6} 条 ▼</button></td></tr>`:'';
@@ -5636,6 +5654,8 @@ function editLedgerRow(id,src){
 }
 /* 编辑已存在的交易：预填 openTxModal，并将「保存」改为「先删旧再添新」 */
 function openTxEdit(t){
+  // 余额变更是系统自动生成（直接改现金余额时写入），仅可删除，不可编辑
+  if(t&&t.type==='balance_change'){ toast('余额变更为系统自动生成，不可编辑，仅可删除'); return; }
   // 先打开对应类型的录入弹窗
   const editType=t.type==='income'?'income':t.type==='transfer'?'transfer':t.type==='manual_adjust'?'manual_adjust':(t.type==='sell'?'sell':'buy');
   openTxModal(editType);
@@ -5706,21 +5726,23 @@ function renderTx(){
       amount:0, currency:'', fee:0, status:'', _src:'edit'
     }));
   const all=[...txRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整',edit:'编辑'};
+  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整',balance_change:'余额变更',edit:'编辑'};
   document.getElementById('tx-body').innerHTML=all.map(t=>{
     if(t._src==='edit'){
       return `<tr><td>${t.date||'—'}</td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
     }
     let acc,dir,amt=t.amount||0,ccy=t.currency||'CNY';
-    if(t.type==='transfer'){ acc=acctName(t.account_from)+' → '+acctName(t.account_to); dir='转账'; }
+    if(t.type==='balance_change'){ acc=acctName(t.account); dir='余额 '+(t.from||0).toFixed(2)+' → '+(t.to||0).toFixed(2); }
+    else if(t.type==='transfer'){ acc=acctName(t.account_from)+' → '+acctName(t.account_to); dir='转账'; }
     else if(t.type==='income'){ acc=acctName(t.account); dir=t.income_type||''; }
     else if(t.type==='dividend'){ acc=acctName(t.account); dir=t.name||''; }
     else if(t.type==='manual_adjust'){ acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     else { acc=acctName(t.account); dir=(t.asset_name||'')+(t.code?('('+t.code+')'):'')+' ×'+(t.quantity||0); }
     /* v44 需求6：流水表已去掉「状态」列（记账软件不需要"等系统成交"），原 st 变量随之删除。 */
-    const sign=(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
-    const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':'t-afund';
-    return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="gn">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td><button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
+    const sign=(t.type==='balance_change')?(Number(t.amount)>=0?'+':'−'):(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
+    const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':t.type==='balance_change'?'t-bal':'t-afund';
+    const _editBtn=(t.type==='balance_change')?'':`<button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> `;
+    return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="${Number(t.amount)<0&&t.type==='balance_change'?'rd':'gn'}">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${_editBtn}<button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
   }).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
   let inc=0,buy=0,sell=0,trf=0,div=0;
   DATA.transactions.forEach(t=>{
