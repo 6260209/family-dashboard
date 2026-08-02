@@ -5328,7 +5328,19 @@ function recomputeCashAccount(aid){
     const ccy=(ch.currency||'CNY').toUpperCase();
     const incSum=Object.values(ch._credits||{}).reduce((s,v)=>s+Number(v||0),0);
     const net=txDerivedNet(aid, ccy);
-    if(ch._manual_base==null) ch._manual_base=+(Number(ch.amount||0)-incSum-net).toFixed(2);
+    if(ch._manual_base==null){
+      ch._manual_base=+(Number(ch.amount||0)-incSum-net).toFixed(2);
+    } else {
+      // v51 自愈：仅当 _manual_base 为明显异常的巨大负值（旧版本遗留脏值，如富途 HKD 的 -79690、
+      // USD 的 -27193.6）时才丢弃并依「归一化后的当前金额(来自统一持仓 holdings 真值)」重算。
+      // 正常账户本金为正、且金额已由 _manual_base+净额+收入钩子自洽，绝不误伤收入加成。
+      // 否则脏 _manual_base 会覆盖正常归一化结果，造成"改了余额却数值没有变"的回滚 bug。
+      const _proj=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
+      if(ch._manual_base < -10000 && Math.abs(_proj-Number(ch.amount||0))>0.01){
+        delete ch._manual_base;
+        ch._manual_base=+(Number(ch.amount||0)-incSum-net).toFixed(2);
+      }
+    }
     ch.amount=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
   });
   // 2) 为「有交易净额但尚无现金子账户」的币种新建（如转账收款方币种）
