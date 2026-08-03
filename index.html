@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v62';
+const APP_VERSION='2026-08-03-v63';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7725,23 +7725,32 @@ function _doSyncPush(tok,attempt){
 // v57/v59：syncPull 改走 git-blob API（refs→commit→tree→blob，内容寻址），绕过 contents API 的 CDN 陈旧缓存。
 // v59：同时返回当前 sync.json 的 git blob sha，供 contents API PUT 直接使用（省掉一次带 Cache-Control 的 contents GET）。
 async function gitBlobSnap(tok){
+  // v63：主路径改用 Contents API（仅 Authorization 头，无预检），避免 Git Data API 的浏览器 CDN 缓存陈旧 ref 问题。
+  // Git Data API（/git/refs→/git/commits→/git/trees→/git/blobs）在浏览器环境下即使加 ?_=ts+cache:no-store 仍返回旧 commit。
+  // 回退：若 Contents API 失败，仍尝试 Git Data API 路径。
   const base='https://api.github.com/repos/'+SYNC_REPO;
-  // v60：refs/heads/main 是可变端点，必须加随机查询参数 + no-store，避免浏览器/CDN 返回陈旧 ref。
-  const ref=await fetch(base+'/git/refs/heads/main?_='+Date.now(),{cache:'no-store',headers:{'Authorization':'token '+tok}});
-  if(!ref.ok) throw new Error('ref '+ref.status);
-  const refJ=await ref.json();
-  const commit=await fetch(base+'/git/commits/'+refJ.object.sha,{headers:{'Authorization':'token '+tok}});
-  if(!commit.ok) throw new Error('commit '+commit.status);
-  const commitJ=await commit.json();
-  const tree=await fetch(base+'/git/trees/'+commitJ.tree.sha+'?recursive=1',{headers:{'Authorization':'token '+tok}});
-  if(!tree.ok) throw new Error('tree '+tree.status);
-  const treeJ=await tree.json();
-  const e=treeJ.tree.find(t=>t.path===SYNC_FILE);
-  if(!e) throw new Error('blob not found');
-  const blob=await fetch(base+'/git/blobs/'+e.sha,{headers:{'Authorization':'token '+tok}});
-  if(!blob.ok) throw new Error('blob '+blob.status);
-  const blobJ=await blob.json();
-  return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:e.sha};
+  try {
+    const r=await fetch(base+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok}});
+    if(r.ok){ const j=await r.json(); return {snap:JSON.parse(_b64decode(j.content)), blobSha:j.sha}; }
+    throw new Error('contents '+r.status);
+  }catch(e){
+    console.warn('gitBlobSnap contents API 失败，回退 git-data:', e.message);
+    const ref=await fetch(base+'/git/refs/heads/main?_='+Date.now(),{cache:'no-store',headers:{'Authorization':'token '+tok}});
+    if(!ref.ok) throw new Error('ref '+ref.status);
+    const refJ=await ref.json();
+    const commit=await fetch(base+'/git/commits/'+refJ.object.sha,{headers:{'Authorization':'token '+tok}});
+    if(!commit.ok) throw new Error('commit '+commit.status);
+    const commitJ=await commit.json();
+    const tree=await fetch(base+'/git/trees/'+commitJ.tree.sha+'?recursive=1',{headers:{'Authorization':'token '+tok}});
+    if(!tree.ok) throw new Error('tree '+tree.status);
+    const treeJ=await tree.json();
+    const e=treeJ.tree.find(t=>t.path===SYNC_FILE);
+    if(!e) throw new Error('blob not found');
+    const blob=await fetch(base+'/git/blobs/'+e.sha,{headers:{'Authorization':'token '+tok}});
+    if(!blob.ok) throw new Error('blob '+blob.status);
+    const blobJ=await blob.json();
+    return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:e.sha};
+  }
 }
 function syncPull(retry){
   retry=retry||0;
