@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v69';
+const APP_VERSION='2026-08-03-v70';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7579,6 +7579,18 @@ function applyCloudToData(snap, overwrite){
      历史教训：在各调用点分散补自愈必然漏（v35「删了又复活」、v45 富途 CNY 20000 事故皆源于此），
      故在此处一次性收口——今后任何新增的云端应用路径都自动获得净化，无需再逐处补。
      幂等：数据已干净时 recomputeCashAll 的 changed=false，不落盘、不触发推送，天然收敛。 */
+  /* v70：云端落地后必须重跑 normalizeAccount。
+     securities / fund_holdings / cash_holdings / crypto 四个数组只是 holdings 真源的
+     「展示投影」，由 normalizeAccount 清空重建。启动期 L8105 只对 baseline 做过一次投影
+     重建；云端快照覆盖 DATA 之后若不重建，别的设备或旧版本写下的陈旧投影就直接进渲染层
+     —— 同一个标的会同时躺在 securities 与 fund_holdings 里，「标的管理」于是冒出同名重复行。
+     实测（v69）：不带令牌走基线 71 行 0 重复；带令牌拉云端 74 行，多出 QQQM / 工银中证A500Y /
+     余额宝 三组重复，正是漏了这一步。
+     顺序与启动期一致：先重建投影，再跑现金自愈。
+     只在内存中重建、不回写 localStorage —— 投影是派生物，每次加载都会重算；回写反而会把
+     「只存在于旧投影、不在 holdings 里」的历史孤儿条目永久抹掉。 */
+  try{ (DATA.accounts||[]).forEach(function(a){ normalizeAccount(a); }); }
+  catch(e){ console.warn('applyCloudToData normalize', e); }
   try{ healCashDerived(); }catch(e){ console.warn('applyCloudToData heal', e); }
   return mergedLocal;
 }
