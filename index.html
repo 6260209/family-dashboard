@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-02-v58';
+const APP_VERSION='2026-08-03-v59';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7682,15 +7682,17 @@ function syncPush(){
 }
 function _doSyncPush(tok,attempt){
   const snap=syncCollect();
-  return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(function(meta){
+  // v59：用 gitBlobSnap 读 canonical 云端 + 取 blob sha，避免 contents API GET 因 Cache-Control 触发 CORS preflight。
+  return gitBlobSnap(tok)
+    .then(function(gitRes){
+      const cs=gitRes.snap;
+      const blobSha=gitRes.blobSha;
       // 合并云端数据后再上传：避免「本地未拉取过的云端账户/流水/收入」被整体覆盖（此前多设备竞态会丢数据）。
       // 旧逻辑用 cloudT>localMod 直接放弃推送并改用云端，但漏掉了「本地比云端新、却从未拉取云端独有数据」的情况，
       // 导致本地整体覆盖云端、云端独有账户丢失。改为永远把云端合并进上传快照。
       let snapToPush=null;
       try{
-        if(meta&&meta.content){ const cs=JSON.parse(_b64decode(meta.content)); snapToPush=buildPushSnapshot(snap, cs); }
+        if(cs){ snapToPush=buildPushSnapshot(snap, cs); }
         else { snapToPush=snap; } // 首次推送：云端无文件，直接推本地
         snapToPush=healPushSnapshot(snapToPush); // v46：上传前净化现金桶，避免把云端脏桶原样推回（见函数注释）
       }catch(e){
@@ -7701,7 +7703,7 @@ function _doSyncPush(tok,attempt){
       }
       const content=_b64encode(JSON.stringify(snapToPush));
       const body={message:'sync: '+fmtSyncTime(snap.syncedAt)+' · '+getDeviceLabel(),content:content};
-      if(meta&&meta.sha)body.sha=meta.sha;
+      if(blobSha)body.sha=blobSha;
       return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{
         method:'PUT',headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},body:JSON.stringify(body)
       }).then(function(r){
@@ -7720,8 +7722,8 @@ function _doSyncPush(tok,attempt){
     })
     .catch(function(e){console.error('syncPush failed',e);toast('同步失败：'+(e&&e.message||e));return false;});
 }
-// v57：syncPull 改走 git-blob API（refs→commit→tree→blob，内容寻址），绕过 contents API 的 CDN 陈旧缓存，
-// 保证拉取到的永远是 canonical 最新 blob；仅在 git-blob 失败时回退 contents API。
+// v57/v59：syncPull 改走 git-blob API（refs→commit→tree→blob，内容寻址），绕过 contents API 的 CDN 陈旧缓存。
+// v59：同时返回当前 sync.json 的 git blob sha，供 contents API PUT 直接使用（省掉一次带 Cache-Control 的 contents GET）。
 async function gitBlobSnap(tok){
   const base='https://api.github.com/repos/'+SYNC_REPO;
   const ref=await fetch(base+'/git/refs/heads/main',{headers:{'Authorization':'token '+tok}});
@@ -7738,22 +7740,23 @@ async function gitBlobSnap(tok){
   const blob=await fetch(base+'/git/blobs/'+e.sha,{headers:{'Authorization':'token '+tok}});
   if(!blob.ok) throw new Error('blob '+blob.status);
   const blobJ=await blob.json();
-  return JSON.parse(_b64decode(blobJ.content));
+  return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:e.sha};
 }
 function syncPull(retry){
   retry=retry||0;
-  const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false});}
+  const tok=getSyncToken();if(!tok){return Promise.resolve({snap:null,changed:false,blobSha:null});}
   return gitBlobSnap(tok)
-    .then(function(snap){return {snap:snap,changed:false};})
+    .then(function(res){return {snap:res.snap,changed:false,blobSha:res.blobSha};})
     .catch(function(e){
       console.warn('syncPull git-blob 失败，回退 contents API:', e.message);
-      return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
+      // v59：去掉 Cache-Control 请求头，避免在部分浏览器/网络触发 CORS preflight 失败。
+      return fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?_='+Date.now(),{headers:{'Authorization':'token '+tok}})
         .then(function(r){if(!r.ok)throw new Error('pull '+r.status);return r.json();})
-        .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false};});
+        .then(function(meta){const snap=JSON.parse(_b64decode(meta.content));return {snap:snap,changed:false,blobSha:(meta&&meta.sha)||null};});
     })
     .catch(function(e){
       if(retry<2){ console.warn('syncPull 重试#'+retry, e.message); return new Promise(function(res){ setTimeout(function(){ res(syncPull(retry+1)); }, 1500); }); }
-      console.warn('syncPull failed',e);return {snap:null,changed:false};
+      console.warn('syncPull failed',e);return {snap:null,changed:false,blobSha:null};
     });
 }
 function _syncShouldApply(snap){
@@ -7835,7 +7838,7 @@ function showSyncHistory(){
   const tok=getSyncToken();
   if(!tok){toast('未配置同步令牌，请到「我的 → <svg class="ic-svg" width="14" height="14"><use href="#i-gear"/></svg> 配置」填入');return;}
   toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 读取同步历史…');
-  fetch('https://api.github.com/repos/'+SYNC_REPO+'/commits?path='+SYNC_FILE+'&per_page=10',{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
+  fetch('https://api.github.com/repos/'+SYNC_REPO+'/commits?path='+SYNC_FILE+'&per_page=10',{headers:{'Authorization':'token '+tok}})
     .then(function(r){return r.ok?r.json():[];})
     .then(function(list){
       if(!Array.isArray(list)||!list.length){toast('暂无同步历史');return;}
@@ -7858,7 +7861,7 @@ function restoreFromCommit(sha){
   const tok=getSyncToken();if(!tok){toast('未配置同步令牌');return;}
   if(!window.confirm('确定恢复到该历史版本？\n恢复后该版本会成为最新并同步到云端（其他设备随后拉取即可）。'))return;
   toast('<svg class="ic-svg" width="14" height="14"><use href="#i-cloud"/></svg> 正在恢复历史版本…');
-  fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?ref='+sha,{headers:{'Authorization':'token '+tok,'Cache-Control':'no-cache'}})
+  fetch('https://api.github.com/repos/'+SYNC_REPO+'/contents/'+SYNC_FILE+'?ref='+sha,{headers:{'Authorization':'token '+tok}})
     .then(function(r){if(!r.ok)throw new Error('拉取历史 '+r.status);return r.json();})
     .then(function(meta){
       const snap=JSON.parse(_b64decode(meta.content));
@@ -7873,9 +7876,8 @@ function syncPullOnLoad(){
   try{
     const s=getSettings();if(s.syncEnabled===false)return;
     if(!getSyncToken())return;
-    // 全新浏览器（本机从未同步过 famdash_v1）：以部署的 ENC 基线和准，
-    // 不在加载时静默用云端覆盖——否则云端若有陈旧/分歧数据会摧毁已校验的好数据。
-    // 已同步过的设备（localStorage 有 famdash_v1）仍按时间戳自动合并；用户也可手动「同步/强制拉取」。
+    // v59：输入密码后无条件以云端为准覆盖本地。localMod>0 的保护只在手动 syncNow 生效，
+    // 登录/解锁时云端必须赢——否则上次同步失败的脏本地会永远把正确云端挡在外面。
     const hasLocal=(function(){try{return localStorage.getItem('famdash_v1')!==null;}catch(e){return false;}})();
     const alreadyPulled=sessionStorage.getItem('famdash_onload_pulled')==='1';
     syncPull().then(function(res){
@@ -7906,13 +7908,15 @@ function syncPullOnLoad(){
           try{ healCashDerived(); }catch(e){ console.warn('syncPullOnLoad heal after purge', e); }
         }
       }
-      if(res.snap && _syncShouldApply(res.snap)){
+      // v59：只要云端有 famdash_v1 数据，登录/解锁时就直接覆盖本地（忽略 localMod）。
+      if(res.snap && snapGet(res.snap,'famdash_v1')){
         if(sessionStorage.getItem('famdash_session_edited')==='1'){ try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){} return; }
         syncApply(res.snap);
         const merged=applyCloudToData(res.snap);
         try{loadEditsLocal();}catch(e){}   // ← 拉完云端后重载 DATA 内存变量
         healCashDerived();                 // ← 云端数据落地后必须重跑现金自愈，否则云端脏金额永不被重算
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
+        // 登录时云端覆盖本地，因此把 localMod 归零；若合并产生新差异（本地有云端缺的数据）才重新标记。
         if(merged) localStorage.setItem('famdash_sync_localmod',String(Date.now()));
         else localStorage.setItem('famdash_sync_localmod','0');
         recomputePortfolio();
