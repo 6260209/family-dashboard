@@ -7744,12 +7744,12 @@ async function gitBlobSnap(tok){
     const tree=await fetch(base+'/git/trees/'+commitJ.tree.sha+'?recursive=1',{headers:{'Authorization':'token '+tok}});
     if(!tree.ok) throw new Error('tree '+tree.status);
     const treeJ=await tree.json();
-    const e=treeJ.tree.find(t=>t.path===SYNC_FILE);
-    if(!e) throw new Error('blob not found');
-    const blob=await fetch(base+'/git/blobs/'+e.sha,{headers:{'Authorization':'token '+tok}});
+    const blobEntry=treeJ.tree.find(t=>t.path===SYNC_FILE);
+    if(!blobEntry) throw new Error('blob not found');
+    const blob=await fetch(base+'/git/blobs/'+blobEntry.sha,{headers:{'Authorization':'token '+tok}});
     if(!blob.ok) throw new Error('blob '+blob.status);
     const blobJ=await blob.json();
-    return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:e.sha};
+    return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:blobEntry.sha};
   }
 }
 function syncPull(retry){
