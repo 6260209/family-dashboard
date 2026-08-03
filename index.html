@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v61';
+const APP_VERSION='2026-08-03-v62';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7910,8 +7910,11 @@ function syncPullOnLoad(){
         }
       }
       // v59：只要云端有 famdash_v1 数据，登录/解锁时就直接覆盖本地（忽略 localMod）。
+      // v62：【严禁】用 famdash_session_edited 跳过云端应用！该标志会被启动期自愈(healCashDerived/
+      // 去重/normalizeLegacyCashNames)的 saveEditsLocal 误置为 '1'，导致登录拉取云端被静默跳过、
+      // 陈旧本地永远挡住正确云端——这正是「输入密码后没有拉到云端」的根因（用户已多次强调此规则）。
+      // 登录/解锁时云端必须无条件赢：无论本地是旧是错、无论本会话是否自愈落盘，都以云端为准。
       if(res.snap && snapGet(res.snap,'famdash_v1')){
-        if(sessionStorage.getItem('famdash_session_edited')==='1'){ try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){} return; }
         syncApply(res.snap);
         // v59：登录/解锁时云端必须完整覆盖本地，不传 overwrite 会变成「合并」，旧本地数据会残留。
         applyCloudToData(res.snap, true);
