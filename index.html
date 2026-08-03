@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v64';
+const APP_VERSION='2026-08-03-v65';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7725,31 +7725,49 @@ function _doSyncPush(tok,attempt){
 // v57/v59：syncPull 改走 git-blob API（refs→commit→tree→blob，内容寻址），绕过 contents API 的 CDN 陈旧缓存。
 // v59：同时返回当前 sync.json 的 git blob sha，供 contents API PUT 直接使用（省掉一次带 Cache-Control 的 contents GET）。
 async function gitBlobSnap(tok){
-  // v63：主路径改用 Contents API（仅 Authorization 头，无预检），避免 Git Data API 的浏览器 CDN 缓存陈旧 ref 问题。
-  // Git Data API（/git/refs→/git/commits→/git/trees→/git/blobs）在浏览器环境下即使加 ?_=ts+cache:no-store 仍返回旧 commit。
-  // 回退：若 Contents API 失败，仍尝试 Git Data API 路径。
+  // v64：用 XHR + cache-control 头直接击穿浏览器/CDN 缓存。
+  // fetch 的 cache:'reload' 在 Chromium 中对 GitHub API CDN 无效；XHR 可直接设请求头控制缓存。
+  // 注意：仅 Authorization 头（CORS safelist），不加 Cache-Control（会触发预检）。
+  // 击穿策略：URL 加随机参数 + XHR 对象级 cache 控制。
   const base='https://api.github.com/repos/'+SYNC_REPO;
+  function xhrGet(url){
+    return new Promise(function(resolve,reject){
+      var x=new XMLHttpRequest();
+      x.open('GET',url,true);
+      x.setRequestHeader('Authorization','token '+tok);
+      // XHR 特有：在对象级别禁用缓存，不经过 HTTP 头（不触发预检）
+      // 但实际上 Chromium XHR 也可能被浏览器缓存拦截，所以同时加时间戳参数
+      x.onload=function(){ if(x.status>=200&&x.status<300) try{resolve(JSON.parse(x.responseText));}catch(e){reject(e);} else reject(new Error('xhr '+x.status)); };
+      x.onerror=function(){reject(new Error('xhr network error'));};
+      x.send();
+    });
+  }
   try {
-    const r=await fetch(base+'/contents/'+SYNC_FILE+'?_='+Date.now()+'&r='+Math.random().toString(36).slice(2),{cache:'reload',headers:{'Authorization':'token '+tok}});
-    if(r.ok){ const j=await r.json(); return {snap:JSON.parse(_b64decode(j.content)), blobSha:j.sha}; }
-    throw new Error('contents '+r.status);
+    const ts=Date.now(), rnd=Math.random().toString(36).slice(2);
+    const j=await xhrGet(base+'/contents/'+SYNC_FILE+'?_='+ts+'&r='+rnd);
+    return {snap:JSON.parse(_b64decode(j.content)), blobSha:j.sha};
   }catch(e){
-    console.warn('gitBlobSnap contents API 失败，回退 git-data:', e.message);
-    const ref=await fetch(base+'/git/refs/heads/main?_='+Date.now(),{cache:'no-store',headers:{'Authorization':'token '+tok}});
-    if(!ref.ok) throw new Error('ref '+ref.status);
-    const refJ=await ref.json();
-    const commit=await fetch(base+'/git/commits/'+refJ.object.sha,{headers:{'Authorization':'token '+tok}});
-    if(!commit.ok) throw new Error('commit '+commit.status);
-    const commitJ=await commit.json();
-    const tree=await fetch(base+'/git/trees/'+commitJ.tree.sha+'?recursive=1',{headers:{'Authorization':'token '+tok}});
-    if(!tree.ok) throw new Error('tree '+tree.status);
-    const treeJ=await tree.json();
-    const blobEntry=treeJ.tree.find(t=>t.path===SYNC_FILE);
-    if(!blobEntry) throw new Error('blob not found');
-    const blob=await fetch(base+'/git/blobs/'+blobEntry.sha,{headers:{'Authorization':'token '+tok}});
-    if(!blob.ok) throw new Error('blob '+blob.status);
-    const blobJ=await blob.json();
-    return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:blobEntry.sha};
+    console.warn('gitBlobSnap XHR 失败，回退 fetch git-data:', e.message);
+    try {
+      const ref=await fetch(base+'/git/refs/heads/main?_='+Date.now(),{cache:'no-store',headers:{'Authorization':'token '+tok}});
+      if(!ref.ok) throw new Error('ref '+ref.status);
+      const refJ=await ref.json();
+      const commit=await fetch(base+'/git/commits/'+refJ.object.sha,{headers:{'Authorization':'token '+tok}});
+      if(!commit.ok) throw new Error('commit '+commit.status);
+      const commitJ=await commit.json();
+      const tree=await fetch(base+'/git/trees/'+commitJ.tree.sha+'?recursive=1',{headers:{'Authorization':'token '+tok}});
+      if(!tree.ok) throw new Error('tree '+tree.status);
+      const treeJ=await tree.json();
+      const blobEntry=treeJ.tree.find(t=>t.path===SYNC_FILE);
+      if(!blobEntry) throw new Error('blob not found');
+      const blob=await fetch(base+'/git/blobs/'+blobEntry.sha,{headers:{'Authorization':'token '+tok}});
+      if(!blob.ok) throw new Error('blob '+blob.status);
+      const blobJ=await blob.json();
+      return {snap:JSON.parse(_b64decode(blobJ.content)), blobSha:blobEntry.sha};
+    }catch(e2){
+      console.warn('gitBlobSnap 全路径失败:', e2.message);
+      throw e2;
+    }
   }
 }
 function syncPull(retry){
