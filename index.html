@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v60';
+const APP_VERSION='2026-08-03-v61';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7726,7 +7726,8 @@ function _doSyncPush(tok,attempt){
 // v59：同时返回当前 sync.json 的 git blob sha，供 contents API PUT 直接使用（省掉一次带 Cache-Control 的 contents GET）。
 async function gitBlobSnap(tok){
   const base='https://api.github.com/repos/'+SYNC_REPO;
-  const ref=await fetch(base+'/git/refs/heads/main',{headers:{'Authorization':'token '+tok}});
+  // v60：refs/heads/main 是可变端点，必须加随机查询参数 + no-store，避免浏览器/CDN 返回陈旧 ref。
+  const ref=await fetch(base+'/git/refs/heads/main?_='+Date.now(),{cache:'no-store',headers:{'Authorization':'token '+tok}});
   if(!ref.ok) throw new Error('ref '+ref.status);
   const refJ=await ref.json();
   const commit=await fetch(base+'/git/commits/'+refJ.object.sha,{headers:{'Authorization':'token '+tok}});
