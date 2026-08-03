@@ -6251,7 +6251,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v59';
+const APP_VERSION='2026-08-03-v60';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7912,13 +7912,13 @@ function syncPullOnLoad(){
       if(res.snap && snapGet(res.snap,'famdash_v1')){
         if(sessionStorage.getItem('famdash_session_edited')==='1'){ try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){} return; }
         syncApply(res.snap);
-        const merged=applyCloudToData(res.snap);
+        // v59：登录/解锁时云端必须完整覆盖本地，不传 overwrite 会变成「合并」，旧本地数据会残留。
+        applyCloudToData(res.snap, true);
         try{loadEditsLocal();}catch(e){}   // ← 拉完云端后重载 DATA 内存变量
         healCashDerived();                 // ← 云端数据落地后必须重跑现金自愈，否则云端脏金额永不被重算
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
-        // 登录时云端覆盖本地，因此把 localMod 归零；若合并产生新差异（本地有云端缺的数据）才重新标记。
-        if(merged) localStorage.setItem('famdash_sync_localmod',String(Date.now()));
-        else localStorage.setItem('famdash_sync_localmod','0');
+        // 登录时云端覆盖本地，因此把 localMod 归零。
+        localStorage.setItem('famdash_sync_localmod','0');
         recomputePortfolio();
         // 合并/应用云端后就地重渲染当前视图(绝不 location.reload：避免手机重复输密码、且本地有云端缺的数据时无限重载)
         try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
