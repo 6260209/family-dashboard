@@ -1786,6 +1786,14 @@ function acctLiveTotalCny(a){
       const unit=(live!=null)?live:Number(h.price||0);
       if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
       else total=Number(h.value||0);
+    } else if(h.source==='fund' || h.source==='struct'){
+      // 批3 #10/#11 同源修复：账户实时总额此前无 fund/struct 分支 → 基金/结构持仓被完全漏算，
+      // 造成 DATA.total.cny 远小于聚合 category_summary 之和（口径分裂）。
+      // 与 jBuildFlat L2408-2412 口径严格一致：优先用真实市值 value；value 缺失才回退 qty×price。
+      // 严禁双计：基金仅存于 a.holdings（唯一真源，normalizeAccount 只派生 legacy 数组不删 holdings），
+      // baseCashCny 只计现金类（基金非现金类）不会重复；故此处计一次即可。
+      if(h.value!=null && Number(h.value)>0){ total=Number(h.value); }
+      else if(h.qty!=null && h.price!=null && Number(h.price)>0){ total=Number(h.qty)*Number(h.price); }
     }
     c+=toCny(total, ccy);
   });
@@ -6429,7 +6437,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-04-v73';
+const APP_VERSION='2026-08-04-v74';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
