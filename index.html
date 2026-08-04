@@ -5952,6 +5952,16 @@ function openTxEdit(t, onDoneAid){
   openTxModal(editType);
   // 预填字段
   const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
+  // 回填币种：若交易币种不在下拉选项里（如 USDC 未进 DEFAULT_CASH_CCYS 且 famdash_cashccys 未纳入同步），
+  // 先注入一个该币种 option 再赋值，避免原生 select.value 对不存在的值静默失败、把金额当 CNY 1:1 重算
+  const setTxCcy=()=>{
+    const sel=document.getElementById('tx-ccy'); if(!sel)return;
+    const want=t.currency||'CNY';
+    let _has=false;
+    for(let i=0;i<sel.options.length;i++){ const o=sel.options[i]; if(o.value===want||o.textContent===want){_has=true;break;} }
+    if(!_has){ const op=document.createElement('option'); op.value=want; op.textContent=want; sel.appendChild(op); }
+    sel.value=want;
+  };
   setTimeout(()=>{
     try{
       set('tx-date',t.date);
@@ -5961,22 +5971,22 @@ function openTxEdit(t, onDoneAid){
         const st=document.getElementById('tx-status'); if(st)st.value=t.status||'received';
         const it=document.getElementById('tx-itype'); if(it&&t.income_type)it.value=t.income_type;
         const proj=document.getElementById('tx-project'); if(proj&&t.project)proj.value=t.project;
-        if(document.getElementById('tx-ccy-multi')) seedMultiInput('tx-ccy-multi',[t.currency||'CNY']);
+        setTxCcy();
       } else if(t.type==='transfer'){
         set('tx-from',t.account_from); set('tx-to',t.account_to); set('tx-amount',t.amount); set('tx-fee',t.fee||0);
-        if(document.getElementById('tx-ccy-multi')) seedMultiInput('tx-ccy-multi',[t.currency||'CNY']);
+        setTxCcy();
       } else if(t.type==='manual_adjust'){
         set('tx-account',t.account); set('tx-code',t.code);
         const catSel=document.getElementById('tx-category'); if(catSel&&t.asset_category)catSel.value=t.asset_category;
         set('tx-qty',t.quantity); set('tx-amount',t.amount);
         if(document.getElementById('tx-instrument')) document.getElementById('tx-instrument').value=t.asset_name||'';
-        if(document.getElementById('tx-ccy')) document.getElementById('tx-ccy').value=t.currency||'CNY';
+        setTxCcy();
       } else {
         set('tx-account',t.account); set('tx-code',t.code);
         const catSel=document.getElementById('tx-category'); if(catSel&&t.asset_category)catSel.value=t.asset_category;
         set('tx-qty',t.quantity); set('tx-price',t.amount?(t.amount/(t.quantity||1)):(t.price||0)); set('tx-fee',t.fee||0);
         if(document.getElementById('tx-instrument')) document.getElementById('tx-instrument').value=t.asset_name||'';
-        if(document.getElementById('tx-ccy-multi')) seedMultiInput('tx-ccy-multi',[t.currency||'CNY']);
+        setTxCcy();
       }
       /* 改保存按钮：先删旧再保存。
          ⚠ 必须保持「delTx → addTx」这条链路，严禁改成对原对象原地 patch 字段。
@@ -6533,7 +6543,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-04-v76';
+const APP_VERSION='2026-08-04-v77';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
