@@ -584,6 +584,7 @@ th.sortable.desc .arrow::after{content:'▼'}
 .price-cell{font-weight:700;color:var(--accent);white-space:nowrap;cursor:default}
 .price-cell:hover{text-decoration:underline;text-decoration-style:dotted}
 .price-unit{font-size:11px;color:var(--dim);margin-left:2px;font-weight:400}
+.px-age{ font-size:11px; opacity:.55; margin-left:4px; white-space:nowrap; display:inline-block; }
 .consol-qty{font-size:11px;color:var(--dim);white-space:nowrap;flex-shrink:0;margin-left:2px}
 .fc-base{font-size:11px;color:var(--dim);margin-left:6px;white-space:nowrap}
 #consolidated-body .edt{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#f0f9ff;border:1px solid #bae6fd;color:#0ea5e9;font-size:13px;cursor:pointer;transition:all var(--transition-fast)}
@@ -1395,10 +1396,10 @@ function renderConsolidated(){
     const mixedCcy=ccyVals.length>1;
     const unitLabel=mixedCcy?'多币种':(r.currency||'');
     // 优先用实时行情价（与账户弹窗口径一致），无实时价回退存储价；避免显示陈旧/错误单价
-    let _liveP=null;
-    try{ if(r.cat==='加密货币'){ const lp=cryptoLiveUnitPrice(r); if(lp!=null)_liveP=lp; } else { const lp=secLivePrice(r); if(lp!=null)_liveP=lp; } }catch(e){}
+    let _liveP=null; let _pxAge='';
+    try{ if(r.cat==='加密货币'){ const _cp=cryptoUnitPriceWithAge(r); if(_cp.price!=null){ _liveP=_cp.price; _pxAge=cryptoPriceSuffix(_cp.level,_cp.ageMs); } } else { const lp=secLivePrice(r); if(lp!=null)_liveP=lp; } }catch(e){}
     const _dispPrice=_liveP!=null?_liveP:(r.price||null);
-    const priceDisp=hasQty&&_dispPrice!=null?`${_dispPrice.toFixed(4)} <span class="price-unit">${unitLabel}</span>`:'—';
+    const priceDisp=hasQty&&_dispPrice!=null?`${_dispPrice.toFixed(4)} <span class="price-unit">${unitLabel}</span>${_pxAge?`<span class="px-age">${_pxAge}</span>`:''}`:'—';
     const costDisp=r.cost_price?`${r.cost_price.toFixed(4)} <span class="price-unit">${unitLabel}</span>`:'—';
     const prjVals=[...new Set(r.raws.map(x=>x.project||'').filter(Boolean))];
     const catVals=[...new Set(r.raws.map(x=>recCatName(x)).filter(Boolean))];
@@ -1432,10 +1433,10 @@ function renderConsolidated(){
       if(!keys.length) return '';
       let rows='';
       for(const k of keys){
-        const g=map[k]; const f=g.raw; let ap=null;
-        try{ if(r.cat==='加密货币'){ const lp=cryptoLiveUnitPrice(f); if(lp!=null)ap=lp; } else { const lp=secLivePrice(f); if(lp!=null)ap=lp; } }catch(e){}
+        const g=map[k]; const f=g.raw; let ap=null, _pxAge2='';
+        try{ const _cp=cryptoUnitPriceWithAge(f); ap=_cp.price; if(_cp.price!=null)_pxAge2=cryptoPriceSuffix(_cp.level,_cp.ageMs); }catch(e){}
         const aPrice=ap!=null?ap:(f.price||null);
-        const priceCell=aPrice!=null?fmtNative(aPrice,g.ccy):'—';
+        const priceCell=aPrice!=null?fmtNative(aPrice,g.ccy)+(_pxAge2?`<span class="px-age">${_pxAge2}</span>`:''):'—';
         const mvCell=fmtNative(g.nativeMv,g.ccy)+(g.ccy!=='CNY'?('<small>'+fmtCny(g.mvCny)+'</small>'):'');
         const qCell=(typeof g.qty==='number'&&g.qty>0)?(g.qty>=1e4?(g.qty/1e4).toFixed(1)+'万':g.qty.toLocaleString()):'—';
         rows+='<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
@@ -1757,17 +1758,16 @@ function acctLiveTotalCny(a){
   (a.holdings||[]).forEach(h=>{
     if(cashRouteOf(a,h)==='cash_holdings') return;
     const ccy=_ccyOfH(h);
-    let total=Number(h.value||0);
+    let total=0; // crypto 无价不计入（L4）；绝不回退 h.value
     if(h.source==='crypto'){
-      // 加密货币口径统一：value_usdt=每单位现价(单价)，value=总值(=qty×value_usdt)。
       const live=cryptoLiveUnitPrice(h);
-      const unit=(live!=null)?live:Number(h.value_usdt||h.price||0);
+      const unit=(live!=null)?live:(h.cost_price!=null&&Number(h.cost_price)>0?Number(h.cost_price):null);
       if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
     } else if(h.source==='sec'){
-      // 证券：实时行情覆盖市值（无实时价则回退存储价 h.price）
       const live=secLivePrice(h);
       const unit=(live!=null)?live:Number(h.price||0);
       if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
+      else total=Number(h.value||0);
     }
     c+=toCny(total, ccy);
   });
@@ -1805,13 +1805,37 @@ function jUsdToCny(u){return (u||0)*FX_USD_CNY;}
 */
 const COIN_IDS = {BTC:'bitcoin',ETH:'ethereum',SOL:'solana',BNB:'binancecoin',USDT:'tether',USDC:'usd-coin',DOGE:'dogecoin'};
 const CRYPTO_TTL_MS = 5*60*1000; // 5 分钟
+const STALE_MAX_MS = 7*24*3600*1000; // 7 天：L2 stale 硬顶
+const STABLE_COINS = {USDT:1, USDC:1}; // 锚定币不拉行情，恒定 1.00
 // 统一行情缓存：key = `${market}:${sym}`（如 'crypto:BTC' / 'astock:600519' / 'hk:00700' / 'us:AAPL'）
 // 仅存浏览器端，绝不写回 sync.json
 let quoteCache = (function(){ try{ const _c=localStorage.getItem('famdash_quote_cache')||localStorage.getItem('famdash_crypto_cache'); return _c?JSON.parse(_c):{}; }catch(e){ return {}; } })();
 // 兼容旧引用：crypto 缓存沿用同一对象
 let cryptoPriceCache = quoteCache;
-// 取某持仓的实时单价(USD)；缓存失效/无数据返回 null（调用方回退成本价）
-function cryptoLiveUnitPrice(h){ return quoteLiveUnitPrice('crypto', h.name); }
+/* 统一加密取价（评审#9）：所有加密取价判据收敛到此一处，禁止别处再抄一份。
+   返回 {price, level, ageMs}：live(≤5min) / stale(≤7天) / cost(有cost_price) / none(无价)。
+   反推价 value_usdt/amount 已彻底移除——它是与真相无因果的噪声（评审事实A/D）。 */
+function cryptoUnitPriceWithAge(h){
+  const name = String(h && h.name || '').toUpperCase();
+  if(STABLE_COINS[name] != null) return {price: STABLE_COINS[name], level:'live', ageMs:0};
+  const c = quoteCache['crypto:'+h.name];
+  const now = Date.now();
+  if(c && c.usd!=null && isFinite(c.usd) && c.usd>0){
+    const age = now - (c.ts||0);
+    if(age <= CRYPTO_TTL_MS) return {price: c.usd, level:'live', ageMs: age};
+    if(age <= STALE_MAX_MS) return {price: c.usd, level:'stale', ageMs: age};
+  }
+  if(h.cost_price!=null && Number(h.cost_price)>0) return {price: Number(h.cost_price), level:'cost', ageMs: null};
+  return {price: null, level:'none', ageMs: null};
+}
+function cryptoLiveUnitPrice(h){ const r=cryptoUnitPriceWithAge(h); return (r.level==='live'||r.level==='stale')?r.price:null; }
+function cryptoPriceSuffix(level, ageMs){
+  if(level==='live') return '';
+  if(level==='stale'){ const h=ageMs/3600000; if(h<24) return '· '+Math.max(1,Math.round(h))+'小时前'; if(h<48) return '· 昨天'; return '· '+Math.round(h/24)+'天前'; }
+  if(level==='cost') return '· 按买入价';
+  if(level==='none') return '· 暂无价格';
+  return '';
+}
 // 取某证券记录的实时单价(原生币种)：按市场分组查缓存（与 QUOTE_SOURCES 的 market key 对应：astock/hk/us）
 // 代码优先用 r.code，缺失时回退 r.asset_name（仅在智能选择器未回填代码时）
 /* 市场标签归一化（v43）
@@ -1853,10 +1877,10 @@ function quoteLiveUnitPrice(market, sym){
   if(c && (Date.now()-c.ts) < CRYPTO_TTL_MS) return c.usd;
   return null;
 }
-// 收集所有需要拉取实时价的加密货币符号（仅 COIN_IDS 中有映射的）
+// 收集所有需要拉取实时价的加密货币符号（仅 COIN_IDS 中有映射的；锚定币不拉）
 function _allCryptoSymbols(){
   const s = new Set();
-  (DATA.accounts||[]).forEach(a=>{(a.holdings||[]).forEach(h=>{ if(h.source==='crypto' && h.name && COIN_IDS[h.name]) s.add(h.name); });});
+  (DATA.accounts||[]).forEach(a=>{(a.holdings||[]).forEach(h=>{ const nm=String(h.name||'').toUpperCase(); if(h.source==='crypto' && h.name && !STABLE_COINS[nm] && COIN_IDS[h.name]) s.add(h.name); });});
   return [...s];
 }
 // 收集某股票市场的证券代码（从 securities 旧数组；统一 holdings 里 source==='sec' 也走此）
@@ -1895,6 +1919,10 @@ function _emSecid(market, code){
 }
 const QUOTE_SOURCES = {
   crypto: [
+    { name:'binance-vision',
+      buildUrls: function(syms){ return ['https://data-api.binance.vision/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms.map(function(s){ return s+'USDT'; })))]; },
+      parse: function(bodies, syms){ const arr=bodies[0]||[]; const m={}; arr.forEach(function(it){ const sym=syms.find(function(s){ return (s+'USDT')===it.symbol; }); if(sym && it.price) m[sym]=Number(it.price); }); return m; }
+    },
     { name:'binance',
       buildUrls: function(syms){ return ['https://api.binance.com/api/v3/ticker/price?symbols='+encodeURIComponent(JSON.stringify(syms.map(function(s){ return s+'USDT'; })))]; },
       parse: function(bodies, syms){ const arr=bodies[0]||[]; const m={}; arr.forEach(function(it){ const sym=syms.find(function(s){ return (s+'USDT')===it.symbol; }); if(sym && it.price) m[sym]=Number(it.price); }); return m; }
@@ -1964,9 +1992,9 @@ async function fetchQuotes(market, syms, force){
       const urls = src.buildUrls(syms);
       const bodies = await Promise.all(urls.map(function(u){ return _fetchJson(u, 8000); }));
       const map = src.parse(bodies, syms);
-      const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0; });
+      const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0 && _quoteSane(s, map[s]); });
       if(valid.length){
-        valid.forEach(function(s){ quoteCache[market+':'+s]={usd:map[s], ts:now, src:src.name}; });
+        valid.forEach(function(s){ const v=map[s]; if(_quoteSane(s,v)) quoteCache[market+':'+s]={usd:v, ts:now, src:src.name}; else console.warn('[行情] '+market+' '+s+' 报价异常被拒('+v+')'); });
         try{ localStorage.setItem('famdash_quote_cache', JSON.stringify(quoteCache)); }catch(e){}
         console.info('[行情] '+market+' 源 '+src.name+' 成功，更新 '+valid.length+'/'+syms.length);
         return true;
@@ -2313,17 +2341,31 @@ function syncHoldingsFromLegacy(a){
   (a.securities||[]).forEach(t=>{const ccy=t.currency||'CNY';const f=pv(t.id,_fwdVal(t,ccy),t.pnl_amount);H.push({id:t.id||genHid(),name:t.asset_name,code:t.code,qty:t.quantity,cost_price:t.cost_price,price:t.price,value:f.value,pnl:f.pnl,cat:t.asset_category||marketToCat(t.market)||'美股',cat_id:t.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:t.location||'',project:t.project||'',source:'sec',market:t.market||'',asset_type:t.asset_type||''});});
   (a.fund_holdings||[]).forEach(f=>{const ccy=f.currency||'CNY';const v=Number(f.amount||0);const f2=pv(f.id,v,f.profit);H.push({id:f.id||genHid(),name:f.name,code:f.code,qty:null,cost_price:null,price:null,value:v,pnl:f2.pnl,cat:f.asset_category||'基金',cat_id:f.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:f.location||'',project:f.project||'',source:'fund',market:'',asset_type:''});});
   (a.cash_holdings||[]).forEach(c=>{const ccy=c.currency||'CNY';const v=Number(c.amount||0);const f2=pv(c.id,v,c.profit);H.push({id:c.id||genHid(),name:c.name,code:'',qty:null,cost_price:null,price:null,value:v,pnl:f2.pnl,cat:c.asset_category||'现金',cat_id:c.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:c.location||'',project:c.project||'',source:'cash',market:'',asset_type:c.type||''});});
-  (a.crypto||[]).forEach(x=>{
+  // 幂等保证（验收#5：连续两次 syncHoldingsFromLegacy 市值不变）：
+  // 本函数末尾会清空 a.crypto；若上一次调用已清空，第二次调用会因源空而漏建 crypto（市值被冲掉）。
+  // 故当 a.crypto 为空时，从统一 holdings 的 crypto 条目回灌，并规整为 legacy 形态后统一处理。
+  let _cryptoSrc = (a.crypto && a.crypto.length)
+    ? a.crypto
+    : (a.holdings||[]).filter(function(h){ return h && h.source==='crypto'; });
+  _cryptoSrc = _cryptoSrc.map(function(x){
+    if(x && x.source==='crypto' && x.qty!=null && x.value!=null && x.ccy){
+      return {name:x.name, amount:x.qty, value_usdt:x.value, cost_price:x.cost_price,
+              currency:x.ccy, pnl:x.pnl, asset_category:x.cat, cat_id:x.cat_id,
+              location:x.location, project:x.project, is_cash:x.is_cash, pnl_pct:x.pnl_pct, id:x.id, uid:x.uid};
+    }
+    return x;
+  });
+  _cryptoSrc.forEach(x=>{
     const ccy=x.currency||'USD';
-    // value_usdt 在旧数据中表示该加密货币的【总市值】（数量 × 现价），不是单价
     const totalUsdt=Number(x.value_usdt||0);
     const amt=Number(x.amount||0);
     const cost=Number(x.cost_price||0);
     let nativeVal=totalUsdt;
     if(ccy==='HKD')nativeVal*=FX_USD_HKD;else if(ccy==='CNY')nativeVal*=FX_USD_CNY;
-    const unitPrice=(amt>0&&totalUsdt>0)?(totalUsdt/amt):0;
-    const nativePnl=(amt>0&&cost>0)?Math.round(amt*(unitPrice-cost)):(x.pnl!=null?x.pnl:null);
-    H.push({id:x.id||x.uid||genHid(),name:x.name,code:'',qty:x.amount,cost_price:x.cost_price||null,price:unitPrice||null,value:nativeVal,pnl:nativePnl,cat:x.asset_category||'加密货币',cat_id:x.cat_id||'',ccy:ccy,holder:a.holder,location:x.location||'',project:x.project||'',source:'crypto',market:'',asset_type:'',is_cash:!!x.is_cash,pnl_pct:x.pnl_pct||0});
+    // 反推价(unitPrice=totalUsdt/amt)已彻底移除：无因果、是噪声（评审事实A/D）。price 不再写入造假单价。
+    const nativePnl = (x.pnl!=null) ? x.pnl : null; // 盈亏只认云端既有值，不再用反推价算（事实D）
+    const f2 = pv(x.id||x.uid, nativeVal, nativePnl); // 事实C：补价值保真，与 sec/fund/cash 对齐，防重建冲掉已修正市值
+    H.push({id:x.id||x.uid||genHid(),name:x.name,code:'',qty:x.amount,cost_price:x.cost_price||null,price:null,value:f2.value,pnl:f2.pnl,cat:x.asset_category||'加密货币',cat_id:x.cat_id||'',ccy:ccy,holder:a.holder,location:x.location||'',project:x.project||'',source:'crypto',market:'',asset_type:'',is_cash:!!x.is_cash,pnl_pct:x.pnl_pct||0});
   });
   a.holdings=H;
   // a.crypto 已合并进统一 holdings，清空旧数组避免详情页重复显示
@@ -2339,10 +2381,12 @@ function jBuildFlat(accounts){
     for(const [i,h] of (a.holdings||[]).entries()){
       const cat=(h.cat&&String(h.cat).trim())||'未分类';
       const ccy=_ccyOfH(h);
-      // 加密币：若实时行情缓存可用，用实时单价重算市值（与详情页/账户汇总口径一致）；否则回退 h.value(成本基数)
-      let _mvRaw=Number(h.value||0);
-      if(h.source==='crypto'){ const _lp=cryptoLiveUnitPrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; }
-      else if(h.source==='sec'){ const _lp=secLivePrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; }
+      let _mvRaw=0; // crypto 无价(L4)不计入总额；绝不回退 h.value（评审 Q2 配套）
+      if(h.source==='crypto'){
+        const _lp=cryptoLiveUnitPrice(h);
+        const _unit=(_lp!=null)?_lp:(h.cost_price!=null&&Number(h.cost_price)>0?Number(h.cost_price):null);
+        if(_unit>0 && h.qty!=null) _mvRaw=Number(h.qty)*_unit;
+      } else if(h.source==='sec'){ const _lp=secLivePrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; else _mvRaw=Number(h.value||0); }
       const mv=toCny(_mvRaw,ccy);
       let pnl=null; if(h.pnl!=null&&h.pnl!==''){pnl=toCny(h.pnl,ccy);}
       const name=String(h.name||'');
@@ -2738,9 +2782,8 @@ function openAcct(aid){
       ccy=r.currency||r.ccy||'USDT';
       name=r.name+(r.is_cash?' [稳定币]':''); qty=r.qty?String(r.qty):'—'; cost=r.cost_price!=null?fmt(r.cost_price):'—';
       // 实时行情覆盖：缓存有该币实时价则用它重算 现价/市值/盈亏；否则回退存储价(r.price / value÷qty)
-      const lp=cryptoLiveUnitPrice(r);
-      let livePrice=(lp!=null)?lp:(r.value_usdt!=null?Number(r.value_usdt):(r.price?Number(r.price):null));
-      if(livePrice==null && r.qty && r.value) livePrice=Number(r.value)/Number(r.qty);
+      const _cp=cryptoUnitPriceWithAge(r);
+      let livePrice=_cp.price;
       const totalMv=(livePrice!=null && r.qty!=null)?Number(r.qty)*livePrice:Number(r.value||0);
       amountVal=totalMv;
       // 现价显示【原生币种单位】，不折算成人民币（拉取什么货币就显示什么单位）
@@ -2749,7 +2792,7 @@ function openAcct(aid){
       mvCny=toCny(totalMv,ccy);   // 原生币种 → 人民币（USD/USDT/HKD/CNY 全支持）
       const costN=(r.cost_price!=null)?Number(r.cost_price):null;
       let p=null;
-      if(livePrice!=null && costN!=null && r.qty!=null) p=(livePrice-costN)*Number(r.qty);
+      if(livePrice!=null && costN!=null && r.qty!=null && _cp.level!=='cost' && _cp.level!=='none') p=(livePrice-costN)*Number(r.qty);
       pnlVal=p||0;
       pnl=(p!=null)?((p>=0?'+':'')+fmt(p)):'—'; pnlCls=(p!=null && p>=0)?'gn':'rd';
       let pp=null;
@@ -3974,15 +4017,16 @@ function _selfNonCashCny(a){
   (a.holdings||[]).forEach(h=>{
     if(cashRouteOf(a,h)==='cash_holdings') return;
     const ccy=_ccyOfH(h);
-    let total=Number(h.value||0);
+    let total=0;
     if(h.source==='crypto'){
       const live=cryptoLiveUnitPrice(h);
-      const unit=(live!=null)?live:Number(h.value_usdt||h.price||0);
+      const unit=(live!=null)?live:(h.cost_price!=null&&Number(h.cost_price)>0?Number(h.cost_price):null);
       if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
     } else if(h.source==='sec'){
       const live=secLivePrice(h);
       const unit=(live!=null)?live:Number(h.price||0);
       if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
+      else total=Number(h.value||0);
     }
     c+=toCny(total, ccy);
   });
@@ -4070,14 +4114,41 @@ function runSelfCheck(){
         `入账合计 ${JSON.stringify(credited)} vs 收入 ${JSON.stringify(incSum)}`, mismatch===0?'🟢':'🔴');
     });
     // 4) 行情币种标签：证券持仓需有 market 才能解析实时价
-    let noMkt=0, secCnt=0, cryptoCnt=0, cryptoOk=0;
+    //    （C12 只「新增」4 条加密检查项，此证券检查项必须保留——原改造误将本项整段替换，属覆盖回退）
+    let noMkt=0, secCnt=0;
     (DATA.accounts||[]).forEach(a=>{
       (a.securities||[]).forEach(s=>{ secCnt++; if(!s.market) noMkt++; });
-      (a.crypto_holdings||[]).forEach(h=>{ cryptoCnt++; try{ if(cryptoLiveUnitPrice(h)!=null) cryptoOk++; }catch(e){} });
     });
-    rec('行情可解析（证券有 market / 加密可取单价）', noMkt===0,
-      `证券 ${secCnt} 笔（缺 market ${noMkt} 笔）；加密 ${cryptoCnt} 笔（可解析 ${cryptoOk}）`,
+    rec('行情可解析（证券有 market）', noMkt===0,
+      `证券 ${secCnt} 笔（缺 market ${noMkt} 笔）`,
       noMkt===0?'🟢':'🟡');
+    (function(){
+      let cryptoHoldings=0, covered=0, stale=0, none=0, oldestDays=0, legacyMismatch=0;
+      (DATA.accounts||[]).forEach(a=>{
+        // 统一 holdings 中 crypto 的 id 集合（normalizeAccount 以 holdings 为真源重建 a.crypto 投影，id 同源）
+        const hid={};
+        (a.holdings||[]).forEach(h=>{ if(h.source==='crypto' && (h.id||h.uid)) hid[String(h.id||h.uid)]=1; });
+        (a.crypto||[]).forEach(x=>{
+          // 旧数组条目若在统一 holdings 中找不到对应项，syncHoldingsFromLegacy 重建时会丢值——这才是真危险信号
+          const id=String(x.id||x.uid||'');
+          if(id && !hid[id]) legacyMismatch++;
+        });
+        (a.holdings||[]).forEach(h=>{
+          if(h.source!=='crypto') return;
+          cryptoHoldings++;
+          const r=cryptoUnitPriceWithAge(h);
+          if(r.level==='live'||r.level==='stale') covered++;
+          if(r.level==='stale'){ stale++; const d=(r.ageMs||0)/86400000; if(d>oldestDays) oldestDays=d; }
+          if(r.level==='none') none++;
+        });
+      });
+      rec('加密货币实时价覆盖 '+covered+'/'+cryptoHoldings+' 项', covered===cryptoHoldings && cryptoHoldings>0,
+        `覆盖 ${covered}/${cryptoHoldings}`, cryptoHoldings===0?'🟢':(covered===cryptoHoldings?'🟢':'🟡'));
+      if(stale>0) rec('加密货币有 '+stale+' 项在用过期价（最旧 '+Math.floor(oldestDays)+' 天前）', false, `过期 ${stale} 项`, '🟡');
+      rec('加密货币有 '+none+' 项无任何价格，未计入总额', none===0, `缺失 ${none} 项`, none===0?'🟢':'🔴');
+      rec('旧 crypto 数组与统一 holdings 对齐（无孤儿条目）', legacyMismatch===0,
+        legacyMismatch>0?('有 '+legacyMismatch+' 条旧 crypto 条目在 holdings 中找不到对应项，重建会丢值'):'已对齐', legacyMismatch===0?'🟢':'🔴');
+    })();
     // 5) 聚合视图持仓数量显示
     try{ if(typeof renderConsolidated==='function') renderConsolidated(); }catch(e){}
     let qtyMismatch=0;
@@ -6251,7 +6322,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-03-v70';
+const APP_VERSION='2026-08-04-v71';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6344,6 +6415,8 @@ function _fxSane(key,v){
   if(v<r[0]||v>r[1]){ try{ console.warn('[FX] 拒绝异常汇率 '+key+'='+v+'（合理区间 '+r[0]+'~'+r[1]+'）'); }catch(e){} return false; }
   return true;
 }
+const QUOTE_SANE = { BTC:[5000,500000], ETH:[100,20000], SOL:[1,2000], BNB:[10,5000], DOGE:[0.001,10], USDT:[0.5,1.5], USDC:[0.5,1.5] };
+function _quoteSane(sym, v){ if(v==null||!isFinite(v)||v<=0) return false; const r=QUOTE_SANE[sym]; if(!r) return true; if(v<r[0]||v>r[1]){ try{ console.warn('[QUOTE] 拒绝异常报价 '+sym+'='+v+'（合理区间 '+r[0]+'~'+r[1]+'）'); }catch(e){} return false; } return true; }
 function applyFxRates(rates){
   if(_fxSane('USD_CNY',rates.USD_CNY)){ FX.USD_CNY=rates.USD_CNY; FX_USD_CNY=rates.USD_CNY; }
   if(_fxSane('CNY_HKD',rates.CNY_HKD)){ FX.CNY_HKD=rates.CNY_HKD; FX_CNY_HKD=rates.CNY_HKD; FX_USD_HKD=FX_USD_CNY*rates.CNY_HKD; }
