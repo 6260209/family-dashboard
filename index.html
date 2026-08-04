@@ -388,7 +388,7 @@ tbody tr:hover{background:#f8fafc}
 .btn.sm{padding:4px 10px;font-size:11px;border-radius:7px}
 .mtab .del{cursor:pointer;color:#dc2626;font-weight:800;border:none;background:none;font-size:15px;line-height:1}
 .mtab .edt{cursor:pointer;color:#0ea5e9;font-weight:800;border:none;background:none;font-size:14px;line-height:1;margin-right:4px}
-.mtab .addsec{cursor:pointer;color:#0ea5e9;font-weight:700;font-size:12px;margin-left:8px}
+.mtab .addsec,.mgr-empty .addsec,.mt .addsec{cursor:pointer;color:#0ea5e9;font-weight:700;font-size:12px;margin-left:8px}
 .form-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .form-row input,.form-row select{padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;font-family:inherit}
 .form-row input[type=date]{width:150px}
@@ -431,6 +431,11 @@ tbody tr:hover{background:#f8fafc}
 .tx-form label{font-size:12px;color:var(--dim);min-width:62px}
 .tx-form input,.tx-form select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;min-width:120px}
 .tx-form input[type=date]{min-width:150px}
+/* 标的完整编辑弹窗：作用域限死在 #instr-edit-modal，不影响 openTxModal 等既有 .tx-form 布局 */
+#instr-edit-modal .tx-form .row>input,#instr-edit-modal .tx-form .row>select{flex:1}
+#instr-edit-modal .tx-form input:disabled,#instr-edit-modal .tx-form select:disabled{background:#f3f4f6;color:var(--dim);cursor:not-allowed}
+#instr-edit-modal .lockmark{font-size:12px;opacity:.55;cursor:help}
+#instr-edit-modal .mgr-title{margin-top:14px}
 .tx-cash{background:linear-gradient(135deg,#f0fdfa,#ecfeff);border:1px solid #bae6fd;border-radius:12px;padding:12px 15px;margin-bottom:12px;font-size:13px;color:#0e7490}
 .tx-cash b{font-size:17px;color:#0f172a}
 
@@ -576,7 +581,7 @@ th.sortable.desc .arrow::after{content:'▼'}
 .holder-chip .hc-val{font-size:var(--fs-2xl);font-weight:700;margin-top:3px;line-height:1.1}
 .holder-chip .hc-pct{font-size:var(--fs-xs);color:var(--dim);margin-top:3px}
 /* #9 持有人卡片视觉区分：👤 前缀 + 更细色条，避免与资产配置占比混淆 */
-.holder-chip .hc-name::before{content:'👤 持有人 ';font-size:11px;opacity:.75}
+.holder-chip .hc-name::before{content:'👤 ';font-size:11px;opacity:.75}
 .holder-chip{border-left-width:2px}
 @media (max-width:640px){
   .consolidated-summary{flex-direction:column;align-items:flex-start;gap:4px;padding:8px 12px;font-size:12px}
@@ -743,7 +748,7 @@ th.sortable.desc .arrow::after{content:'▼'}
     <div class="holder-chips" id="holder-chips"></div>
     <div style="margin-top:12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
       <button class="btn ghost sm" onclick="showHolderManager()"><svg class="ic-svg" width="14" height="14"><use href="#i-gear"/></svg> 管理持有人</button>
-      <span class="note">点击下方账户卡片可查看该持有人 / 账户的详细持仓</span>
+      <span class="note">上方卡片仅作概览；点击下方账户列表中的卡片，可筛选并查看该持有人的详细持仓</span>
     </div>
   </div>
   <!-- 快捷录入 -->
@@ -1097,10 +1102,10 @@ function renderAnalysisChart(){
     if(wrap) wrap.classList.remove('no-detail');
     if(detail){
       detail.style.display='block';
-      detail.innerHTML = items.length ? items.map(d=>{
+      detail.innerHTML = (items.length ? items.map(d=>{
         const pct=(d.value/tot*100).toFixed(1);
-        return `<div class="ald-row${d.name==='未穿透资产'?' ald-unalloc':''}"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:${d.color}"></span><span class="ald-name-text">${escapeHtml(d.name)}</span>${d.name==='未穿透资产'?'<small class="ald-detail-link" onclick="showUnallocDetail()">查看明细</small>':''}</div><div class="ald-num">${fmtWan(d.value)}</div></div><div class="ald-bottom"><div class="ald-bar"><div style="width:${pct}%;background:${d.color}"></div></div><div class="ald-pct">${pct}%</div></div></div></div>`;
-      }).join('')+`<div class="ald-row ald-tot"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:transparent"></span><span class="ald-name-text">合计</span></div><div class="ald-num">${fmtWan(tot)}</div></div></div></div>` : '';
+        return `<div class="ald-row${d.name==='未归类金额'?' ald-unalloc':''}"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:${d.color}"></span><span class="ald-name-text">${escapeHtml(d.name)}</span>${d.name==='未归类金额'?'<small class="ald-detail-link" onclick="showUnallocDetail()">查看明细</small>':''}</div><div class="ald-num">${fmtWan(d.value)}</div></div><div class="ald-bottom"><div class="ald-bar"><div style="width:${pct}%;background:${d.color}"></div></div><div class="ald-pct">${pct}%</div></div></div></div>`;
+      }).join('')+`<div class="ald-row ald-tot"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:transparent"></span><span class="ald-name-text">合计</span></div><div class="ald-num">${fmtWan(tot)}</div></div></div></div>` : '')+`<div class="ald-row" style="padding:8px 0;font-size:11px;color:var(--dim);line-height:1.5">💡 若出现「未归类金额」，通常是有资产未设置分类、现金未绑定子账户，或存在换算差额。金额大于 ¥0 时可点击该项查看明细。</div>`;
     }
   } else {
     if(wrap) wrap.classList.add('no-detail');
@@ -1199,7 +1204,7 @@ function renderHolderMgmt(){
   chips.innerHTML=hs.map(h=>`<div class="holder-chip" style="border-left-color:${h.color||'#94a3b8'}">
       <div class="hc-name">${h.name}</div>
       <div class="hc-val">${fmtCny(h.value)}</div>
-      <div class="hc-pct">占总资产 ${tot?((h.value/tot)*100).toFixed(1):'0'}%</div>
+      <div class="hc-pct">占全部持有人资产 ${tot?((h.value/tot)*100).toFixed(1):'0'}%</div>
     </div>`).join('')||'<div style="color:var(--dim)">暂无持有人</div>';
 }
 let acctSort='default';
@@ -1392,15 +1397,15 @@ function renderConsolidated(){
   const _csAll=DATA.category_summary||[];
   const _cashSet=new Set(['现金','货币基金','银行理财']);
   const _cashSum=_csAll.filter(d=>_cashSet.has(d.name)).reduce((s,d)=>s+d.value,0);
-  const _unallocSum=(_csAll.find(d=>d.name==='未穿透资产')||{}).value||0;
-  const _mvSum=_csAll.filter(d=>!_cashSet.has(d.name)&&d.name!=='未穿透资产').reduce((s,d)=>s+d.value,0);
+  const _unallocSum=(_csAll.find(d=>d.name==='未归类金额')||{}).value||0;
+  const _mvSum=_csAll.filter(d=>!_cashSet.has(d.name)&&d.name!=='未归类金额').reduce((s,d)=>s+d.value,0);
   const _pano=_mvSum+_cashSum+_unallocSum;
   document.getElementById('consolidated-summary').innerHTML=
     consolActiveChips()+
     `<span class="cs-total">市值合计 <b>${fmtCny(totalMv)}</b></span>`+
     `<span class="cs-pnl ${upClass}">盈亏 <b>${totalPnl>=0?'+':''}${fmtCny(totalPnl)}</b></span>`+
     `<span class="cs-count">共 ${rows.length} 项</span>`+
-    `<div class="cs-recon" style="width:100%;margin-top:4px;padding-top:6px;border-top:1px dashed var(--border);font-size:11px;color:var(--dim)">口径对齐：市值合计 <b style="color:var(--text)">${fmtCny(_mvSum)}</b> ｜ + 现金 <b style="color:var(--text)">${fmtCny(_cashSum)}</b> ｜ + 未穿透 <b style="color:var(--text)">${fmtCny(_unallocSum)}</b> ＝ 全景 <b style="color:var(--text)">${fmtCny(_pano)}</b> <small>（首页总资产 ${fmtCny(DATA.total.cny)}，差额 ${fmtCny(Math.abs(_pano-DATA.total.cny))}）</small></div>`;
+    `<div class="cs-recon" style="width:100%;margin-top:4px;padding-top:6px;border-top:1px dashed var(--border);font-size:11px;color:var(--dim)">核对说明：投资市值 <b style="color:var(--text)">${fmtCny(_mvSum)}</b> ＋ 现金 <b style="color:var(--text)">${fmtCny(_cashSum)}</b> ＋ 未归类金额 <b style="color:var(--text)">${fmtCny(_unallocSum)}</b> ＝ 页面总资产 <b style="color:var(--text)">${fmtCny(_pano)}</b> <small>（与首页总资产 ${fmtCny(DATA.total.cny)} 相差 ${fmtCny(Math.abs(_pano-DATA.total.cny))}，为汇率换算四舍五入造成）</small></div>`;
 
   // 紧凑行渲染（点击展开完整卡片，方案A+滚动容器）
   document.getElementById('consolidated-body').innerHTML=rows.map((r,idx)=>{
@@ -2583,7 +2588,7 @@ function recomputeAggregations(){
     const _explained=unallocDetail.reduce((s,x)=>s+x.value,0);
     const _rest=Math.round(unalloc)-_explained;
     if(_rest>0) unallocDetail.push({name:'账户总额与穿透明细的未解释差额',value:_rest});
-    category_summary.push({name:'未穿透资产',value:Math.round(unalloc),pct:Math.round(unalloc/(total_cny)*1000)/10,color:'#cbd5e1',detail:unallocDetail});
+    category_summary.push({name:'未归类金额',value:Math.round(unalloc),pct:Math.round(unalloc/(total_cny)*1000)/10,color:'#cbd5e1',detail:unallocDetail});
   }
   // 地域：严格按【所在地管理】设置中的地点名汇总（按持仓 location 归类，重命名实时生效）
   const normLoc=s=>((s||'').trim().replace(/\s+/g,''));
@@ -2723,17 +2728,20 @@ function isFundLike(r){
   if(/(中|美|港)基金/.test(_cat)) return true;
   return false;
 }
-/* 批2 #10：未穿透资产明细弹窗（展示孤儿分类构成，仅供查看，不修改任何数据） */
+/* 批2 #10：未归类金额明细弹窗（展示孤儿分类构成，仅供查看，不修改任何数据） */
 function showUnallocDetail(){
-  const entry=(DATA.category_summary||[]).find(x=>x.name==='未穿透资产');
+  const entry=(DATA.category_summary||[]).find(x=>x.name==='未归类金额');
   const detail=(entry&&entry.detail)||[];
   const rows=detail.length?detail.map(d=>`<div class="mgr-item" style="cursor:default"><span class="mgr-name">${escapeHtml(d.name)}</span><span style="margin-left:auto;font-weight:700;color:#0f172a">${fmtCny(d.value)}</span></div>`).join('')
-    :'<div class="mgr-empty">暂无明细（未穿透资产已归零）</div>';
+    :'<div class="mgr-empty">暂无明细（未归类金额已归零）</div>';
   const old=document.getElementById('unalloc-modal'); if(old)old.remove();
-  const html=`<div class="modal open" id="unalloc-modal" style="display:flex" onclick="if(event.target===this)closeUnallocDetail()"><div class="box" style="max-width:460px"><div class="mhead"><h3>未穿透资产明细</h3><button class="x" aria-label="关闭" onclick="closeUnallocDetail()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-tip">以下条目构成「未穿透资产」（孤儿分类 / 未入穿透明细的现金 / 总额与明细的未解释差额），合计等于环形图上的未穿透金额：</div><div class="mgr-list">${rows}</div></div><div class="mgr-foot"><button class="btn" onclick="closeUnallocDetail()">完成</button></div></div></div></div>`;
+  const html=`<div class="modal open" id="unalloc-modal" style="display:flex" onclick="if(event.target===this)closeUnallocDetail()"><div class="box" style="max-width:460px"><div class="mhead"><h3>未归类金额明细</h3><button class="x" aria-label="关闭" onclick="closeUnallocDetail()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-tip">「未归类金额」是系统无法自动归入子账户分类、所在地或投资项目的资产残差。常见原因：新增资产没设置分类、现金没绑定子账户、或汇率换算/四舍五入产生的微小差额。下面列出具体构成：</div><div class="mgr-list">${rows}</div></div><div class="mgr-foot"><button class="btn" onclick="closeUnallocDetail()">完成</button></div></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function closeUnallocDetail(){const m=document.getElementById('unalloc-modal');if(m)m.remove();}
+/* 流水类型中文标签的唯一真源：renderTx 与 openAcct 的「账户流水」区块共用，
+   避免两处各写一份 map 后漂移出不一致的类型名。声明位置必须早于 openAcct 首次调用（TDZ）。 */
+const TX_TYPE_LABEL={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整',balance_change:'余额变更',edit:'编辑'};
 function openAcct(aid){
   window._openAcctId=aid;
   const a=DATA.accounts.find(x=>x.id===aid); if(!a)return;
@@ -2991,16 +2999,66 @@ function openAcct(aid){
   let txNote='';
   if(dc!==0 && !autoCash()) txNote=`<div style="margin:4px 0 0 24px;font-size:12px;color:#64748b">累计交易流水净影响（买/卖/转入/转出/分红/收入，独立于上方现金小计）：<span class="${dc>=0?'gn':'rd'}">${dc>=0?'+':''}${fmtCny(dc)}</span><br><span style="color:#0e7490">现金合计已按现金子账户（现金小计）计算，不再叠加流水。流水净影响与现金小计的差额可一键登记：<span style="cursor:pointer;font-weight:700;text-decoration:underline;color:#0e7490" onclick="calibrateCashFromTx('${aid}')">点此一键校准现金</span></span></div>`;
   h='<div class="mkv" style="background:#ecfeff;color:#0e7490;margin:12px 0"><svg class="ic-svg" width="14" height="14"><use href="#i-coin"/></svg> 现金合计（= 现金小计，本位币折算） <b>'+fmtCny(dch)+'</b> · <span class="addsec" style="cursor:pointer;font-weight:700" onclick="showAddForm(\''+aid+'\',\'cash_holdings\')">＋ 添加现金/债券/稳定币</span></div>'+txNote+h;
+  /* ===== 账户流水（按单条 DATA.transactions 记录渲染，可行内编辑）=====
+     与下方「流水调整持仓」的区别（这是第7条反馈的真根因）：
+       · 那张表来自 txSecurities()，只捞 buy/sell 且按 asset_name 聚合，一行对应 N 条流水、
+         拿不到 tx id，所以根本挂不了 ✎；且账户若无 buy/sell 就整块不渲染
+         （"富途没有、盈立香港有"的真因，与 account_type/platform 白名单无关）。
+       · 本区块一行 = 一条流水，带得动 id，✎ 直接调 openTxEdit(t, aid)。
+     数据真源是全局 DATA.transactions（不是 a.transactions）。转账记录没有 t.account 字段，
+     只有 account_from/account_to，故过滤口径对齐 txCashDelta()/txDerivedNet()，三者都要匹配，
+     否则账户详情会漏掉全部转账。空账户也必须渲染本区块——"所有账户结构一致"是本次诉求核心。 */
+  const _atxs=(DATA.transactions||[])
+    .filter(t=>t&&(t.account===aid||t.account_from===aid||t.account_to===aid))
+    .slice().sort((x,y)=>String(y.date||'').localeCompare(String(x.date||'')));
+  const _atxCls={buy:'t-astock',sell:'t-struct',transfer:'t-cash',manual_adjust:'t-bond',balance_change:'t-bal',dividend:'t-bond'};
+  let atxHtml='<div class="mt" style="color:#0e7490;display:flex;justify-content:space-between;align-items:center"><span><svg class="ic-svg" width="14" height="14"><use href="#i-doc"/></svg> 账户流水 <small style="font-weight:400;color:var(--dim);font-size:11px">（该账户名下全部流水，按日期倒序 · 共 '+_atxs.length+' 条）</small></span>'+(_atxs.length?'<span class="addsec" onclick="openTxModal(\'buy\')">＋ 记一笔</span>':'')+'</div>';
+  if(!_atxs.length){
+    atxHtml+='<div class="mgr-empty">该账户暂无流水记录 · <span class="addsec" onclick="openTxModal(\'buy\')">＋ 记一笔</span></div>';
+  } else {
+    atxHtml+='<div class="tablewrap"><table class="mtab"><thead><tr><th>日期</th><th>类型</th><th>标的·对手方</th><th>数量</th><th>金额</th><th>币种</th><th>操作</th></tr></thead><tbody>';
+    _atxs.forEach(t=>{
+      const ccy=t.currency||'CNY';
+      let target='',sign='−';
+      if(t.type==='transfer'){
+        target=escapeHtml(acctName(t.account_from))+' → '+escapeHtml(acctName(t.account_to));
+        sign=(t.account_from===aid)?'−':'+';
+        /* 断链转账（对手方账户不存在）被 _txPeerAlive 挡在 txDerivedNet / recomputeCashAccount
+           建桶分支之外，不参与任何余额推导；此处只做只读提示，避免用户困惑"记了却没进账"。 */
+        if(!_txPeerAlive(t)) target+=' <span class="tag t-bal" style="font-size:10px" title="对手方账户不存在，该笔转账不参与余额推导">⚠ 断链</span>';
+      } else if(t.type==='balance_change'){
+        target='余额 '+Number(t.from||0).toFixed(2)+' → '+Number(t.to||0).toFixed(2);
+        sign=Number(t.amount)>=0?'+':'−';
+      } else if(t.type==='income'||t.type==='dividend'){
+        target=escapeHtml(t.name||t.income_type||'');
+        sign='+';
+      } else {
+        target=escapeHtml(t.asset_name||'')+(t.code?('('+escapeHtml(t.code)+')'):'');
+        sign=(t.type==='sell')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
+      }
+      const qty=(t.quantity==null||t.quantity==='')?'—':t.quantity;
+      /* 可编辑口径对齐 renderTx（balance_change 无 ✎）与 renderLedger（只读行显示「审计」）：
+         balance_change 是直接改现金余额时系统自动写入的、adjust 是数量调整的派生记录，
+         二者都没有对应的录入表单，openTxEdit 也会直接 return，故只给删除。 */
+      const editable=(t.type!=='balance_change'&&t.type!=='adjust');
+      const ops=(editable
+        ? '<button class="edt" title="编辑" onclick="openTxEdit(DATA.transactions.find(x=>x.id===\''+t.id+'\'),\''+aid+'\')" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> '
+        : '<span style="color:var(--dim);font-size:11px;margin-right:4px" title="系统自动生成，不可编辑，仅可删除">审计</span>')
+        +'<button class="del" title="删除该条流水" onclick="delTx(\''+t.id+'\')" aria-label="删除">×</button>';
+      atxHtml+=`<tr><td>${t.date||'—'}</td><td><span class="tag ${_atxCls[t.type]||'t-afund'}">${TX_TYPE_LABEL[t.type]||'其他'}</span></td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${escapeAttr(t.asset_name||t.name||'')}">${target||'—'}</td><td>${qty}</td><td class="${sign==='+'?'gn':'rd'}">${sign}${fmtNative(Math.abs(Number(t.amount)||0),ccy)}</td><td>${ccy}</td><td>${ops}</td></tr>`;
+    });
+    atxHtml+='</tbody></table></div>';
+  }
   const dsec=txSecurities(a.id);
   let dsecHtml='';
   if(dsec.length){
-    dsecHtml+='<div class="mt" style="color:#0e7490;display:flex;justify-content:space-between;align-items:center"><span><svg class="ic-svg" width="14" height="14"><use href="#i-doc"/></svg> 流水调整持仓 <small style="font-weight:400;color:var(--dim);font-size:11px">（来自交易流水 buy/sell 反算，不计入资产汇总）</small></span><span style="font-size:11px;color:var(--dim)">如需编辑请到「交易」页操作</span></div><table class="mtab"><thead><tr><th>#</th><th>标的</th><th>市场</th><th>数量</th><th>成本(CNY)</th><th></th></tr></thead><tbody>';
+    dsecHtml+='<div class="mt" style="color:#0e7490;display:flex;justify-content:space-between;align-items:center"><span><svg class="ic-svg" width="14" height="14"><use href="#i-doc"/></svg> 流水调整持仓 <small style="font-weight:400;color:var(--dim);font-size:11px">（来自交易流水 buy/sell 反算净持仓，不计入资产汇总）</small></span></div><table class="mtab"><thead><tr><th>#</th><th>标的</th><th>市场</th><th>数量</th><th>成本(CNY)</th><th></th></tr></thead><tbody>';
     dsec.forEach((t,idx)=>{ dsecHtml+=`<tr><td>${idx+1}</td><td><b>${t.asset_name}</b></td><td>${t.market||''}</td><td>${t.quantity}</td><td>${fmtCny(t.cost||0)}</td><td><button class="del" title="删除该标的的所有底层交易流水" onclick="delTxSecurity('${aid}','${(t.asset_name||'').replace(/'/g,"\\'")}')" aria-label="删除该标的的所有底层交易流水">×</button></td></tr>`; });
     dsecHtml+='</tbody></table>';
   }
   h='<div class="mkv">账户总资产 '+tot+' <small style="color:var(--dim)">('+fmtNative(natTot,natCCY)+' '+natCCY+')</small></div>'+
     '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"><button class="btn sm" onclick="showEditAccountModal(\''+aid+'\')" style="white-space:nowrap"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑账户</button><button class="btn ghost sm" onclick="showDetailOrder(\''+aid+'\')" style="white-space:nowrap">⇅ 排序区块</button><button class="btn ghost sm" onclick="refreshCryptoQuotes()" style="white-space:nowrap">🔄 刷新行情</button><button class="btn danger sm" onclick="deleteAccount(\''+aid+'\')" style="white-space:nowrap"><svg class="ic-svg" width="14" height="14"><use href="#i-trash"/></svg> 删除账户</button></div>'+
-    h+dsecHtml;
+    h+atxHtml+dsecHtml;
   const _mb=document.getElementById('modal-body'); if(_mb)_mb.innerHTML=h;
   const _am=document.getElementById('acct-modal'); if(_am)_am.classList.add('open');
   syncModalScrollLock();
@@ -5883,8 +5941,10 @@ function editLedgerRow(id,src){
   else if(src==='计划确认'){toast('计划确认项请在待确认事项中撤销后重新确认');return;}
   else if(src==='手动录入'){toast('手动录入项请在收入页编辑');return;}
 }
-/* 编辑已存在的交易：预填 openTxModal，并将「保存」改为「先删旧再添新」 */
-function openTxEdit(t){
+/* 编辑已存在的交易：预填 openTxModal，并将「保存」改为「先删旧再添新」
+   onDoneAid（可选）：从账户详情弹窗的「账户流水」区块进来时传账户 id，
+   保存链路收尾追加 openAcct(aid)，让账户弹窗就地刷新，不必手动重开。 */
+function openTxEdit(t, onDoneAid){
   // 余额变更是系统自动生成（直接改现金余额时写入），仅可删除，不可编辑
   if(t&&t.type==='balance_change'){ toast('余额变更为系统自动生成，不可编辑，仅可删除'); return; }
   // 先打开对应类型的录入弹窗
@@ -5918,9 +5978,17 @@ function openTxEdit(t){
         if(document.getElementById('tx-instrument')) document.getElementById('tx-instrument').value=t.asset_name||'';
         if(document.getElementById('tx-ccy-multi')) seedMultiInput('tx-ccy-multi',[t.currency||'CNY']);
       }
-      // 改保存按钮：先删旧再保存
+      /* 改保存按钮：先删旧再保存。
+         ⚠ 必须保持「delTx → addTx」这条链路，严禁改成对原对象原地 patch 字段。
+         转账改对手方时，旧 from/to 与新 from/to 共 4 个账户各要跑一次 recomputeCashAccount：
+         delTx(L5317) 覆盖旧的两个、addTx(L5266) 覆盖新的两个，只有先删后加才刚好补齐。
+         原地改字段会漏掉旧收款方，其现金桶不会缩回，全站总资产虚增。 */
       const btn=document.querySelector('#tx-modal .mbody .btn:not(.ghost)');
-      if(btn){ btn.setAttribute('onclick','delTx(\''+t.id+'\');addTx();document.getElementById(\'tx-modal\').remove();renderLedger();'); }
+      if(btn){
+        let _act='delTx(\''+t.id+'\');addTx();document.getElementById(\'tx-modal\').remove();renderLedger();';
+        if(onDoneAid) _act+='openAcct(\''+String(onDoneAid).replace(/'/g,"\\'")+'\');';
+        btn.setAttribute('onclick',_act);
+      }
     }catch(e){console.error('openTxEdit prefill',e);}
   },30);
 }
@@ -5957,7 +6025,7 @@ function renderTx(){
       amount:0, currency:'', fee:0, status:'', _src:'edit'
     }));
   const all=[...txRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const typeLabel={income:'收入',transfer:'转账',buy:'买入',sell:'卖出',dividend:'股息',manual_adjust:'手动调整',adjust:'数量调整',balance_change:'余额变更',edit:'编辑'};
+  const typeLabel=TX_TYPE_LABEL;
   document.getElementById('tx-body').innerHTML=all.map(t=>{
     if(t._src==='edit'){
       return `<tr><td>${t.date||'—'}</td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
@@ -6465,7 +6533,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-04-v75';
+const APP_VERSION='2026-08-04-v76';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7194,22 +7262,209 @@ function sanitizeTxns(txns, income){
   var out=[]; for(var j=0;j<txns.length;j++){ var t=txns[j]; if(t&&t.id&&ids[t.id]) continue; out.push(t); }
   return out;
 }
+/* ===================== 标的完整编辑（需求2） =====================
+   标的表是【派生】的：buildInstrumentMap 把「sec + 归一名」跨全部账户聚合成一行，
+   refCount 可以 >1。所以「编辑标的」本质是【批量 patch N 条底层记录】，
+   真源数组是 a.securities / a.fund_holdings / a.crypto / a.cash_holdings（见 _INSTR_SECS）。
+   ⚠ a.holdings 是 recomputePortfolio 派生出来的只读投影，写它无效、会被下一次重算覆盖。 */
+
+/* 收集某标的对应的全部底层记录（跨账户），返回 [{a, it}]。
+   现金桶必须连币种一起比：buildInstrumentMap 给 cash 的 key 是 'cash:CCY::canon'，
+   只按名字匹配会把「USD 活期」和「HKD 活期」当成同一个标的一起改。 */
+function _instrMatches(sec, raw, ccy){
+  const meta=_INSTR_SECS.find(s=>s.key===sec); if(!meta) return [];
+  const eq=v=>v!=null&&String(v).trim().toUpperCase()===String(raw).trim().toUpperCase();
+  const out=[];
+  (Array.isArray(DATA.accounts)?DATA.accounts:[]).forEach(a=>{
+    const arr=a[sec]; if(!Array.isArray(arr))return;
+    arr.forEach(it=>{
+      if(!it||!eq(it[meta.nameField])) return;
+      if(sec==='cash_holdings' && ccy && String(it.currency||'CNY').toUpperCase()!==String(ccy).trim().toUpperCase()) return;
+      out.push({a:a,it:it});
+    });
+  });
+  return out;
+}
+/* 下拉选项：首项固定「（不修改）」。
+   common===null 表示 N 条引用在该字段上取值不一致 → 额外插入「（多个值）」并默认停在那里。
+   选中「（不修改）」/「（多个值）」时保存阶段不写该字段 —— 绝不能把差异值一把抹平。 */
+function _instrSelOpts(opts, common){
+  let h='<option value="__keep">（不修改）</option>';
+  if(common===null) h+='<option value="__multi" selected>（多个值）</option>';
+  const list=(opts||[]).slice();
+  // 列表外的历史值也要能显示出来，否则「保持原值」会被渲染成「（不修改）」，用户看不到现状
+  if(common!=null && common!=='' && list.indexOf(common)<0) list.push(common);
+  list.forEach(o=>{ h+='<option value="'+escapeAttr(o)+'"'+((common!=null&&String(o)===String(common))?' selected':'')+'>'+escapeHtml(o)+'</option>'; });
+  return h;
+}
+function showInstrumentEditModal(payloadJson){
+  let p; try{p=JSON.parse(payloadJson);}catch(e){ toast('标的信息解析失败'); return; }
+  const meta=_INSTR_SECS.find(s=>s.key===p.sec);
+  /* sec 为 'transaction' / 'income' 的行是流水/收入里的孤立引用，没有底层持仓记录，
+     属性无处可写，退回原来的纯改名弹窗（renameInstrument 仍会级联改流水与收入）。 */
+  if(!meta) return showRenameModal('instrument', payloadJson);
+  const hits=_instrMatches(p.sec,p.raw,p.ccy);
+  if(!hits.length){ toast('未找到「'+p.raw+'」的底层持仓记录'); return; }
+  const uniq=f=>{ const s=new Set(hits.map(h=>{const v=h.it[f];return v==null?'':String(v);})); return s.size===1?[...s][0]:null; };
+  const isCash=(p.sec==='cash_holdings');
+  /* 通用现金桶（名字就是币种代码）= 收入币种主桶，creditIncomeToCash 依赖它，
+     且 cashNameCanon/isGenericCash 决定桶身份 —— 名称与币种一律锁死。
+     instrCanRename 已经锁了名称，这里把币种一并锁上，否则改币种会让
+     dedupInstruments 把两个桶意外合并（金额相加 + 写墓碑）。 */
+  const generic=isCash && hits.some(h=>isGenericCash(h.it));
+  const accCount=new Set(hits.map(h=>h.a.id||h.a.name)).size;
+  const lock='<span class="lockmark" title="不可修改">🔒</span>';
+  const kind=p.kind||meta.kind;
+
+  const nameRow=generic
+    ? '<div class="row"><label>名称</label><input value="'+escapeAttr(p.raw)+'" disabled>'+lock+'</div>'
+    : '<div class="row"><label>名称</label><input id="instr-e-name" value="'+escapeAttr(p.raw)+'"></div>';
+  const typeRow='<div class="row"><label>标的类型</label><select id="instr-e-kind" disabled><option>'+escapeHtml(kind)+'</option></select>'+lock+'</div>';
+  const ccyRow=generic
+    ? '<div class="row"><label>币种</label><input value="'+escapeAttr(uniq('currency')||p.ccy||'CNY')+'" disabled>'+lock+'</div>'
+    : '<div class="row"><label>币种</label><select id="instr-e-ccy">'+_instrSelOpts(getCashCcys(),uniq('currency'))+'</select></div>';
+  const ctypeRow=isCash
+    ? '<div class="row"><label>现金类型</label><select id="instr-e-ctype">'+_instrSelOpts(getCashTypes(),uniq('type'))+'</select></div>' : '';
+
+  const refTip=(hits.length>1)
+    ? '<div class="mgr-tip">改动将写入该标的的 '+hits.length+' 处引用（'+accCount+' 个账户）</div>' : '';
+  const genericTip=generic
+    ? '<div class="mgr-tip">币种通用现金桶与收入币种是同一个对象，名称/币种改掉即断链，已锁定；其余属性可改。</div>' : '';
+
+  const html='<div class="modal open" id="instr-edit-modal" style="display:flex">'
+    +'<div class="box" style="max-width:460px">'
+    +'<div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 编辑标的</h3>'
+    +'<button class="x" aria-label="关闭" onclick="document.getElementById(\'instr-edit-modal\').remove()">×</button></div>'
+    +'<div class="mbody">'
+    +refTip+genericTip
+    +'<div class="mgr-title">身份</div>'
+    +'<div class="tx-form">'+nameRow+typeRow+'</div>'
+    +'<div class="mgr-tip">类型由所属持仓表决定（记录落在 securities / fund_holdings / crypto / cash_holdings 哪个数组里），没有独立字段，本版不做跨数组搬迁。</div>'
+    +'<div class="mgr-title">归属</div>'
+    +'<div class="tx-form">'+ccyRow+ctypeRow
+    +'<div class="row"><label>子账户</label><select id="instr-e-cat">'+_instrSelOpts(catNames(),uniq('asset_category'))+'</select></div>'
+    +'<div class="row"><label>投资项目</label><select id="instr-e-proj">'+_instrSelOpts(getProjects(),uniq('project'))+'</select></div>'
+    +'<div class="row"><label>所在地</label><select id="instr-e-loc">'+_instrSelOpts(getLocations(),uniq('location'))+'</select></div>'
+    +'</div>'
+    +'<div class="mgr-tip">选择「（不修改）」或「（多个值）」的字段一律不写入，多处引用的差异值会原样保留。</div>'
+    +'<div class="mgr-foot"><button class="btn ghost" onclick="document.getElementById(\'instr-edit-modal\').remove()">取消</button>'
+    +'<button class="btn" onclick="saveInstrumentAttrs(\''+escapeAttr(payloadJson)+'\')">保存</button></div>'
+    +'</div></div></div>';
+  const old=document.getElementById('instr-edit-modal'); if(old)old.remove();
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function saveInstrumentAttrs(payloadJson){
+  let p; try{p=JSON.parse(payloadJson);}catch(e){ toast('保存失败：标的信息解析异常'); return; }
+  const meta=_INSTR_SECS.find(s=>s.key===p.sec); if(!meta){ toast('该标的无底层持仓记录'); return; }
+  const hits=_instrMatches(p.sec,p.raw,p.ccy);
+  if(!hits.length){ toast('未找到「'+p.raw+'」的底层持仓记录'); return; }
+
+  const pick=id=>{ const e=document.getElementById(id); if(!e||e.disabled) return null; const v=e.value; return (v==='__keep'||v==='__multi')?null:v; };
+  const nameEl=document.getElementById('instr-e-name');
+  const newName=(nameEl&&!nameEl.disabled)?String(nameEl.value||'').trim():'';
+  const ccyNew=pick('instr-e-ccy'), catNew=pick('instr-e-cat'),
+        projNew=pick('instr-e-proj'), locNew=pick('instr-e-loc'),
+        typeNew=(p.sec==='cash_holdings')?pick('instr-e-ctype'):null;
+
+  /* resolveCatId 有副作用：遇到 getCategories() 里没有的名字会自动 saveCategories 新建一个分类。
+     只允许传 catNames() 里已存在的值，否则一次脏输入就往分类表注入垃圾分类。币种同理。 */
+  if(catNew!=null && catNames().indexOf(catNew)<0){ toast('子账户「'+catNew+'」不在列表中，未保存'); return; }
+  if(ccyNew!=null && getCashCcys().indexOf(ccyNew)<0){ toast('币种「'+ccyNew+'」不在列表中，未保存'); return; }
+
+  let changed=0; const accts=new Set(); let ccyMoved=0;
+  hits.forEach(h=>{
+    const it=h.it;
+    const oldCcy=String(it.currency||'CNY').toUpperCase();
+    const willChangeCcy=(ccyNew!=null && String(ccyNew).toUpperCase()!==oldCcy);
+
+    /* —— 改币种的墓碑处理（只对现金桶写，非现金【绝不能写】）——
+       cash_holdings：getItemKey = 'cash:<currency>:<cashNameCanon>'，含币种段。
+         币种一变同步键就变，unionHoldings(cashHoldingKeyFn) 会把云端旧键当成另一条现金
+         → 同币种出现两条、账户现金翻倍。对【变更前】的旧键写墓碑精确命中云端旧条目。
+       非现金：getItemKey = 'sec:NAME'，【不含币种】。给它写墓碑等于给改完之后的这条记录
+         本身写墓碑 —— purgeDeletedItems 按同一个键过滤 a[sec]，会把用户的正品持仓
+         连同云端副本一起删光。数据丢失远比重复严重，所以这里绝不写。
+         非现金也不需要写：unionHoldings._put 有「同 id 硬去重」前置分支（xid in idIdx
+         即合并、绝不新起行），证券/基金/加密记录都带 id（v47 保 id 修复保证，
+         下方自测亦断言），币种变了也不会产生孪生行。 */
+    if(willChangeCcy && p.sec==='cash_holdings'){
+      try{ addDeletedItem(h.a.id||h.a.name,'cash_holdings',{name:it.name,currency:it.currency}); ccyMoved++; }catch(e){}
+    }
+
+    const patch={};
+    if(ccyNew!=null)  patch.currency=ccyNew;
+    if(projNew!=null) patch.project=projNew;
+    if(locNew!=null)  patch.location=locNew;
+    if(typeNew!=null) patch.type=typeNew;
+    if(catNew!=null){
+      /* 改子账户必须同写两个字段：resolveCatName 是 cat_id 优先（catNameById(r.cat_id) 命中就返回），
+         只写 asset_category 的话饼图 / 透视表 / 聚合读到的还是旧 cat_id ——
+         会做出一个「能改但没反应」的表单。 */
+      patch.asset_category=catNew;
+      patch.cat_id=resolveCatId(catNew);
+    }
+    if(!Object.keys(patch).length) return;
+
+    /* 字段级 Object.assign，永不重建对象。
+       绝不走 addHolding / commitAdd：它按 SEC_SCHEMA 全量重建对象，而 SEC_SCHEMA 里没有 id，
+       只靠 4 行补丁把 id/cat_id/_credits/_manual_base 补回来（v47 的 id 丢失事故就出在这条链上）；
+       它还从不按新 asset_category 重算 cat_id（走它改子账户 100% 不生效），
+       且每次编辑都会抹掉证券的 asset_type。
+       显式不碰：id / _credits / _manual_base / code / asset_type / market / _editBaselineQty。 */
+    Object.assign(it, patch);
+    changed++; accts.add(h.a.id||h.a.name);
+
+    /* 币种变了必须重算市值，否则「港币改美元金额纹丝不动」，总资产口径又分裂。 */
+    if(willChangeCcy && p.sec==='securities'){
+      const mv=secMvFields(it.quantity,it.price,it.currency||'CNY');
+      it.market_value_cny=mv.market_value_cny;
+      it.market_value_hkd=mv.market_value_hkd;
+      it.market_value_usd=mv.market_value_usd;
+      calcSecPnl(it);
+    }
+  });
+
+  // 改名沿用既有级联链路（账户持仓 + 流水 asset_name + 收入 name 一起改，内部已含收尾五步）
+  let renamed=false;
+  if(newName && newName!==String(p.raw)) renamed=(renameInstrument(p.sec,p.raw,newName)!==false);
+
+  const m=document.getElementById('instr-edit-modal'); if(m)m.remove();
+  if(!changed && !renamed){ toast('没有需要保存的修改'); return; }
+
+  /* 收尾五步，与 renameInstrument 同一套；只改属性没改名的路径靠这里补齐。 */
+  try{dedupInstruments();}catch(e){}
+  try{saveEditsLocal();}catch(e){}
+  try{recomputePortfolio();}catch(e){}
+  try{patchAllSchema();}catch(e){}
+  const desc=[];
+  if(renamed) desc.push('名称→'+newName);
+  if(ccyNew!=null) desc.push('币种→'+ccyNew);
+  if(typeNew!=null) desc.push('现金类型→'+typeNew);
+  if(catNew!=null) desc.push('子账户→'+catNew);
+  if(projNew!=null) desc.push('项目→'+projNew);
+  if(locNew!=null) desc.push('所在地→'+locNew);
+  try{ logActivity('编辑标的', p.raw+' · '+(desc.join(' / ')||'无字段变更')+' · 写入'+changed+'处/'+accts.size+'个账户'+(ccyMoved?(' · 旧现金键墓碑'+ccyMoved+'条'):'')); }catch(e){}
+  try{ showInstrumentManager(); }catch(e){}
+  toast('已保存：'+p.raw+(desc.length?('（'+desc.join('、')+'）'):''));
+}
 function showInstrumentManager(){
   const old=document.getElementById('instr-modal');if(old)old.remove();
   const list=getInstruments();
   const items=list.map((it)=>{
-    const payload = escapeAttr(JSON.stringify({sec:it.sec,raw:it.display}));
+    // ccy/kind 一并带上：现金桶的标的身份 = 币种 + 规范名，只带 raw 会跨币种误伤
+    const payload = escapeAttr(JSON.stringify({sec:it.sec,raw:it.display,ccy:it.ccy,kind:it.kind}));
     const mergeHint = it.refCount>1 ? `<span class="mgr-tag" title="该标的有多处引用">${it.refCount}处</span>` : '';
-    const renameBtn = instrCanRename(it)
-      ? `<button class="mgr-edit" onclick="showRenameModal('instrument','${payload}')" title="改名（一处改全站同步）" aria-label="改名"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`
-      : `<span class="mgr-lock" title="币种现金桶与收入币种是同一个，锁定不可改名">🔒</span>`;
+    /* 需求2：✎ 从「只能改名」升级为完整编辑（名称/币种/子账户/项目/所在地/现金类型）。
+       通用现金桶不再整个禁用编辑 —— 弹窗里把名称与币种锁死、其余属性照常可改。 */
+    const renameBtn = `<button class="mgr-edit" onclick="showInstrumentEditModal('${payload}')" title="编辑标的（名称/币种/子账户/项目/所在地，一处改全站同步）" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button>`
+      + (instrCanRename(it) ? '' : `<span class="mgr-lock" title="币种现金桶与收入币种是同一个，名称与币种锁定不可改">🔒</span>`);
     const mergeBtn = instrCanMerge(it,list)
       ? `<button class="mgr-merge" onclick="showMergeInstrumentModal('${payload}')" title="并入另一个标的（合并重复标的）" aria-label="合并">⇢</button>` : '';
     const delBtn = instrCanDelete(it)
       ? `<button class="del" onclick="delInstrumentItem('${payload}')" aria-label="删除">×</button>` : '';
     return `<div class="mgr-item" draggable="true" data-key="${escapeAttr(it.key)}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(it.display)} <span class="mgr-sub">${it.kind}${it.ccy?(' · '+it.ccy):''}</span></span>${mergeHint}<span style="display:flex;gap:8px">${renameBtn}${mergeBtn}${delBtn}</span></div>`;
   }).join('');
-  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ⋮⋮ 排序 · ✎ 改名（一处改，账户持仓/流水/收入全站同步）· ⇢ 合并到另一个标的 · × 删除（删后无持仓的标的自动消失，不留孤儿）· 🔒 币种现金桶与收入币种是同一个，锁定不可改</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
+  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ⋮⋮ 排序 · ✎ 编辑（名称/币种/子账户/项目/所在地，一处改，账户持仓/流水/收入全站同步）· ⇢ 合并到另一个标的 · × 删除（删后无持仓的标的自动消失，不留孤儿）· 🔒 币种现金桶与收入币种是同一个，名称与币种锁定不可改</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
   document.querySelectorAll('#instr-modal .mgr-item').forEach(el=>{
     el.addEventListener('dragstart',instrDragStart);
