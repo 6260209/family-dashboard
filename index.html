@@ -471,6 +471,9 @@ tbody tr:hover{background:#f8fafc}
 .ald-tot{margin-top:8px;padding-top:10px;border-top:2px solid #e2e8f0}
 .ald-tot .ald-name{color:#0f172a}
 .ald-tot .ald-num{color:#0f172a;font-weight:700}
+.ald-detail-link{cursor:pointer;color:#0ea5e9;font-size:11px;font-weight:600;margin-left:6px}
+.ald-detail-link:hover{text-decoration:underline}
+.ald-unalloc .ald-name-text{color:#64748b}
 .analysis-wrap.no-detail .analysis-detail{display:none}
 .analysis-wrap.no-detail #chartAnalysis{flex:1 1 100%;max-width:100%}
 @media(max-width:640px){
@@ -1096,7 +1099,7 @@ function renderAnalysisChart(){
       detail.style.display='block';
       detail.innerHTML = items.length ? items.map(d=>{
         const pct=(d.value/tot*100).toFixed(1);
-        return `<div class="ald-row"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:${d.color}"></span><span class="ald-name-text">${escapeHtml(d.name)}</span></div><div class="ald-num">${fmtWan(d.value)}</div></div><div class="ald-bottom"><div class="ald-bar"><div style="width:${pct}%;background:${d.color}"></div></div><div class="ald-pct">${pct}%</div></div></div></div>`;
+        return `<div class="ald-row${d.name==='未穿透资产'?' ald-unalloc':''}"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:${d.color}"></span><span class="ald-name-text">${escapeHtml(d.name)}</span>${d.name==='未穿透资产'?'<small class="ald-detail-link" onclick="showUnallocDetail()">查看明细</small>':''}</div><div class="ald-num">${fmtWan(d.value)}</div></div><div class="ald-bottom"><div class="ald-bar"><div style="width:${pct}%;background:${d.color}"></div></div><div class="ald-pct">${pct}%</div></div></div></div>`;
       }).join('')+`<div class="ald-row ald-tot"><div class="ald-info"><div class="ald-top"><div class="ald-name"><span class="ald-dot" style="background:transparent"></span><span class="ald-name-text">合计</span></div><div class="ald-num">${fmtWan(tot)}</div></div></div></div>` : '';
     }
   } else {
@@ -1385,11 +1388,19 @@ function renderConsolidated(){
   const totalMv=rows.reduce((s,r)=>s+r.mv,0);
   const totalPnl=rows.reduce((s,r)=>s+r.pnl,0);
   const upClass=totalPnl>=0?'up':'down';
+  // 批2 #11 补行：口径对齐首页总资产（仅展示，严禁改动任何总额计算）
+  const _csAll=DATA.category_summary||[];
+  const _cashSet=new Set(['现金','货币基金','银行理财']);
+  const _cashSum=_csAll.filter(d=>_cashSet.has(d.name)).reduce((s,d)=>s+d.value,0);
+  const _unallocSum=(_csAll.find(d=>d.name==='未穿透资产')||{}).value||0;
+  const _mvSum=_csAll.filter(d=>!_cashSet.has(d.name)&&d.name!=='未穿透资产').reduce((s,d)=>s+d.value,0);
+  const _pano=_mvSum+_cashSum+_unallocSum;
   document.getElementById('consolidated-summary').innerHTML=
     consolActiveChips()+
     `<span class="cs-total">市值合计 <b>${fmtCny(totalMv)}</b></span>`+
     `<span class="cs-pnl ${upClass}">盈亏 <b>${totalPnl>=0?'+':''}${fmtCny(totalPnl)}</b></span>`+
-    `<span class="cs-count">共 ${rows.length} 项</span>`;
+    `<span class="cs-count">共 ${rows.length} 项</span>`+
+    `<div class="cs-recon" style="width:100%;margin-top:4px;padding-top:6px;border-top:1px dashed var(--border);font-size:11px;color:var(--dim)">口径对齐：市值合计 <b style="color:var(--text)">${fmtCny(_mvSum)}</b> ｜ + 现金 <b style="color:var(--text)">${fmtCny(_cashSum)}</b> ｜ + 未穿透 <b style="color:var(--text)">${fmtCny(_unallocSum)}</b> ＝ 全景 <b style="color:var(--text)">${fmtCny(_pano)}</b> <small>（首页总资产 ${fmtCny(DATA.total.cny)}，差额 ${fmtCny(Math.abs(_pano-DATA.total.cny))}）</small></div>`;
 
   // 紧凑行渲染（点击展开完整卡片，方案A+滚动容器）
   document.getElementById('consolidated-body').innerHTML=rows.map((r,idx)=>{
@@ -2394,6 +2405,11 @@ function jBuildFlat(accounts){
         const _unit=(_lp!=null)?_lp:(h.cost_price!=null&&Number(h.cost_price)>0?Number(h.cost_price):null);
         if(_unit>0 && h.qty!=null) _mvRaw=Number(h.qty)*_unit;
       } else if(h.source==='sec'){ const _lp=secLivePrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; else _mvRaw=Number(h.value||0); }
+      else if(h.source==='fund'||h.source==='struct'){
+        // 批2 #1/#11 同源修复：基金/结构性产品用真实市值(value)；value 缺失才回退 qty×price
+        if(h.value!=null && Number(h.value)>0){ _mvRaw=Number(h.value); }
+        else if(h.qty!=null && h.price!=null && Number(h.price)>0){ _mvRaw=Number(h.qty)*Number(h.price); }
+      }
       const mv=toCny(_mvRaw,ccy);
       let pnl=null; if(h.pnl!=null&&h.pnl!==''){pnl=toCny(h.pnl,ccy);}
       const name=String(h.name||'');
@@ -2528,7 +2544,11 @@ function recomputeAggregations(){
   for(const c of settingsCats){const v=cat_sum[c];if(v>0){const cid=(getCategories().find(x=>x.name===c)||{}).id;category_summary.push({name:c,value:Math.round(v),pct:Math.round(v/(total_cny)*1000)/10,color:catColor(cid)});}}
   if(cat_sum['未分类']>0)category_summary.push({name:'未分类',value:Math.round(cat_sum['未分类']),pct:Math.round(cat_sum['未分类']/(total_cny)*1000)/10,color:catColor(null)});
   const unalloc=total_cny-category_summary.reduce((s,x)=>s+x.value,0);
-  if(unalloc>total_cny*0.003)category_summary.push({name:'未穿透资产',value:Math.round(unalloc),pct:Math.round(unalloc/(total_cny)*1000)/10,color:'#cbd5e1'});
+  if(unalloc>total_cny*0.003){
+    // 批2 #10：记录未穿透资产的构成明细（孤儿分类，不含已命名的设置子账户），供「查看明细」弹窗
+    const unallocDetail=Object.keys(cat_sum).filter(k=>!settingsCats.includes(k)&&cat_sum[k]>0).map(k=>({name:k,value:Math.round(cat_sum[k])})).sort((a,b)=>b.value-a.value);
+    category_summary.push({name:'未穿透资产',value:Math.round(unalloc),pct:Math.round(unalloc/(total_cny)*1000)/10,color:'#cbd5e1',detail:unallocDetail});
+  }
   // 地域：严格按【所在地管理】设置中的地点名汇总（按持仓 location 归类，重命名实时生效）
   const normLoc=s=>((s||'').trim().replace(/\s+/g,''));
   const settingsLocs=getLocations();
@@ -2653,6 +2673,31 @@ function ensureAcctModal(){
   d.innerHTML='<div class="box"><div class="mhead"><h3 id="modal-title"></h3><button class="x" onclick="closeAcct()" aria-label="关闭">×</button></div><div class="mbody" id="modal-body"></div></div>';
   document.body.appendChild(d);
 }
+/* 批2 #5/#1 同源修复：基金/结构性产品判定（白名单组合）。
+   孤儿分类（cat 名含「中/美/港基金」）、source==='fund'、asset_type 含结构/FCN、
+   名称含基金/QDII/ETF联接/指数/债基/FOF 均命中。
+   用于 openAcct 证券区块内基金按基金模式展示，以及账户弹窗整分类切基金布局（去数量/现价列）。 */
+function isFundLike(r){
+  if(!r) return false;
+  if(r.source==='fund') return true;
+  if(r.source==='struct' && /结构|FCN|结构性/.test(r.asset_type||'')) return true;
+  const _nm=(r.asset_name||r.name||'');
+  if(/基金|QDII|ETF联接|指数(型)?|债基|FOF/.test(_nm)) return true;
+  const _cat=(r.asset_category||recCatName(r)||'');
+  if(/(中|美|港)基金/.test(_cat)) return true;
+  return false;
+}
+/* 批2 #10：未穿透资产明细弹窗（展示孤儿分类构成，仅供查看，不修改任何数据） */
+function showUnallocDetail(){
+  const entry=(DATA.category_summary||[]).find(x=>x.name==='未穿透资产');
+  const detail=(entry&&entry.detail)||[];
+  const rows=detail.length?detail.map(d=>`<div class="mgr-item" style="cursor:default"><span class="mgr-name">${escapeHtml(d.name)}</span><span style="margin-left:auto;font-weight:700;color:#0f172a">${fmtCny(d.value)}</span></div>`).join('')
+    :'<div class="mgr-empty">暂无明细（未穿透资产低于阈值或未包含孤儿分类）</div>';
+  const old=document.getElementById('unalloc-modal'); if(old)old.remove();
+  const html=`<div class="modal open" id="unalloc-modal" style="display:flex" onclick="if(event.target===this)closeUnallocDetail()"><div class="box" style="max-width:460px"><div class="mhead"><h3>未穿透资产明细</h3><button class="x" aria-label="关闭" onclick="closeUnallocDetail()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-tip">以下孤儿分类未被【子账户管理】识别，故归入「未穿透资产」：</div><div class="mgr-list">${rows}</div></div><div class="mgr-foot"><button class="btn" onclick="closeUnallocDetail()">完成</button></div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function closeUnallocDetail(){const m=document.getElementById('unalloc-modal');if(m)m.remove();}
 function openAcct(aid){
   window._openAcctId=aid;
   const a=DATA.accounts.find(x=>x.id===aid); if(!a)return;
@@ -2777,9 +2822,25 @@ function openAcct(aid){
     const r=it.record, sec=it.section;
     let type='',name='',proj='',qty='',cost='',price='',mv='',mvCny=0,pnl='',pnlCls='',pct='',pctCls='',ccy='',cat='',loc='',notes='',edt='',del='';
     let amountVal=0,pnlVal=0;
+    // —— 批2 #5/#1 同源修复：孤儿基金/结构性产品（白名单判定，不依赖孤儿分类名）按基金口径展示 ——
+    // 命中 isFundLike 则走基金展示分支：不渲染数量/现价（填 —），市值用真实 value，根治"证券分支误显数量/现价 + 单行 ¥0"。
+    const _isFund=isFundLike(r);
     if(sec==='securities'){
       ccy=r.currency||'CNY';
-      name=r.asset_name||'(未命名)'; qty=r.quantity||'';   // v47：无名条目也要出现在表里，不能因没名字就不显示这笔钱
+      name=r.asset_name||'(未命名)';
+      if(_isFund){
+        qty='—'; cost='—'; price='—';
+        const _fv=(r.value!=null&&Number(r.value)>0)?Number(r.value):(Number(r.amount||0)>0?Number(r.amount):(secValRaw(r)||0));
+        amountVal=_fv; mv=fmtNative(_fv,ccy); mvCny=toCny(_fv,ccy);
+        const _p=(r.pnl!=null)?r.pnl:(r.profit!=null?r.profit:0);
+        pnlVal=_p||0;
+        pnl=(_p!=null&&_p!=='')?((_p>=0?'+':'')+fmtNative(_p,ccy)):'—'; pnlCls=(_p!=null&&_p>=0)?'gn':'rd';
+        const _pp=(r.pnl_pct!=null)?r.pnl_pct:(r.pct!=null?r.pct:null);
+        pct=(_pp!=null)?((_pp>=0?'+':'')+(_pp+'%')):''; pctCls=(_pp!=null&&_pp>=0)?'gn':'rd';
+        proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
+        edt=editBtnOf('securities',r,it.idx); del=delBtnOf('securities',r,it.idx);
+      } else {
+      qty=r.quantity||'';   // v47：无名条目也要出现在表里，不能因没名字就不显示这笔钱
       const qtyN=(r.quantity!=null)?Number(r.quantity):null;
       const costN=(r.cost_price!=null)?Number(r.cost_price):null;
       // 实时行情覆盖：缓存有该证券实时价则用它重算 现价/市值/盈亏；否则回退存储价(r.price) → 成本价
@@ -2798,6 +2859,7 @@ function openAcct(aid){
       pct=(pp!=null)?((pp>=0?'+':'')+pp.toFixed(2)+'%'):''; pctCls=(pp!=null&&pp>=0)?'gn':'rd';
       proj=r.project||''; cat=recCatName(r); loc=r.location||''; notes=r.notes||'';
       edt=editBtnOf('securities',r,it.idx); del=delBtnOf('securities',r,it.idx);
+      }
     } else if(sec==='fund_holdings'){
       ccy=r.currency||'CNY';
       name=r.name||''; qty='—'; cost='—'; price='—';
@@ -2861,7 +2923,7 @@ function openAcct(aid){
   orderedCats.forEach(catName=>{
     const items=catItems[catName]||[];
     if(!items.length) return;
-    const isFund=catModeOf(catName)==='fund';
+    const isFund=catModeOf(catName)==='fund' || (items.length>0 && items.every(it=>isFundLike(it.record)));
     h+='<div class="mt" style="margin-top:16px;font-size:14px;font-weight:700">'+escapeHtml(catName)+' <span style="font-size:11px;color:var(--dim);font-weight:400">'+items.length+'项</span></div>';
     if(isFund){
       h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">标的名称<span class="arrow"></span></th><th>投资项目</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">金额（原币种）<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">盈亏<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">收益率<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">子账户<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">所在地<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">备注<span class="arrow"></span></th><th></th></tr></thead><tbody>';
@@ -6367,7 +6429,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-04-v72';
+const APP_VERSION='2026-08-04-v73';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
