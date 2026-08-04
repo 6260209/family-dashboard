@@ -338,6 +338,8 @@ tbody tr:hover{background:#f8fafc}
 .consol-cat-chip{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;white-space:nowrap;flex-shrink:0}
 .consol-mv{margin-left:auto;font-weight:700;font-size:13px;color:var(--text);white-space:nowrap;flex-shrink:0}
 .consol-pnl-badge{font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px;flex-shrink:0;white-space:nowrap;width:52px;text-align:center}
+.consol-edit{margin-left:6px;flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:14px;line-height:1;padding:4px 6px;border-radius:6px;opacity:.7;transition:background .12s,opacity .12s}
+.consol-edit:hover{background:#e2e8f0;opacity:1}
 .consol-pnl-up{color:#b91c1c;background:#fef2f2}.consol-pnl-down{color:#166534;background:#f0fdf4}
 .consol-detail{display:none;background:#f8fbff;border-top:1px solid #e8ecf4;padding:10px 12px}
 .consol-detail.open{display:block}
@@ -570,6 +572,9 @@ th.sortable.desc .arrow::after{content:'▼'}
 .holder-chip .hc-name{font-size:var(--fs-sm);font-weight:600;color:var(--text)}
 .holder-chip .hc-val{font-size:var(--fs-2xl);font-weight:700;margin-top:3px;line-height:1.1}
 .holder-chip .hc-pct{font-size:var(--fs-xs);color:var(--dim);margin-top:3px}
+/* #9 持有人卡片视觉区分：👤 前缀 + 更细色条，避免与资产配置占比混淆 */
+.holder-chip .hc-name::before{content:'👤 持有人 ';font-size:11px;opacity:.75}
+.holder-chip{border-left-width:2px}
 @media (max-width:640px){
   .consolidated-summary{flex-direction:column;align-items:flex-start;gap:4px;padding:8px 12px;font-size:12px}
   .consolidated-tabs .ctab{padding:6px 12px;font-size:12px}
@@ -751,7 +756,7 @@ th.sortable.desc .arrow::after{content:'▼'}
   </div>
   <!-- 全账户资产聚合（已合并到账户区：跨账户合并持仓，一处改价全账户联动） -->
   <div class="card" id="consolidated-card">
-    <div class="ct"><svg class="ic-svg" width="16" height="16"><use href="#i-stack"/></svg> 全账户资产聚合 <button class="btn ghost sm" style="margin-left:auto" onclick="showCategoryManager()" title="排序分类：拖动或 ▲▼ 调整顺序（含现金置顶）" aria-label="排序分类">⇅ 排序分类</button><button class="btn ghost sm" style="margin-left:8px" onclick="showFilterLayoutManager()" title="排序筛选维度：拖动调整顺序、勾选置顶" aria-label="排序筛选维度">⇅ 排序筛选</button></div>
+    <div class="ct"><svg class="ic-svg" width="16" height="16"><use href="#i-stack"/></svg> 全账户资产聚合 <button class="btn ghost sm" style="margin-left:auto" onclick="showCategoryManager()" title="排序分类：拖动或 ▲▼ 调整顺序（含现金置顶）" aria-label="排序分类">⇅ 排序分类</button><button class="btn ghost sm" style="margin-left:8px" onclick="showFilterLayoutManager()" title="排序筛选维度：拖动调整顺序、勾选置顶" aria-label="排序筛选维度">⇅ 排序筛选</button><button class="btn ghost sm" style="margin-left:8px" onclick="showDetailOrder('')" title="排序区块（聚合表子账户顺序）" aria-label="排序区块">⇅ 排序区块</button></div>
     <div class="consolidated-tabs" id="consol-pinned"></div>
     <div style="margin:2px 0 10px">
       <button class="btn ghost sm" id="more-filters-toggle" onclick="toggleMoreFilters()" aria-expanded="false">更多筛选 ▾</button>
@@ -1002,7 +1007,8 @@ function initMeta(){
   let expectedAnnualYield='—';
   try{
     const g=getGoals();const apct=Number(g.annualRate)||0;
-    if(apct>0){expectedAnnualYield='≈'+fmtCny(Math.round(DATA.total.cny*apct/100));}
+    const totalCny=(DATA&&DATA.total)?(DATA.total.cny||0):0;
+    if(apct>0 && totalCny>0){expectedAnnualYield='≈'+fmtCny(Math.round(totalCny*apct/100));}
   }catch(e){}
   const mcards=[
     {k:'今年收入',v:(yearIncome>=0?'+':'')+fmtCny(yearIncome),c:yearIncome>=0?'pos':'neg'},
@@ -1414,6 +1420,7 @@ function renderConsolidated(){
       ${hasQty?`<span class="consol-qty" title="持仓数量（跨账户合计）">${qDisp}</span>`:''}
       <span class="consol-mv">${fmtCny(r.mv)}</span>
       <span class="consol-pnl-badge ${pnlCls}">${pctStr}</span>
+      <button class="consol-edit" title="编辑（跳转到账户持仓）" onclick="event.stopPropagation();jumpToEditConsol(${idx})">✏️</button>
     </div>`;
     // ---- 展开详情（完整卡片：原生市值 + 数量/现价/成本/盈亏 + 账户分布表，#2）----
     const headMV=mixedCcy?fmtCny(r.mv):fmtMVNative(r.mv,r.currency);
@@ -1444,7 +1451,7 @@ function renderConsolidated(){
       let foot;
       if(mixedCcy){ foot=fmtCny(r.mv)+' CNY'; }
       else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
-      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr><th>账户</th><th>持有人</th><th>数量</th><th>现价</th><th>市值</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="4">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">账户<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">持有人<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">数量<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">现价<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">市值<span class="arrow"></span></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="4">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
@@ -2609,10 +2616,48 @@ function blockDragEnd(){_blkDragFrom=null;document.querySelectorAll('#blk-modal 
 function moveDetailBlock(idx,dir){const o=getDetailOrder();const j=idx+dir;if(j<0||j>=o.length)return;const [it]=o.splice(idx,1);o.splice(j,0,it);setDetailOrder(o);showDetailOrder(_detailOrderAid);}
 function resetDetailOrder(){setDetailOrder(getCategories().filter(c=>c&&c.id).map(c=>c.id));showDetailOrder(_detailOrderAid);}
 function closeDetailOrder(){const m=document.getElementById('blk-modal');if(m)m.remove();if(_detailOrderAid)openAcct(_detailOrderAid);}
+/* #3 通用表格排序：点击表头按该列升/降序重排 tbody 行（仅前端，不改数据）；箭头由 th.sortable 的 .asc/.desc 触发 CSS 伪元素 */
+function sortTableByCol(th){
+  try{
+    const table=th.closest('table'); if(!table)return;
+    const tb=table.querySelector('tbody'); if(!tb)return;
+    let colIdx=0; const ths=th.parentNode.children;
+    for(let i=0;i<ths.length;i++){ if(ths[i]===th){colIdx=i;break;} }
+    const rows=Array.prototype.slice.call(tb.querySelectorAll('tr'));
+    const dir=th.classList.contains('asc')?'desc':'asc';
+    rows.sort(function(a,b){
+      const ac=a.children[colIdx], bc=b.children[colIdx];
+      const av=ac?ac.textContent.trim():'', bv=bc?bc.textContent.trim():'';
+      const an=parseFloat(av.replace(/[^0-9.\-]/g,'')), bn=parseFloat(bv.replace(/[^0-9.\-]/g,''));
+      const r=(!isNaN(an)&&!isNaN(bn))?(an-bn):av.localeCompare(bv,'zh');
+      return dir==='asc'?r:-r;
+    });
+    rows.forEach(function(r){ tb.appendChild(r); });
+    table.querySelectorAll('th.sortable').forEach(function(x){ x.classList.remove('asc','desc'); });
+    th.classList.add(dir);
+  }catch(e){ console.error('sortTableByCol',e); }
+}
+/* #6 聚合行 → 跳转到该标的所属账户的持仓详情 */
+function jumpToEditConsol(idx){
+  const row=(typeof consolRows!=='undefined'&&consolRows[idx])||(DATA.flat&&DATA.flat[idx]);
+  if(!row||!row.raws||!row.raws.length)return;
+  const firstRaw=row.raws[0];
+  if(firstRaw&&firstRaw.aid){ openAcct(firstRaw.aid); }
+}
+/* openAcct 硬 bug 修复：确保账户弹窗骨架存在，任意场景下 getElementById 都不会为 null */
+function ensureAcctModal(){
+  if(document.getElementById('acct-modal'))return;
+  const d=document.createElement('div');
+  d.className='modal'; d.id='acct-modal';
+  d.setAttribute('onclick',"if(event.target===this)closeAcct()");
+  d.innerHTML='<div class="box"><div class="mhead"><h3 id="modal-title"></h3><button class="x" onclick="closeAcct()" aria-label="关闭">×</button></div><div class="mbody" id="modal-body"></div></div>';
+  document.body.appendChild(d);
+}
 function openAcct(aid){
   window._openAcctId=aid;
   const a=DATA.accounts.find(x=>x.id===aid); if(!a)return;
-  document.getElementById('modal-title').innerHTML=
+  ensureAcctModal();
+  const _mt=document.getElementById('modal-title'); if(_mt)_mt.innerHTML=
     '<span class="tag '+(acctCurrency(a)==='HKD'?'t-hk':acctCurrency(a)==='USD'?'t-us':acctCurrency(a)==='USDT'?'t-crypto':'t-astock')+'" style="font-size:12px">'+acctCurrency(a)+'</span> '
     +a.platform+' <span class="htag">'+a.holder+'</span> · '
     +(a.account_category||a.account_type||'');
@@ -2819,9 +2864,9 @@ function openAcct(aid){
     const isFund=catModeOf(catName)==='fund';
     h+='<div class="mt" style="margin-top:16px;font-size:14px;font-weight:700">'+escapeHtml(catName)+' <span style="font-size:11px;color:var(--dim);font-weight:400">'+items.length+'项</span></div>';
     if(isFund){
-      h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>金额（原币种）</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
+      h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">标的名称<span class="arrow"></span></th><th>投资项目</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">金额（原币种）<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">盈亏<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">收益率<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">子账户<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">所在地<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">备注<span class="arrow"></span></th><th></th></tr></thead><tbody>';
     } else {
-      h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th>标的名称</th><th>投资项目</th><th>数量</th><th>成本价</th><th>现价</th><th>市值</th><th>币种</th><th>盈亏</th><th>收益率</th><th>子账户</th><th>所在地</th><th>备注</th><th></th></tr></thead><tbody>';
+      h+='<div class="tablewrap"><table class="mtab"><thead><tr><th>#</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">标的名称<span class="arrow"></span></th><th>投资项目</th><th>数量</th><th>成本价</th><th>现价</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">市值<span class="arrow"></span></th><th>币种</th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">盈亏<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">收益率<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">子账户<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">所在地<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">备注<span class="arrow"></span></th><th></th></tr></thead><tbody>';
     }
     let catCny=0;
     items.forEach((it,li)=>{
@@ -2858,8 +2903,8 @@ function openAcct(aid){
   h='<div class="mkv">账户总资产 '+tot+' <small style="color:var(--dim)">('+fmtNative(natTot,natCCY)+' '+natCCY+')</small></div>'+
     '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"><button class="btn sm" onclick="showEditAccountModal(\''+aid+'\')" style="white-space:nowrap"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑账户</button><button class="btn ghost sm" onclick="showDetailOrder(\''+aid+'\')" style="white-space:nowrap">⇅ 排序区块</button><button class="btn ghost sm" onclick="refreshCryptoQuotes()" style="white-space:nowrap">🔄 刷新行情</button><button class="btn danger sm" onclick="deleteAccount(\''+aid+'\')" style="white-space:nowrap"><svg class="ic-svg" width="14" height="14"><use href="#i-trash"/></svg> 删除账户</button></div>'+
     h+dsecHtml;
-  document.getElementById('modal-body').innerHTML=h;
-  document.getElementById('acct-modal').classList.add('open');
+  const _mb=document.getElementById('modal-body'); if(_mb)_mb.innerHTML=h;
+  const _am=document.getElementById('acct-modal'); if(_am)_am.classList.add('open');
   syncModalScrollLock();
 }
 function closeAcct(){document.getElementById('acct-modal').classList.remove('open');syncModalScrollLock();}
@@ -6185,7 +6230,7 @@ function renderGoal(){
   const miles=(g.milestones||[]);
   let h=`<div class="set-row"><div><div class="lbl">总资产目标（CNY）</div><div class="desc">设定总资产里程碑，进度自动按当前市值计算</div></div><div style="display:flex;gap:6px;align-items:center"><input id="goal-target" type="number" value="${target}" style="width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px"> <button class="btn sm" onclick="saveGoalTarget()">保存</button></div></div>`;
   h+=`<div class="goal-bar" style="height:32px;position:relative"><i style="width:${pct}%;border-radius:10px;${pct>=100?'background:linear-gradient(135deg,#16a34a,#22c55e);box-shadow:0 0 12px rgba(22,163,74,.4)':''}"></i><span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:14px;font-weight:800;color:${pct>50?'#fff':'#475569'};text-shadow:0 1px 2px rgba(0,0,0,.15);pointer-events:none">${pct}%</span></div>`;
-  h+=`<div style="font-size:13px;color:${pct>=100?'#16a34a':'var(--dim)'};margin:6px 0 12px;font-weight:${pct>=100?'700':'400'}">当前 ¥${fmt(cur)} / 目标 ¥${fmt(target)} · 完成度 <b>${pct}%${pct>=100?' <svg class="ic-svg" width="14" height="14"><use href="#i-star"/></svg> 已达成':''}</b></div>`;
+  h+=`<div style="font-size:13px;color:${pct>=100?'#16a34a':'var(--dim)'};margin:6px 0 12px;font-weight:${pct>=100?'700':'400'}">当前 ¥${fmt(cur)} / 目标 ${target>0?('¥'+fmt(target)):'未设定'} · 完成度 <b>${pct}%${pct>=100?' <svg class="ic-svg" width="14" height="14"><use href="#i-star"/></svg> 已达成':''}</b></div>`;
   h+=`<div class="set-row" style="flex-direction:column;align-items:stretch;gap:8px;margin:10px 0"><div><div class="lbl"><svg class="ic-svg" width="14" height="14"><use href="#i-chart-line"/></svg> 增长预测参数（仅预测）</div><div class="desc">调整即实时预览上方曲线；点「保存预测设置」固化</div></div><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;color:var(--dim)"><span>未来</span><input id="fc-years" type="number" min="1" max="40" value="${g.fcYears||10}" style="width:54px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px" oninput="saveGoalForecast();renderGoalGrowth()"><span>年</span><span>年化</span><input id="fc-rate" type="number" step="0.1" min="0.1" max="50" value="${g.annualRate||18}" style="width:54px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px" oninput="saveGoalForecast();renderGoalGrowth()"><span>%</span><span>每月定投</span><input id="fc-dca" type="number" min="0" step="100" value="${g.dca||1000}" style="width:72px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px" oninput="saveGoalForecast();renderGoalGrowth()"><span>元</span><button class="btn sm ghost" onclick="saveGoalForecast();toast('预测设置已保存')">保存预测设置</button></div></div>`;
   h+=`<div class="ct" style="font-size:13px;margin:4px 0 6px;color:var(--dim)"><svg class="ic-svg" width="16" height="16" style="margin-right:2px"><use href="#i-chart-line"/></svg> 资产增长预测（复利 · 仅预测）</div><div id="goal-growth" class="chart" style="height:280px"></div>`;
   h+=`<div id="goal-est" style="font-size:12px;color:#0ea5e9;margin:8px 0 4px;font-weight:600;display:none"></div>`;
@@ -6322,7 +6367,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-04-v71';
+const APP_VERSION='2026-08-04-v72';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -8197,10 +8242,11 @@ try{migrateCategoryModel();}catch(e){console.error('migrateCategoryModel:',e)}
 /* 加载时即按【设置】重建子账户/地域/持有人等聚合分组（名称对齐设置项），保留文件权威总资产 */
 try{recomputeAggregations();}catch(e){console.error('recomputeAggregations on load:',e)}
 try{enrichExistingAssets();}catch(e){console.error('enrichExistingAssets:',e)}
-try{initMeta();}catch(e){console.error('initMeta:',e)}
-/* 注意：初始化时需重建 DATA.flat（补齐 sec/idx 定位器供卡片标签使用），
-   但重建会覆盖 DATA.total → 保存权威值后立即还原（还原权威） */
 try{recomputePortfolio();}catch(e){console.error('init recomputePortfolio:',e)}
+/* 注意：初始化时需重建 DATA.flat（补齐 sec/idx 定位器供卡片标签使用），
+   但重建会覆盖 DATA.total → 保存权威值后立即还原（还原权威）。
+   必须排在 initMeta() 之前，否则首屏「预期年收益」读到的 DATA.total.cny 尚未赋值（#8 时序守卫） */
+try{initMeta();}catch(e){console.error('initMeta:',e)}
 /* 原注释：accountTotalCny() 对部分账户取 summary=0 会导致总和偏低。
    仅在本地编辑操作（afterEdit/addTx/deleteAccount/commitNewAccount）后才重算。 */
 try{renderAnalysisChart();}catch(e){console.error('renderAnalysisChart:',e)}
