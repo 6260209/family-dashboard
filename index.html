@@ -1954,6 +1954,15 @@ function normMarket(m, ccy){
   if(c==='CNY'||c==='RMB') return 'astock';
   return null;
 }
+// v90：美股代码归一。历史数据里美股 code 存在两种写法：裸代码（QQQM / VGT）与
+// 带交易所后缀（UNH.US / U.US / ARKK.US）。行情源（腾讯 usQQQM / 东财 105.QQQM /
+// 雅虎 QQQM）一律只认裸代码，带后缀会 404/none_match。这里在【收集符号】与【读缓存】
+// 两处统一剥掉后缀，保证 fetch 的键与 secLivePrice 读的键完全一致（否则拉了也读不到）。
+function normSecCode(market, code){
+  let c=String(code==null?'':code).trim().toUpperCase();
+  if(market==='us') c=c.replace(/\.[A-Z]{1,4}$/,'');
+  return c;
+}
 // 现金/类现金条目不应参与股票行情取价（历史脏数据里有现金被误存进 securities 的情况）
 function _isCashLike(r){
   const cat=String((r&&r.asset_category)||'');
@@ -1963,7 +1972,7 @@ function secLivePrice(r){
   if(!r || _isCashLike(r)) return null;
   const mktMap = normMarket(r.market, r.currency);
   if(!mktMap) return null;
-  const code = (r.code&&r.code.trim()) ? r.code.trim() : (r.asset_name||'');
+  const code = normSecCode(mktMap, (r.code&&r.code.trim()) ? r.code.trim() : (r.asset_name||''));
   if(!code) return null;
   return quoteLiveUnitPrice(mktMap, code);
 }
@@ -1986,7 +1995,7 @@ function _allSecSymbols(market){
     if(!t || _isCashLike(t)) return;
     const m = normMarket(t.market, t.currency);   // v43：兼容中文标签与空 market，见 normMarket
     if(m!==market) return;
-    const code = (t.code&&t.code.trim()) ? t.code.trim() : (t.asset_name||'');
+    const code = normSecCode(market, (t.code&&t.code.trim()) ? t.code.trim() : (t.asset_name||''));
     if(code) s.add(code);
   };
   (DATA.accounts||[]).forEach(a=>{ (a.securities||[]).forEach(match); });
@@ -2003,11 +2012,47 @@ async function _fetchJson(url, timeoutMs){
     return await r.json();
   } finally { clearTimeout(tid); }
 }
+// v90：纯文本行情源（腾讯 qt.gtimg.cn 返回 GBK 文本而非 JSON）专用 fetch。
+// 统一 AbortController 超时语义，与 _fetchJson 完全一致，避免卡死拖垮多源 fallback。
+async function _fetchText(url, timeoutMs){
+  timeoutMs = timeoutMs || 8000;
+  const ctrl = new AbortController();
+  const tid = setTimeout(function(){ try{ ctrl.abort(); }catch(_){} }, timeoutMs);
+  try{
+    const r = await fetch(url, {cache:'no-store', signal:ctrl.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.text();
+  } finally { clearTimeout(tid); }
+}
+// v90：解析腾讯行情文本（v_usQQQM="200~名称~代码~现价~昨收~今开~..."）。
+// 只认 ASCII 数字段（现价 = 第 4 个 ~ 分隔段，0 基下标 3），中文名是否被浏览器按
+// UTF-8 误解码不影响数字提取。多标的响应按 ; 分段，v_<市场前缀><代码>="..." 定位。
+function _parseTencent(txt, syms){
+  const m={};
+  const segs=String(txt||'').split(';');
+  for(let i=0;i<segs.length;i++){
+    const seg=segs[i];
+    const mm=String(seg).match(/v_([A-Za-z0-9_]+)="([^"]*)"/);
+    if(!mm) continue;
+    const key=String(mm[1]||'').trim();
+    const inner=mm[2]||'';
+    if(!key || /pv_none_match/i.test(inner)) continue;   // 无此代码/停牌占位
+    const code=key.replace(/^(us|sh|sz|hk)/i,'').toUpperCase();
+    if(!code) continue;
+    const parts=inner.split('~');
+    const price=Number(parts[3]);
+    if(!isFinite(price)||price<=0) continue;
+    const hit=syms.find(function(s){ return normSecCode('us', s).toUpperCase()===code; });
+    if(hit) m[hit]=price;
+  }
+  return m;
+}
 // 行情源（按市场分组；每组顺序 = 优先级，组内首成即停）
 //   buildUrls(syms): 返回该源要请求的一个或多个 URL
 //   parse(bodies, syms): 把响应体数组解析为 { 代码: USD单价 }，解析不出返回 {}
 // 证券市场代码 → 东方财富 secid 前缀：A股 1=沪(6开头)/0=深，港股 116，美股 105
 function _emSecid(market, code){
+  code=normSecCode(market, code);   // v90：剥掉 .US/.OQ 后缀，东财 secid 不认后缀
   if(market==='astock'){ return (code[0]==='6'||code[0]==='9')?'1.'+code:'0.'+code; }
   if(market==='hk'){ return '116.'+code; }
   if(market==='us'){ return '105.'+code; }
@@ -2033,6 +2078,14 @@ const QUOTE_SOURCES = {
     }
   ],
   astock: [
+    /* v90：腾讯源提到第一位 —— 实测本网络东财连接被断、新浪 DNS 失败，唯一可用的是
+       qt.gtimg.cn（sh/sz+代码，现价=第4段）。代码补齐（标的管理→编辑标的→证券代码）
+       后 A 股现价即时生效，不再被东财 8 秒超时拖后。 */
+    { name:'tencent',
+      text:true,
+      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return (s[0]==='6'||s[0]==='9'?'sh':'sz')+s; }).join(',')]; },
+      parse: function(bodies, syms){ return _parseTencent(bodies[0], syms); }
+    },
     { name:'eastmoney',
       buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('astock',s)+'&fields=f43,f57,f58,f60,f168,f169,f170'; }); },
       parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43)/100; }); return m; }
@@ -2040,13 +2093,14 @@ const QUOTE_SOURCES = {
     { name:'sina',
       buildUrls: function(syms){ return ['https://hq.sinajs.com.cn/list='+syms.map(function(s){ return (s[0]==='6'||s[0]==='9'?'sh':'sz')+s; }).join(',')]; },
       parse: function(bodies, syms){ const m={}; /* 新浪返回 GBK 文本，前端直连常因 CORS/编码失败 → 解析不出则自动 fallback 下一源 */ return m; }
-    },
-    { name:'tencent',
-      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return (s[0]==='6'||s[0]==='9'?'sh':'sz')+s; }).join(',')]; },
-      parse: function(bodies, syms){ const m={}; /* 腾讯返回 GBK 文本，同样可能编码失败 → 自动 fallback */ return m; }
     }
   ],
   hk: [
+    { name:'tencent',
+      text:true,
+      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return 'hk'+s; }).join(',')]; },
+      parse: function(bodies, syms){ return _parseTencent(bodies[0], syms); }
+    },
     { name:'eastmoney',
       buildUrls: function(syms){ return syms.map(function(s){ return 'https://push2.eastmoney.com/api/qt/stock/get?secid='+_emSecid('hk',s)+'&fields=f43,f57,f58,f60'; }); },
       parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; const d=b&&b.data; if(d&&d.f43) m[sym]=Number(d.f43)/1000; }); return m; }
@@ -2054,13 +2108,16 @@ const QUOTE_SOURCES = {
     { name:'sina',
       buildUrls: function(syms){ return ['https://hq.sinajs.com.cn/list='+syms.map(function(s){ return 'hk'+s; }).join(',')]; },
       parse: function(bodies, syms){ const m={}; return m; }
-    },
-    { name:'tencent',
-      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return 'hk'+s; }).join(',')]; },
-      parse: function(bodies, syms){ const m={}; return m; }
     }
   ],
   us: [
+    /* v90：腾讯美股源放到第一位 —— 实测本网络雅虎 403、东财连接被断、新浪 DNS 失败，
+       唯一可用的是 qt.gtimg.cn（us+裸代码，现价=第4段）。其余源保留作其它网络 fallback。 */
+    { name:'tencent',
+      text:true,
+      buildUrls: function(syms){ return ['https://qt.gtimg.cn/q='+syms.map(function(s){ return 'us'+s; }).join(',')]; },
+      parse: function(bodies, syms){ return _parseTencent(bodies[0], syms); }
+    },
     { name:'yahoo',
       buildUrls: function(syms){ return syms.map(function(s){ return 'https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(s)+'?range=1d&interval=1d'; }); },
       parse: function(bodies, syms){ const m={}; bodies.forEach(function(b,i){ const sym=syms[i]; try{ const r=b&&b.chart&&b.chart.result&&b.chart.result[0]; const p=r&&r.meta&&r.meta.regularMarketPrice; if(p) m[sym]=Number(p); }catch(e){} }); return m; }
@@ -2086,7 +2143,7 @@ async function fetchQuotes(market, syms, force){
   for(const src of sources){
     try{
       const urls = src.buildUrls(syms);
-      const bodies = await Promise.all(urls.map(function(u){ return _fetchJson(u, 8000); }));
+      const bodies = await Promise.all(urls.map(function(u){ return src.text ? _fetchText(u, 8000) : _fetchJson(u, 8000); }));
       const map = src.parse(bodies, syms);
       const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0 && _quoteSane(s, map[s]); });
       if(valid.length){
@@ -2254,7 +2311,25 @@ function fetchSecWhenReady(attempt){
   try{
     const has=(_allSecSymbols('astock').length+_allSecSymbols('hk').length+_allSecSymbols('us').length)>0;
     if(!has){ if(attempt<6){ setTimeout(function(){ try{fetchSecWhenReady(attempt+1);}catch(_){} }, 800); } return; }
-    fetchSecPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
+    fetchSecPrices(false).then(function(){
+      try{refreshCryptoViews();}catch(_){}
+      /* v90：首轮可能因云端 code 尚未落地 / 早期网络抖动（东财/新浪被墙的 8s 级联）
+         而全部失败 → 10 秒后只补「有 symbol 但 cache 缺失」的市场，force=true 绕过 TTL。
+         幂等：cache 已满时 todo=[]，不再发请求。 */
+      setTimeout(function(){
+        try{
+          const todo=['astock','hk','us'].filter(function(m){
+            const syms=_allSecSymbols(m);
+            if(!syms.length) return false;
+            return !syms.every(function(s){ const c=quoteCache[m+':'+s]; return c && (Date.now()-c.ts)<CRYPTO_TTL_MS; });
+          });
+          if(todo.length){
+            Promise.all(todo.map(function(m){ return fetchQuotes(m, _allSecSymbols(m), true).catch(function(){}); }))
+              .then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){});
+          }
+        }catch(_){}
+      }, 10000);
+    }).catch(function(){});
   }catch(e){ console.warn('fetchSecWhenReady:', e.message); }
 }
 // 等数据就绪再拉行情：云拉取(syncPullOnLoad)是异步的，启动时本地可能尚未含云端加密币持仓。
@@ -6638,7 +6713,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v88';
+const APP_VERSION='2026-08-05-v90';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7252,6 +7327,25 @@ function instrCanDelete(it){ return !!it && it.sec!=='cash_holdings'; }
    「底层就一样，改一处其他地方一起更新」——除账户持仓外，同名的流水 asset_name
    与收入记录 name 一并级联改写。改名后追加自愈合并，把同账户同标的的多条记录合计成一条，
    并写墓碑防止旧名被其它设备同步回来复活。 */
+/* v90：改名/合并时必须清掉【目标名】在该账户上的删除墓碑。
+   场景：xiejunchen_alipay 曾因历史合并尝试给「天弘恒生科技A」写过墓碑，随后被回滚；
+   现在用户把「天弘恒生科技ETF联接(QDII)A」合并成「天弘恒生科技A」—— 刚改完的名字
+   恰好命中旧墓碑，purgeDeletedItems 会把改好的条目当「已删」清掉，合并立刻消失。
+   用户主动改成这个名字 = 明确要复活它，墓碑应随之作废。 */
+function _clearNameTombstone(aid, sec, name){
+  try{
+    if(!aid) return;
+    const nm=String(name==null?'':name).trim(); if(!nm) return;
+    const del=getDeletedItems(); if(!del.length) return;
+    const set=new Set(del);
+    const k1=aid+'::'+sec+':'+nm.toUpperCase();          // 新归一格式
+    const k2=aid+'::'+sec+':'+nm;                         // 旧原样格式
+    let changed=false;
+    if(set.has(k1)){ set.delete(k1); changed=true; }
+    if(k2!==k1 && set.has(k2)){ set.delete(k2); changed=true; }
+    if(changed) localStorage.setItem('famdash_deleted_items', JSON.stringify([...set]));
+  }catch(_){}
+}
 function renameInstrument(sec, oldRaw, newRaw){
   newRaw=(newRaw||'').trim(); if(!newRaw||!oldRaw) return false;
   const eqOld=v=>v!=null&&String(v).trim().toUpperCase()===String(oldRaw).trim().toUpperCase();
@@ -7275,6 +7369,24 @@ function renameInstrument(sec, oldRaw, newRaw){
   });
   if(!changed) return false;
   dedupInstruments();   // 把同名（现统一为新名）的多条记录合并，金额合计
+  /* v90：改名/合并后统一层 a.holdings 必须与 legacy 数组重建同步。
+     v89 根因：mergeInstrument 只改了 a.fund_holdings，a.holdings 仍是两笔旧条目，
+     syncNow→doPull→applyCloudToData 用云端旧数据覆盖本地（云端还躺着两笔），
+     刷新后合并被撤销。此处对全部账户重建 holdings（价值按 id 保真，见
+     syncHoldingsFromLegacy 的 prevMap），本地渲染与推送快照立即进入合并后状态。 */
+  accs.forEach(function(a){ try{ syncHoldingsFromLegacy(a); }catch(_){} });
+  /* v90：目标名在受影响账户的删除墓碑必须作废（见 _clearNameTombstone 注释），
+     否则刚改好的名字会被 purgeDeletedItems 当「已删」清掉。 */
+  if(meta){
+    accs.forEach(function(a){
+      const arr=a[sec]; if(!Array.isArray(arr)) return;
+      const eqNew=v=>v!=null&&String(v).trim().toUpperCase()===String(newRaw).trim().toUpperCase();
+      if(arr.some(it=>eqNew(it[meta.nameField]))){
+        _clearNameTombstone(a.id||a.name, sec, newRaw);
+        _clearNameTombstone(a.id||a.name, 'holdings', newRaw);
+      }
+    });
+  }
   try{saveEditsLocal();}catch(e){}
   try{recomputePortfolio();}catch(e){}
   try{patchAllSchema();}catch(e){}
@@ -7307,6 +7419,22 @@ function dedupInstruments(){
           else if(s.key==='fund_holdings'){ main.amount=(Number(main.amount||0)+Number(it.amount||0)); main.profit=(Number(main.profit||0)+Number(it.profit||0)); }
           else if(s.key==='crypto'){ main.amount=(Number(main.amount||0)+Number(it.amount||0)); main.cost_price=it.cost_price!=null?it.cost_price:main.cost_price; }
           addDeletedItem(a.id||a.name, s.key, it); // 旧条目写墓碑，防多设备同步复活
+          /* v90：同一笔在统一层 a.holdings 的孪生条目也要写墓碑并剔除。
+             v89 根因：合并只写 legacy 层墓碑（fund_holdings:旧名），holdings 层没有对应墓碑，
+             syncPush→mergeAccountsForPush→unionHoldings 把云端旧 holdings 并集回来，
+             purgeDeletedItems 又因键不匹配挡不住 → 两标的在刷新后复活、合并被撤销。
+             这里按共享 id 精确剔除孪生并写 holdings 层墓碑，push/pull 两路都被挡住。 */
+          try{
+            if(it && it.id && Array.isArray(a.holdings)){
+              for(let j=a.holdings.length-1;j>=0;j--){
+                const hh=a.holdings[j];
+                if(hh && hh.id===it.id){
+                  addDeletedItem(a.id||a.name, 'holdings', hh);
+                  a.holdings.splice(j,1);
+                }
+              }
+            }
+          }catch(_){}
         }
         out.push(main);
       });
@@ -7425,6 +7553,15 @@ function showInstrumentEditModal(payloadJson){
     ? '<div class="row"><label>名称</label><input value="'+escapeAttr(p.raw)+'" disabled>'+lock+'</div>'
     : '<div class="row"><label>名称</label><input id="instr-e-name" value="'+escapeAttr(p.raw)+'"></div>';
   const typeRow='<div class="row"><label>标的类型</label><select id="instr-e-kind" disabled><option>'+escapeHtml(kind)+'</option></select>'+lock+'</div>';
+  /* v90：证券代码编辑。历史数据大量证券/基金 code 为空，导致行情拉取时把
+     「中文标的名称」当代码发给行情源（招商银行→0.招商银行 / usQQQM→空），
+     现价全成 —。这里给编辑弹窗补一个代码输入框：
+     留空 = 不修改（多处引用 code 不一致时也留空），填了就批量写入全部引用。
+     现金桶无行情，不显示该行。 */
+  const codeVal=isCash?null:uniq('code');
+  const codeRow=(p.sec==='cash_holdings')
+    ? ''
+    : '<div class="row"><label>证券代码</label><input id="instr-e-code" value="'+escapeAttr(codeVal==null?'':codeVal)+'" placeholder="'+(codeVal==null?'（多个值，留空不改）':'如 QQQM / 600036 / 01022')+'" autocomplete="off"></div>';
   const ccyRow=generic
     ? '<div class="row"><label>币种</label><input value="'+escapeAttr(uniq('currency')||p.ccy||'CNY')+'" disabled>'+lock+'</div>'
     : '<div class="row"><label>币种</label><select id="instr-e-ccy">'+_instrSelOpts(getCashCcys(),uniq('currency'))+'</select></div>';
@@ -7443,7 +7580,7 @@ function showInstrumentEditModal(payloadJson){
     +'<div class="mbody">'
     +refTip+genericTip
     +'<div class="mgr-title">身份</div>'
-    +'<div class="tx-form">'+nameRow+typeRow+'</div>'
+    +'<div class="tx-form">'+nameRow+typeRow+codeRow+'</div>'
     +'<div class="mgr-tip">类型由所属持仓表决定（记录落在 securities / fund_holdings / crypto / cash_holdings 哪个数组里），没有独立字段，本版不做跨数组搬迁。</div>'
     +'<div class="mgr-title">归属</div>'
     +'<div class="tx-form">'+ccyRow+ctypeRow
@@ -7470,6 +7607,10 @@ function saveInstrumentAttrs(payloadJson){
   const ccyNew=pick('instr-e-ccy'), catNew=pick('instr-e-cat'),
         projNew=pick('instr-e-proj'), locNew=pick('instr-e-loc'),
         typeNew=(p.sec==='cash_holdings')?pick('instr-e-ctype'):null;
+  /* v90：证券代码 —— 仅当输入非空才写入（留空 = 不修改，绝不抹平多值差异）。
+     与 renameInstrument 同一条纪律：code 是行情键的一部分，改完必须重建 holdings。 */
+  const codeEl=document.getElementById('instr-e-code');
+  const codeNew=(codeEl&&!codeEl.disabled)?String(codeEl.value||'').trim():'';
 
   /* resolveCatId 有副作用：遇到 getCategories() 里没有的名字会自动 saveCategories 新建一个分类。
      只允许传 catNames() 里已存在的值，否则一次脏输入就往分类表注入垃圾分类。币种同理。 */
@@ -7497,6 +7638,7 @@ function saveInstrumentAttrs(payloadJson){
     }
 
     const patch={};
+    if(codeNew) patch.code=codeNew;                 // v90：证券代码（留空不改）
     if(ccyNew!=null)  patch.currency=ccyNew;
     if(projNew!=null) patch.project=projNew;
     if(locNew!=null)  patch.location=locNew;
@@ -7515,7 +7657,8 @@ function saveInstrumentAttrs(payloadJson){
        只靠 4 行补丁把 id/cat_id/_credits/_manual_base 补回来（v47 的 id 丢失事故就出在这条链上）；
        它还从不按新 asset_category 重算 cat_id（走它改子账户 100% 不生效），
        且每次编辑都会抹掉证券的 asset_type。
-       显式不碰：id / _credits / _manual_base / code / asset_type / market / _editBaselineQty。 */
+       显式不碰：id / _credits / _manual_base / asset_type / market / _editBaselineQty。
+       （v90 起 code 允许编辑，故从「不碰」清单移除。） */
     Object.assign(it, patch);
     changed++; accts.add(h.a.id||h.a.name);
 
@@ -7536,13 +7679,17 @@ function saveInstrumentAttrs(payloadJson){
   const m=document.getElementById('instr-edit-modal'); if(m)m.remove();
   if(!changed && !renamed){ toast('没有需要保存的修改'); return; }
 
-  /* 收尾五步，与 renameInstrument 同一套；只改属性没改名的路径靠这里补齐。 */
+  /* 收尾五步，与 renameInstrument 同一套；只改属性没改名的路径靠这里补齐。
+     v90：code/币种/子账户等属性编辑后统一层 holdings 同样要重建同步，
+     否则行情查找（secLivePrice 读 h.code）拿到的是旧值，新 code 不生效。 */
   try{dedupInstruments();}catch(e){}
+  try{ (DATA.accounts||[]).forEach(function(a){ syncHoldingsFromLegacy(a); }); }catch(e){}
   try{saveEditsLocal();}catch(e){}
   try{recomputePortfolio();}catch(e){}
   try{patchAllSchema();}catch(e){}
   const desc=[];
   if(renamed) desc.push('名称→'+newName);
+  if(codeNew) desc.push('代码→'+codeNew);
   if(ccyNew!=null) desc.push('币种→'+ccyNew);
   if(typeNew!=null) desc.push('现金类型→'+typeNew);
   if(catNew!=null) desc.push('子账户→'+catNew);
@@ -7626,7 +7773,22 @@ function showMergeInstrumentModal(payloadJson){
   const same=v=>String(v||'').trim().toUpperCase();
   const cands=getInstruments().filter(o=>o.sec===p.sec && same(o.display)!==same(p.raw));
   if(!cands.length){toast('同类别下没有可合并的其它标的');return;}
-  const opts=cands.map(o=>`<option value="${escapeAttr(o.display)}">${escapeHtml(o.display)}${o.ccy?(' · '+escapeHtml(o.ccy)):''}（${o.refCount}处引用）</option>`).join('');
+  /* v90 UX 防呆：默认选中「同币种 + 同名/名前缀优先」的标的。
+     原实现取 getInstruments() 顺序的第一项（按引用数/用户排序），用户截图里
+     默认落到 FCN港 —— 与恒生科技完全无关，极易误合并。这里按相关性打分：
+     ① 同币种 +10；② 与来源名完全互为前缀 +20，否则按公共前缀长度加分。 */
+  const srcU=same(p.raw), srcCcy=same(p.ccy);
+  const scored=cands.map(function(o){
+    let sc=0;
+    if(same(o.ccy)===srcCcy) sc+=10;
+    const u=same(o.display);
+    if(u===srcU) sc+=0;
+    else if(u.indexOf(srcU)===0||srcU.indexOf(u)===0) sc+=20;
+    else { let pre=0, max=Math.min(u.length,srcU.length); while(pre<max&&u[pre]===srcU[pre]) pre++; sc+=pre; }
+    return {o:o,s:sc};
+  }).sort(function(a,b){ return b.s-a.s; });
+  const ordered=scored.map(function(x){ return x.o; });
+  const opts=ordered.map(o=>`<option value="${escapeAttr(o.display)}">${escapeHtml(o.display)}${o.ccy?(' · '+escapeHtml(o.ccy)):''}（${o.refCount}处引用）</option>`).join('');
   const html=`<div class="modal open" id="merge-modal" style="display:flex"><div class="box" style="max-width:420px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 合并标的</h3><button class="x" aria-label="关闭" onclick="document.getElementById('merge-modal').remove()">×</button></div><div class="mbody"><div class="tx-form"><div class="row"><label>来源</label><input value="${escapeAttr(p.raw)}" disabled style="background:#f3f4f6"></div><div class="row"><label>并入</label><select id="merge-target" style="flex:1">${opts}</select></div><div class="mgr-tip">合并后，来源标的在所有账户持仓、交易流水、收入记录里的引用都会改写成目标名称，同账户下的重复条目自动合计成一条，并写入删除墓碑防止其它设备把旧名同步回来。此操作会同步到云端。</div><button class="btn" onclick="_mergeInstrumentConfirm('${escapeAttr(payloadJson)}')">确认合并</button><button class="btn ghost" onclick="document.getElementById('merge-modal').remove()">取消</button></div></div></div></div>`;
   const old=document.getElementById('merge-modal');if(old)old.remove();
   document.body.insertAdjacentHTML('beforeend',html);
@@ -8573,6 +8735,12 @@ function syncPullOnLoad(){
         // 登录时云端覆盖本地，因此把 localMod 归零。
         localStorage.setItem('famdash_sync_localmod','0');
         recomputePortfolio();
+        /* v90：云端落地后证券行情重拉一次。
+           fetchSecWhenReady 在页面加载时启动，若当时云端 code 尚未落地
+           （_allSecSymbols 退回用中文名当 symbol），腾讯/东财全解析失败；
+           等云端带 code 落地后必须重试，否则现价永远停在「—」。
+           force=false：首拉已成功(有缓存)时自动跳过，天然幂等。 */
+        try{ fetchSecPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){}); }catch(e){}
         // 合并/应用云端后就地重渲染当前视图(绝不 location.reload：避免手机重复输密码、且本地有云端缺的数据时无限重载)
         try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
         try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
