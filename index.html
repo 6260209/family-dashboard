@@ -1380,7 +1380,8 @@ function renderConsolidated(){
     m.raws.push(f); /* 保留原始引用用于编辑联动 */
   }
   for(const [,m] of merged){
-    m.pnl_pct=(m.mv>0)?((m.pnl/m.mv)*100):0;
+    // v83：正确收益率 = 盈亏/成本（成本 = 市值−盈亏）；历史 `pnl/mv` 公式把收益率算小了（基金 5.22% vs 真实 5.51%）
+    m.pnl_pct=(m.mv>0 && m.pnl!=null && (m.mv-m.pnl)>0)?((m.pnl/(m.mv-m.pnl))*100):0;
     if(!m.price&&m.qty>0){
       // 兜底单价：m.mv 是 CNY，需换算回原生币种，避免标签 USDT/USD 却显示 CNY 价
       const r2c=fxCny(m.currency);
@@ -2460,7 +2461,22 @@ function jBuildFlat(accounts){
         else if(h.qty!=null && h.price!=null && Number(h.price)>0){ _mvRaw=Number(h.qty)*Number(h.price); }
       }
       const mv=toCny(_mvRaw,ccy);
-      let pnl=null; if(h.pnl!=null&&h.pnl!==''){pnl=toCny(h.pnl,ccy);}
+      // 修复 v83：pnl/pct 不再盲信 h.pnl / h.pnl_pct（历史数据被错误算成 mv×pct/100，
+      // e.g. QQQM mv=100659 pct=451.54% → h.pnl=454516，真实应为 82408）。
+      // 统一重建（标准公式）：cost=数量×成本价（证券/加密）；基金/结构无成本价时 cost=value−pnl；
+      // pnl=mv−cost；pct=pnl/cost×100（= 盈亏/成本）。现金无盈亏维持 0。
+      let cost=0, pnl=null, pct=null;
+      const cpN=Number(h.cost_price)||0;
+      if(h.source==='crypto'||h.source==='sec'){
+        if(cpN>0 && h.qty!=null && Number(h.qty)>0) cost=toCny(cpN*Number(h.qty),ccy);
+      } else if(h.source==='fund'||h.source==='struct'){
+        if(cpN>0 && h.qty!=null && Number(h.qty)>0) cost=toCny(cpN*Number(h.qty),ccy);
+        else if(h.value!=null && h.pnl!=null && Number(h.value)>0) cost=toCny(Number(h.value)-Number(h.pnl),ccy);
+      }
+      if(cost>0 && mv>0){ pnl=mv-cost; }
+      else if(h.pnl!=null&&h.pnl!==''){ pnl=toCny(h.pnl,ccy); }
+      if(pnl!=null && cost>0){ pct=pnl/cost*100; }
+      else if(h.pnl_pct!=null&&h.pnl_pct!==''){ pct=Number(h.pnl_pct); }
       const name=String(h.name||'');
       const code=String(h.code||'');
       const market=String(h.market||'');
@@ -2469,7 +2485,7 @@ function jBuildFlat(accounts){
         sec:'hold',idx:i,grp:a.platform+':'+code,project:h.project||'',
         acct:a.platform,cat:cat,name:name,code:code,
         type:h.asset_type||h.source||'',qty:h.qty,market:market,
-        mv:Math.round(mv),pnl:(pnl==null?null:Math.round(pnl)),pnl_pct:h.pnl_pct||0,
+        mv:Math.round(mv),pnl:(pnl==null?null:Math.round(pnl)),pnl_pct:(pct==null?0:Math.round(pct*100)/100),
         cost_price:h.cost_price||0,price:h.price||0,currency:ccy,
         underlying:und,asset_category:cat,loc:h.location||'',holder:h.holder||hld,aid:aid,acctTag:a.account_type||'',
         _cashRoute:_isCashRoute,
@@ -6580,7 +6596,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v82';
+const APP_VERSION='2026-08-05-v83';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
