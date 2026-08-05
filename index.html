@@ -1436,7 +1436,9 @@ function renderConsolidated(){
     // 优先用实时行情价（与账户弹窗口径一致），无实时价回退存储价；避免显示陈旧/错误单价
     let _liveP=null; let _pxAge='';
     try{ if(r.cat==='加密货币'){ const _cp=cryptoUnitPriceWithAge(r); if(_cp.price!=null){ _liveP=_cp.price; _pxAge=cryptoPriceSuffix(_cp.level,_cp.ageMs); } } else { const lp=secLivePrice(r); if(lp!=null)_liveP=lp; } }catch(e){}
-    const _dispPrice=_liveP!=null?_liveP:(r.price||null);
+    // v85：放弃 r.price 回退（QQQM 因 code="" 走 secLivePrice=null，r.price=290 是历史快照，会让现价显示陈旧假数据）；
+    // 没行情时显示 — 而不是用数据里的旧值骗用户。
+    const _dispPrice=_liveP;
     const priceDisp=hasQty&&_dispPrice!=null?`${_dispPrice.toFixed(4)} <span class="price-unit">${unitLabel}</span>${_pxAge?`<span class="px-age">${_pxAge}</span>`:''}`:'—';
     const costDisp=r.cost_price?`${r.cost_price.toFixed(4)} <span class="price-unit">${unitLabel}</span>`:'—';
     const prjVals=[...new Set(r.raws.map(x=>x.project||'').filter(Boolean))];
@@ -6604,7 +6606,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v85';
+const APP_VERSION='2026-08-05-v86';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
