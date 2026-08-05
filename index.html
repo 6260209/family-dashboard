@@ -1462,8 +1462,12 @@ function renderConsolidated(){
     // ---- 展开详情（完整卡片：原生市值 + 数量/现价/成本/盈亏 + 账户分布表，#2）----
     // 基金/债基/结构性产品按金额计（无数量/现价），隐藏「数量」「现价」列与指标（用户反馈截图3）
     const isFund=/基金|债基/.test(r.cat||'')||(r.raws||[]).some(x=>(x.type==='fund'||x.type==='struct'));
-    const headMV=mixedCcy?fmtCny(r.mv):fmtMVNative(r.mv,r.currency);
-    const headSub=(mixedCcy||r.currency==='CNY')?'':('<small class="ad-mv-cny">≈ ¥'+fmtCny(r.mv)+' CNY</small>');
+    /* v87 修复（v79 遗留）：展开详情头部市值此前直读 r.mv，纯现金行 mv 恒为 0 → 显示 ¥0。
+       与聚合紧凑行（L1451 _rowMv）统一口径，改用 cashCny 真值；稳定币孪生行取其一不相加。 */
+    const headMV=mixedCcy?fmtCny(_rowMv):fmtMVNative(_rowMv,r.currency);
+    /* v87 修复：fmtCny 自带货币符号（¥/$ /HK$ ，随 BASE_CCY 变），此处再硬拼一个 '¥' 会渲染成
+       「≈ ¥¥2,780 CNY」双符号。去掉冗余前缀，与 L1019 既有写法 '≈'+fmtCny(...) 对齐。 */
+    const headSub=(mixedCcy||r.currency==='CNY')?'':('<small class="ad-mv-cny">≈ '+fmtCny(_rowMv)+' CNY</small>');
     const pnlSub=r.pnl?(' <small class="ad-pnl-sub">'+fmtCny(r.pnl)+'</small>'):'';
     const distTable=(function(){
       const map={};
@@ -1472,8 +1476,13 @@ function renderConsolidated(){
         if(!map[key]) map[key]={acct:f.acct,holder:f.holder||'—',ccy:f.currency,raw:f,qty:0,mvCny:0,nativeMv:0};
         const g=map[key];
         if(typeof f.qty==='number') g.qty+=f.qty;
-        g.mvCny+=(f.mv||0);
-        g.nativeMv += (f.currency==='CNY')?(f.mv||0):jToNative(f.mv||0,'CNY',f.currency);
+        /* v87 修复（v79 遗留）：账户分布表此前直读 f.mv，纯现金行 f.mv 恒为 0（补偿逻辑依赖，禁止改 mv）
+           → 每行市值与小计全显示 ¥0。改用 cashCny 真值，口径与 L1451 _rowMv 完全一致。
+           稳定币孪生行（USDC：source=crypto 但 id 命中 cash_holdings）mv 与 cashCny 是同一笔钱，
+           必须「取其一」而非相加，否则金额翻倍（v45/v46 双计事故同源）。 */
+        const _fMv=(f.cashCny>0)?f.cashCny:(f.mv||0);
+        g.mvCny+=_fMv;
+        g.nativeMv += (f.currency==='CNY')?_fMv:jToNative(_fMv,'CNY',f.currency);
       }
       const keys=Object.keys(map);
       if(!keys.length) return '';
@@ -1490,7 +1499,7 @@ function renderConsolidated(){
           : '<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
       }
       let foot;
-      if(mixedCcy){ foot=fmtCny(r.mv)+' CNY'; }
+      if(mixedCcy){ foot=fmtCny(_rowMv)+' CNY'; }
       else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
       const thAcct='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">账户<span class="arrow"></span></th>';
       const thHolder='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">持有人<span class="arrow"></span></th>';
@@ -6606,7 +6615,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v86';
+const APP_VERSION='2026-08-05-v87';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
