@@ -1367,12 +1367,16 @@ function renderConsolidated(){
   const merged=new Map();
   for(const f of filtered){
     const key=f.name||'_';
-    if(!merged.has(key)) merged.set(key,{name:f.name,code:f.code,cat:f.cat,type:f.type,qty:0,mv:0,cashCny:0,pnl:0,pnl_pct:0,cost_price:0,price:0,currency:'',market:'',accts:new Set(),raws:[]});
+    if(!merged.has(key)) merged.set(key,{name:f.name,code:f.code,cat:f.cat,type:f.type,qty:0,mv:0,cashCny:0,pnl:0,pnl_pct:0,cost_price:0,cost_native:0,_qtyWcp:0,price:0,currency:'',market:'',accts:new Set(),raws:[]});
     const m=merged.get(key);
     m.mv+=f.mv||0; m.pnl+=f.pnl||0;
     m.cashCny+=f.cashCny||0; /* 仅供行展示：现金行 mv 恒为 0，真值走此字段，不参与任何总额计算 */
     if(typeof f.qty==='number')m.qty+=f.qty;
-    if(f.cost_price)m.cost_price=f.cost_price;
+    // v84：加权平均成本价（Σqty×cost_price / Σqty），原覆盖式只留最后一行，多账户/多批次合并后与 pnl/mv 不再对应（用户看到的"成本 300"与盈亏 −25.72% 对不上就是这个）
+    if(typeof f.qty==='number' && Number(f.qty)>0 && Number(f.cost_price)>0){
+      m._qtyWcp += Number(f.qty)*Number(f.cost_price);
+      if(!m.cost_native) m.cost_native = Number(f.cost_price); // 兜底：单条时仍可见原值
+    }
     if(f.price)m.price=f.price;
     if(f.currency&&!m.currency)m.currency=f.currency;
     if(f.market&&!m.market)m.market=f.market;
@@ -1382,6 +1386,8 @@ function renderConsolidated(){
   for(const [,m] of merged){
     // v83：正确收益率 = 盈亏/成本（成本 = 市值−盈亏）；历史 `pnl/mv` 公式把收益率算小了（基金 5.22% vs 真实 5.51%）
     m.pnl_pct=(m.mv>0 && m.pnl!=null && (m.mv-m.pnl)>0)?((m.pnl/(m.mv-m.pnl))*100):0;
+    // v84：头部"成本"字段用加权平均（多账户/多批次合并后 = Σqty×cost/Σqty）
+    if(m._qtyWcp>0 && m.qty>0){ m.cost_price = Math.round((m._qtyWcp/m.qty)*10000)/10000; }
     if(!m.price&&m.qty>0){
       // 兜底单价：m.mv 是 CNY，需换算回原生币种，避免标签 USDT/USD 却显示 CNY 价
       const r2c=fxCny(m.currency);
@@ -6596,7 +6602,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v83';
+const APP_VERSION='2026-08-05-v84';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
