@@ -1392,7 +1392,15 @@ function renderConsolidated(){
 
   // 汇总指标（紧凑条）
   const totalMv=rows.reduce((s,r)=>s+r.mv,0);
-  const totalPnl=rows.reduce((s,r)=>s+r.pnl,0);
+  // 修复 v82：r.pnl 字段对 BTC/QQQM 等异常大（实测为 mv×pct/100 而非 mv×pct/(100+pct)，
+  // e.g. QQQM mv=100659 pct=451.54% 字段 pnl=454516，推算应为 82408），会污染顶部 chip 数字。
+  // chip 单独用 pct 推算（"当前浮盈"）加总，与 row 级 pct 自洽；flat.pnl 字段保留不动（用户数据真相）。
+  const totalPnl=rows.reduce((s,r)=>{
+    if(r.pnl_pct!=null && r.pnl_pct!==0 && r.mv>0){
+      return s + r.mv * r.pnl_pct / (100 + r.pnl_pct);
+    }
+    return s + (r.pnl||0);
+  }, 0);
   const upClass=totalPnl>=0?'up':'down';
   // 批2 #11 补行：口径对齐首页总资产（仅展示，严禁改动任何总额计算）
   const _csAll=DATA.category_summary||[];
@@ -6572,7 +6580,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v81';
+const APP_VERSION='2026-08-05-v82';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
