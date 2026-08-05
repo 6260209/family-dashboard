@@ -1443,6 +1443,8 @@ function renderConsolidated(){
       <button class="consol-edit" title="编辑（跳转到账户持仓）" onclick="event.stopPropagation();jumpToEditConsol(${idx})">✏️</button>
     </div>`;
     // ---- 展开详情（完整卡片：原生市值 + 数量/现价/成本/盈亏 + 账户分布表，#2）----
+    // 基金/债基/结构性产品按金额计（无数量/现价），隐藏「数量」「现价」列与指标（用户反馈截图3）
+    const isFund=/基金|债基/.test(r.cat||'')||(r.raws||[]).some(x=>(x.type==='fund'||x.type==='struct'));
     const headMV=mixedCcy?fmtCny(r.mv):fmtMVNative(r.mv,r.currency);
     const headSub=(mixedCcy||r.currency==='CNY')?'':('<small class="ad-mv-cny">≈ ¥'+fmtCny(r.mv)+' CNY</small>');
     const pnlSub=r.pnl?(' <small class="ad-pnl-sub">'+fmtCny(r.pnl)+'</small>'):'';
@@ -1466,22 +1468,30 @@ function renderConsolidated(){
         const priceCell=aPrice!=null?fmtNative(aPrice,g.ccy)+(_pxAge2?`<span class="px-age">${_pxAge2}</span>`:''):'—';
         const mvCell=fmtNative(g.nativeMv,g.ccy)+(g.ccy!=='CNY'?('<small>'+fmtCny(g.mvCny)+'</small>'):'');
         const qCell=(typeof g.qty==='number'&&g.qty>0)?(g.qty>=1e4?(g.qty/1e4).toFixed(1)+'万':g.qty.toLocaleString()):'—';
-        rows+='<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
+        rows+= isFund
+          ? '<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+mvCell+'</td></tr>'
+          : '<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
       }
       let foot;
       if(mixedCcy){ foot=fmtCny(r.mv)+' CNY'; }
       else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
-      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">账户<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">持有人<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">数量<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">现价<span class="arrow"></span></th><th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">市值<span class="arrow"></span></th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="4">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+      const thAcct='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">账户<span class="arrow"></span></th>';
+      const thHolder='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">持有人<span class="arrow"></span></th>';
+      const thQty=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">数量<span class="arrow"></span></th>';
+      const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">现价<span class="arrow"></span></th>';
+      const thMv='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">市值<span class="arrow"></span></th>';
+      const colspan=isFund?2:4;
+      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr>'+thAcct+thHolder+thQty+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
         <div class="fc-top ad-head">
           <div class="fc-name"><b>${escapeHtml(r.name)}</b>${mixedCcy?'<span class="ad-multi">多币种</span>':''}</div>
-          <div class="fc-val"><span class="ad-mv-native">${headMV}</span>${headSub}${qDisp?`<small>${qDisp}</small>`:''}</div>
+          <div class="fc-val"><span class="ad-mv-native">${headMV}</span>${headSub}${(!isFund&&qDisp)?`<small>${qDisp}</small>`:''}</div>
         </div>
         <div class="ad-metrics">
-          <div class="ad-metric"><span class="ad-k">数量</span><span class="ad-v">${qDisp}</span></div>
-          <div class="ad-metric"><span class="ad-k">现价</span><span class="ad-v">${priceDisp}</span></div>
+          ${isFund?'':`<div class="ad-metric"><span class="ad-k">数量</span><span class="ad-v">${qDisp}</span></div>`}
+          ${isFund?'':`<div class="ad-metric"><span class="ad-k">现价</span><span class="ad-v">${priceDisp}</span></div>`}
           <div class="ad-metric"><span class="ad-k">成本</span><span class="ad-v">${costDisp}</span></div>
           <div class="ad-metric"><span class="ad-k">盈亏</span><span class="ad-v ${uc}">${pctStr}${pnlSub}</span></div>
         </div>
@@ -3066,9 +3076,12 @@ function openAcct(aid){
   const dsec=txSecurities(a.id);
   let dsecHtml='';
   if(dsec.length){
-    dsecHtml+='<div class="mt" style="color:#0e7490;display:flex;justify-content:space-between;align-items:center"><span><svg class="ic-svg" width="14" height="14"><use href="#i-doc"/></svg> 流水调整持仓 <small style="font-weight:400;color:var(--dim);font-size:11px">（来自交易流水 buy/sell 反算净持仓，不计入资产汇总）</small></span></div><table class="mtab"><thead><tr><th>#</th><th>标的</th><th>市场</th><th>数量</th><th>成本(CNY)</th><th></th></tr></thead><tbody>';
+    // 用户反馈「为什么拆成两个表格」：流水反算持仓是 buy/sell 流水的聚合视图（对账辅助），
+    // 默认折叠收起，避免与「账户流水」并排出现第二张表；点开可看，仍不计入资产汇总。
+    dsecHtml+='<div class="mt" style="color:#0e7490;margin-top:14px"><span style="cursor:pointer;font-weight:600" onclick="var _n=this.parentElement.nextElementSibling;if(_n){var _open=_n.style.display!==\'none\';_n.style.display=_open?\'none\':\'block\';this.querySelector(\'.dsec-arrow\').innerHTML=_open?\'▸\':\'▾\';}"><svg class="ic-svg" width="14" height="14"><use href="#i-doc"/></svg> 流水反算持仓 <small style="font-weight:400;color:var(--dim);font-size:11px">（'+dsec.length+' 个标的 · 由买卖流水聚合，供对账核对，不计入资产汇总）<span class="dsec-arrow">▸</span></small></span></div>';
+    dsecHtml+='<div style="display:none;margin-top:6px"><table class="mtab"><thead><tr><th>#</th><th>标的</th><th>市场</th><th>数量</th><th>成本(CNY)</th><th></th></tr></thead><tbody>';
     dsec.forEach((t,idx)=>{ dsecHtml+=`<tr><td>${idx+1}</td><td><b>${t.asset_name}</b></td><td>${t.market||''}</td><td>${t.quantity}</td><td>${fmtCny(t.cost||0)}</td><td><button class="del" title="删除该标的的所有底层交易流水" onclick="delTxSecurity('${aid}','${(t.asset_name||'').replace(/'/g,"\\'")}')" aria-label="删除该标的的所有底层交易流水">×</button></td></tr>`; });
-    dsecHtml+='</tbody></table>';
+    dsecHtml+='</tbody></table></div>';
   }
   h='<div class="mkv">账户总资产 '+tot+' <small style="color:var(--dim)">('+fmtNative(natTot,natCCY)+' '+natCCY+')</small></div>'+
     '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"><button class="btn sm" onclick="showEditAccountModal(\''+aid+'\')" style="white-space:nowrap"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑账户</button><button class="btn ghost sm" onclick="showDetailOrder(\''+aid+'\')" style="white-space:nowrap">⇅ 排序区块</button><button class="btn ghost sm" onclick="refreshCryptoQuotes()" style="white-space:nowrap">🔄 刷新行情</button><button class="btn danger sm" onclick="deleteAccount(\''+aid+'\')" style="white-space:nowrap"><svg class="ic-svg" width="14" height="14"><use href="#i-trash"/></svg> 删除账户</button></div>'+
@@ -6557,7 +6570,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v79';
+const APP_VERSION='2026-08-05-v80';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
