@@ -2520,7 +2520,9 @@ function jAcctTodayCny(a){
 function jToNative(amount,ccy,native){
   const h=jToHkd(amount,ccy);
   if(native==='CNY')return h/FX_CNY_HKD;
-  if(native==='USDT')return h/FX_USD_HKD;
+  // v84：USDT/USD/USDC 全部按 USD 折算（共享 FX_USD_HKD）；历史上漏了 USD 分支，
+  // 导致 fmtMVNative(CNY,'USD') 返回 HKD 数值（CNY×FX_CNY_HKD），再被 ÷ qty 误显为"现价 290 USD"（QQQM 实际 207.6 USD）
+  if(native==='USDT'||native==='USD'||native==='USDC')return h/FX_USD_HKD;
   return h;
 }
 // 账户 summary 重算（口径与 server.py recompute_summary 一致）：编辑/删除持仓后回写账户总资产，
@@ -6602,7 +6604,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v84';
+const APP_VERSION='2026-08-05-v85';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
