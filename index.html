@@ -1747,9 +1747,11 @@ function acctCcys(a){
   return Array.from(set);
 }
 function acctNativeTotal(a){
-  const nat=acctCurrency(a); let total=0;
-  (a.holdings||[]).forEach(h=>{ total+=jToNative(toCny(h.value||0,_ccyOfH(h)),'CNY',nat); });
-  return total;
+  const nat=acctCurrency(a);
+  // 修复 v81：必须用与 accountTotalCny 同一全集口径（现金+securities+fund_holdings+holdings），
+  // 原来只遍历 a.holdings 会漏掉现金和 QQQI 这类在 a.securities 里的持仓，导致账户详情顶部
+  // 「账户总资产 ¥X (¥Y CNY)」X≠Y 同字段两数对不上（实测盈立香港 ¥8,117 vs ¥7,875.54，差 ¥241）。
+  return jToNative(accountTotalCny(a), 'CNY', nat);
 }
 // 证券市值兜底：市值字段缺失/为0 时，用「数量×现价」按币种折算补齐，
 // 解决「存量 HKD/USD 持仓 market_value 为空，导致详情页 HK$ 0 / 小计与总额漏算」的 bug。
@@ -6570,7 +6572,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v80';
+const APP_VERSION='2026-08-05-v81';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
