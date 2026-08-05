@@ -1473,9 +1473,12 @@ function renderConsolidated(){
       const map={};
       for(const f of (r.raws||[])){
         const key=f.aid||f.acct;
-        if(!map[key]) map[key]={acct:f.acct,holder:f.holder||'—',ccy:f.currency,raw:f,qty:0,mvCny:0,nativeMv:0};
+        if(!map[key]) map[key]={acct:f.acct,holder:f.holder||'—',ccy:f.currency,raw:f,qty:0,mvCny:0,nativeMv:0,_cpQty:0,_cpAmt:0};
         const g=map[key];
         if(typeof f.qty==='number') g.qty+=f.qty;
+        /* v88：账户内加权平均成本价（Σqty×cost_price / Σqty），口径与聚合行 L1376 m._qtyWcp 一致。
+           同账户多批次买入时，只取 g.raw.cost_price 会漏掉其余批次。 */
+        if(typeof f.qty==='number' && Number(f.qty)>0 && Number(f.cost_price)>0){ g._cpQty+=Number(f.qty); g._cpAmt+=Number(f.qty)*Number(f.cost_price); }
         /* v87 修复（v79 遗留）：账户分布表此前直读 f.mv，纯现金行 f.mv 恒为 0（补偿逻辑依赖，禁止改 mv）
            → 每行市值与小计全显示 ¥0。改用 cashCny 真值，口径与 L1451 _rowMv 完全一致。
            稳定币孪生行（USDC：source=crypto 但 id 命中 cash_holdings）mv 与 cashCny 是同一笔钱，
@@ -1489,14 +1492,31 @@ function renderConsolidated(){
       let rows='';
       for(const k of keys){
         const g=map[k]; const f=g.raw; let ap=null, _pxAge2='';
-        try{ const _cp=cryptoUnitPriceWithAge(f); ap=_cp.price; if(_cp.price!=null)_pxAge2=cryptoPriceSuffix(_cp.level,_cp.ageMs); }catch(e){}
-        const aPrice=ap!=null?ap:(f.price||null);
-        const priceCell=aPrice!=null?fmtNative(aPrice,g.ccy)+(_pxAge2?`<span class="px-age">${_pxAge2}</span>`:''):'—';
+        /* v88 修复：表头写「现价」、数据却是买入成本（截图显示「$281 按买入价」）。
+           病灶：此前对所有行（含美股/港股/A股）一律调 cryptoUnitPriceWithAge()，该函数在无行情时
+           会依次回退 cost_price（level='cost' → 后缀「按买入价」），再回退 f.price（历史快照）。
+           与聚合行 v85/v86 既定口径（_dispPrice=_liveP，无行情显示 —，见 L1439-1442）直接冲突。
+           对策：① 加密货币走 crypto 行情且只认 live/stale，cost/none 一律视为无行情；
+                 ② 证券走 secLivePrice（与 jBuildFlat L2474 同一取价函数）；
+                 ③ 均无行情 → 现价显示「—」，严禁回退 cost_price / f.price / f.mv 反推；
+                 ④ 成本单独成列，用持仓 cost_price（账户内加权平均），不再与现价混为一谈。 */
+        try{
+          const _isCrypto=(r.cat==='加密货币')||f.source==='crypto'||f.type==='crypto';
+          if(_isCrypto){
+            const _cp=cryptoUnitPriceWithAge(f);
+            if(_cp.level==='live'||_cp.level==='stale'){ ap=_cp.price; _pxAge2=cryptoPriceSuffix(_cp.level,_cp.ageMs); }
+          }else{
+            const _lp=secLivePrice(f); if(_lp!=null) ap=_lp;
+          }
+        }catch(e){}
+        const priceCell=ap!=null?fmtNative(ap,g.ccy)+(_pxAge2?`<span class="px-age">${_pxAge2}</span>`:''):'—';
+        const _cpAvg=(g._cpQty>0)?(g._cpAmt/g._cpQty):(Number(f.cost_price)>0?Number(f.cost_price):null);
+        const costCell=(_cpAvg!=null&&_cpAvg>0)?fmtNative(Math.round(_cpAvg*10000)/10000,g.ccy):'—';
         const mvCell=fmtNative(g.nativeMv,g.ccy)+(g.ccy!=='CNY'?('<small>'+fmtCny(g.mvCny)+'</small>'):'');
         const qCell=(typeof g.qty==='number'&&g.qty>0)?(g.qty>=1e4?(g.qty/1e4).toFixed(1)+'万':g.qty.toLocaleString()):'—';
         rows+= isFund
           ? '<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+mvCell+'</td></tr>'
-          : '<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
+          : '<tr><td>'+escapeHtml(g.acct)+'</td><td>'+escapeHtml(g.holder)+'</td><td>'+qCell+'</td><td>'+costCell+'</td><td>'+priceCell+'</td><td>'+mvCell+'</td></tr>';
       }
       let foot;
       if(mixedCcy){ foot=fmtCny(_rowMv)+' CNY'; }
@@ -1504,10 +1524,13 @@ function renderConsolidated(){
       const thAcct='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">账户<span class="arrow"></span></th>';
       const thHolder='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">持有人<span class="arrow"></span></th>';
       const thQty=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">数量<span class="arrow"></span></th>';
-      const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">现价<span class="arrow"></span></th>';
+      /* v88：拆列。「成本」＝买入成本价(cost_price 加权均价)，「现价」＝真实时行情(无则 —)。
+         sortTableByCol 按 th 在行内的 index 定位列，新增列无需改排序逻辑。 */
+      const thCost=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)" title="买入成本价（同账户多批次取加权均价）">成本<span class="arrow"></span></th>';
+      const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)" title="实时行情单价；无行情显示 —，不回退成本价">现价<span class="arrow"></span></th>';
       const thMv='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">市值<span class="arrow"></span></th>';
-      const colspan=isFund?2:4;
-      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr>'+thAcct+thHolder+thQty+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+      const colspan=isFund?2:5;
+      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr>'+thAcct+thHolder+thQty+thCost+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
@@ -6615,7 +6638,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v87';
+const APP_VERSION='2026-08-05-v88';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
