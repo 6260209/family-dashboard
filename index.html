@@ -213,7 +213,7 @@ tbody tr:hover{background:#f8fafc}
 .mgr-item{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;transition:all var(--transition-fast)}
 .mgr-item[draggable="true"]{cursor:grab}
 .mgr-item.dragging{opacity:.5;background:#eff6ff;border-style:dashed}
-.mgr-item .drag-h{color:var(--dim);cursor:grab;margin-right:6px;user-select:none;font-size:13px}
+.mgr-item .drag-h{color:#64748b;cursor:grab;margin-right:6px;user-select:none;font-size:18px;font-weight:700;padding:0 4px;border-radius:4px}
 .mgr-item .mgr-move{width:34px;height:34px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;transition:all var(--transition-fast)}
 .mgr-item .mgr-move:hover{background:#e2e8f0}
 .mgr-item .mgr-name{flex:1;min-width:0;font-weight:500}
@@ -6543,7 +6543,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-04-v77';
+const APP_VERSION='2026-08-05-v78';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7472,9 +7472,11 @@ function showInstrumentManager(){
       ? `<button class="mgr-merge" onclick="showMergeInstrumentModal('${payload}')" title="并入另一个标的（合并重复标的）" aria-label="合并">⇢</button>` : '';
     const delBtn = instrCanDelete(it)
       ? `<button class="del" onclick="delInstrumentItem('${payload}')" aria-label="删除">×</button>` : '';
-    return `<div class="mgr-item" draggable="true" data-key="${escapeAttr(it.key)}"><span class="drag-h" title="拖拽排序">⋮⋮</span><span class="mgr-name">${escapeHtml(it.display)} <span class="mgr-sub">${it.kind}${it.ccy?(' · '+it.ccy):''}</span></span>${mergeHint}<span style="display:flex;gap:8px">${renameBtn}${mergeBtn}${delBtn}</span></div>`;
+    const moveUpBtn   = `<button class="mgr-move" onclick="moveInstrumentItem('${escapeAttr(it.key)}',-1)" title="上移一格（与拖拽等价）" aria-label="上移">▲</button>`;
+    const moveDownBtn = `<button class="mgr-move" onclick="moveInstrumentItem('${escapeAttr(it.key)}', 1)" title="下移一格（与拖拽等价）" aria-label="下移">▼</button>`;
+    return `<div class="mgr-item" draggable="true" data-key="${escapeAttr(it.key)}"><span class="drag-h" title="拖拽排序 · 也可点右侧 ▲/▼" aria-label="拖拽手柄">≡</span><span class="mgr-name">${escapeHtml(it.display)} <span class="mgr-sub">${it.kind}${it.ccy?(' · '+it.ccy):''}</span></span>${mergeHint}<span style="display:flex;gap:6px">${moveUpBtn}${moveDownBtn}${renameBtn}${mergeBtn}${delBtn}</span></div>`;
   }).join('');
-  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ⋮⋮ 排序 · ✎ 编辑（名称/币种/子账户/项目/所在地，一处改，账户持仓/流水/收入全站同步）· ⇢ 合并到另一个标的 · × 删除（删后无持仓的标的自动消失，不留孤儿）· 🔒 币种现金桶与收入币种是同一个，名称与币种锁定不可改</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
+  const html=`<div class="modal open" id="instr-modal" style="display:flex"><div class="box" style="max-width:520px"><div class="mhead"><h3><svg class="ic-svg" width="14" height="14"><use href="#i-box"/></svg> 标的管理</h3><button class="x" aria-label="关闭" onclick="document.getElementById('instr-modal').remove()">×</button></div><div class="mbody"><div class="mgr-sec"><div class="mgr-title">全部标的（按引用次数 / 你的排序）</div><div class="mgr-tip">拖动 ≡ 排序 · 点 ▲/▼ 上/下移一格 · ✎ 编辑（名称/币种/子账户/项目/所在地，一处改，账户持仓/流水/收入全站同步）· ⇢ 合并到另一个标的 · × 删除（删后无持仓的标的自动消失，不留孤儿）· 🔒 币种现金桶与收入币种是同一个，名称与币种锁定不可改</div><div class="mgr-list">${items||'<div class="mgr-empty">暂无标的</div>'}</div></div><div class="mgr-foot"><button class="btn" onclick="document.getElementById('instr-modal').remove()">完成</button></div></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
   document.querySelectorAll('#instr-modal .mgr-item').forEach(el=>{
     el.addEventListener('dragstart',instrDragStart);
@@ -7488,6 +7490,23 @@ function instrDragStart(e){_instrDragFrom=this.dataset.key;this.classList.add('d
 function instrDragOver(e){e.preventDefault();}
 function instrDrop(e){e.preventDefault();const to=this.dataset.key;if(!_instrDragFrom||_instrDragFrom===to)return;const ord=getInstrumentOrder();let fi=ord.indexOf(_instrDragFrom),ti=ord.indexOf(to);if(fi<0){ord.push(_instrDragFrom);fi=ord.length-1;}if(ti<0){ord.push(to);ti=ord.length-1;}const [mv]=ord.splice(fi,1);ord.splice(ti,0,mv);saveInstrumentOrder(ord);showInstrumentManager();}
 function instrDragEnd(){_instrDragFrom=null;document.querySelectorAll('#instr-modal .mgr-item').forEach(el=>el.classList.remove('dragging'));}
+/* 需求#3：标的列表加 ▲▼ 按钮（用户视图上更直觉的「排序箭头」）。
+   复用 getInstrumentOrder / saveInstrumentOrder —— 行为与拖拽完全一致。 */
+function moveInstrumentItem(key, dir){
+  const ord = getInstrumentOrder();
+  const i = ord.indexOf(key);
+  if(i<0){
+    // 新标的（未在顺序表里）：追加到末尾 → 上移 = 加进表尾前一格
+    ord.push(key);
+    if(dir<0){ const [mv]=ord.splice(ord.length-1,1); ord.unshift(mv); }
+  } else {
+    const j = i + dir;
+    if(j<0||j>=ord.length) return;
+    const [mv]=ord.splice(i,1); ord.splice(j,0,mv);
+  }
+  saveInstrumentOrder(ord);
+  showInstrumentManager();
+}
 function delInstrumentItem(payloadJson){
   let p; try{p=JSON.parse(payloadJson);}catch(e){return;}
   if(!confirm('删除标的「'+p.raw+'」？所有账户里该名称的引用会被清空（无持仓后将不再出现）。此操作可同步到云端。')) return;
