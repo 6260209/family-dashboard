@@ -1367,9 +1367,10 @@ function renderConsolidated(){
   const merged=new Map();
   for(const f of filtered){
     const key=f.name||'_';
-    if(!merged.has(key)) merged.set(key,{name:f.name,code:f.code,cat:f.cat,type:f.type,qty:0,mv:0,pnl:0,pnl_pct:0,cost_price:0,price:0,currency:'',market:'',accts:new Set(),raws:[]});
+    if(!merged.has(key)) merged.set(key,{name:f.name,code:f.code,cat:f.cat,type:f.type,qty:0,mv:0,cashCny:0,pnl:0,pnl_pct:0,cost_price:0,price:0,currency:'',market:'',accts:new Set(),raws:[]});
     const m=merged.get(key);
     m.mv+=f.mv||0; m.pnl+=f.pnl||0;
+    m.cashCny+=f.cashCny||0; /* 仅供行展示：现金行 mv 恒为 0，真值走此字段，不参与任何总额计算 */
     if(typeof f.qty==='number')m.qty+=f.qty;
     if(f.cost_price)m.cost_price=f.cost_price;
     if(f.price)m.price=f.price;
@@ -1428,13 +1429,16 @@ function renderConsolidated(){
     const locVals=[...new Set(r.raws.map(x=>x.loc||'').filter(Boolean))];
     const holderVals=[...new Set(r.raws.map(x=>x.holder||'').filter(Boolean))];
     const pnlCls=r.pnl>=0?'consol-pnl-up':'consol-pnl-down';
+    /* 现金行在 flat 里 mv 恒为 0（补偿逻辑依赖），展示时改用 cashCny 真值。
+       稳定币孪生行 mv 非 0 但与 cashCny 是同一笔钱，故用「取其一」而非相加，避免翻倍。 */
+    const _rowMv=(r.cashCny>0)?r.cashCny:r.mv;
     // ---- 紧凑行（单行：名称 / 子账户chip / 市值 / 盈亏%）----
     const row=`<div class="consol-row" data-idx="${idx}" onclick="toggleConsolRow(this)">
       <span class="consol-arrow">&#9654;</span>
       <div class="consol-name"><b>${escapeHtml(r.name)}</b></div>
       <span class="consol-cat-chip">${escapeHtml(r.cat)}</span>
       ${hasQty?`<span class="consol-qty" title="持仓数量（跨账户合计）">${qDisp}</span>`:''}
-      <span class="consol-mv">${fmtCny(r.mv)}</span>
+      <span class="consol-mv">${fmtCny(_rowMv)}</span>
       <span class="consol-pnl-badge ${pnlCls}">${pctStr}</span>
       <button class="consol-edit" title="编辑（跳转到账户持仓）" onclick="event.stopPropagation();jumpToEditConsol(${idx})">✏️</button>
     </div>`;
@@ -2415,6 +2419,15 @@ function jBuildFlat(accounts){
       // 只打标记、不改任何计算：该行仍照常入 flat 与 cat_sum，由聚合侧凭此做「现金补差」的减项。
       const _isCashRoute=(cashRouteOf(a,h)==='cash_holdings');
       const ccy=_ccyOfH(h);
+      // 仅用于聚合列表行显示真实现金市值；mv 必须保持 0，补偿逻辑(_twinMv/_cashDiff)不受影响，禁止改 mv。
+      // 口径与 baseCashCny 完全一致（同样取 cash_holdings 的 amount+currency 过 toCny），保证行值能与核对说明的现金总额对上。
+      let _cashCny=0;
+      if(_isCashRoute){
+        const _twin=(a.cash_holdings||[]).find(c=>(h.id&&c.id===h.id)||(c.name&&h.name&&c.name===h.name));
+        const _camt=_twin?Number(_twin.amount||0):(Number(h.qty||0));
+        const _ccy2=_twin?(_twin.currency||_ccyOfH(h)):_ccyOfH(h);
+        _cashCny=toCny(_camt,_ccy2);
+      }
       let _mvRaw=0; // crypto 无价(L4)不计入总额；绝不回退 h.value（评审 Q2 配套）
       if(h.source==='crypto'){
         const _lp=cryptoLiveUnitPrice(h);
@@ -2439,7 +2452,8 @@ function jBuildFlat(accounts){
         mv:Math.round(mv),pnl:(pnl==null?null:Math.round(pnl)),pnl_pct:h.pnl_pct||0,
         cost_price:h.cost_price||0,price:h.price||0,currency:ccy,
         underlying:und,asset_category:cat,loc:h.location||'',holder:h.holder||hld,aid:aid,acctTag:a.account_type||'',
-        _cashRoute:_isCashRoute
+        _cashRoute:_isCashRoute,
+        cashCny:Math.round(_cashCny||0)
       });
     }
   }
@@ -6543,7 +6557,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v78';
+const APP_VERSION='2026-08-05-v79';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
