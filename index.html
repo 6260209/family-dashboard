@@ -1916,7 +1916,7 @@ function cryptoUnitPriceWithAge(h){
   if(STABLE_COINS[name] != null) return {price: STABLE_COINS[name], level:'live', ageMs:0};
   const c = quoteCache['crypto:'+h.name];
   const now = Date.now();
-  if(c && c.usd!=null && isFinite(c.usd) && c.usd>0){
+  if(c && c.usd!=null && isFinite(c.usd) && c.usd>0 && _quoteSane(_cryptoSymOf(h.name), c.usd)){
     const age = now - (c.ts||0);
     if(age <= CRYPTO_TTL_MS) return {price: c.usd, level:'live', ageMs: age};
     if(age <= STALE_MAX_MS) return {price: c.usd, level:'stale', ageMs: age};
@@ -1979,7 +1979,7 @@ function secLivePrice(r){
 // 通用：取指定市场某代码的实时单价(USD)
 function quoteLiveUnitPrice(market, sym){
   const c = quoteCache[market+':'+sym];
-  if(c && (Date.now()-c.ts) < CRYPTO_TTL_MS) return c.usd;
+  if(c && (Date.now()-c.ts) < CRYPTO_TTL_MS && _quoteSane(sym, c.usd, market)) return c.usd;
   return null;
 }
 // 收集所有需要拉取实时价的加密货币符号（仅 COIN_IDS 中有映射的；锚定币不拉）
@@ -2136,7 +2136,7 @@ const QUOTE_SOURCES = {
 async function fetchQuotes(market, syms, force){
   if(!syms || !syms.length) return false;
   const now = Date.now();
-  const fresh = syms.every(function(s){ const c=quoteCache[market+':'+s]; return c && (now-c.ts)<CRYPTO_TTL_MS; });
+  const fresh = syms.every(function(s){ const c=quoteCache[market+':'+s]; return c && (now-c.ts)<CRYPTO_TTL_MS && _quoteSane(s, c.usd, market); });
   if(!force && fresh) return false; // TTL 内直接复用，不发请求
   // 合并用户配置（启停 + 优先级排序 + 可选 URL 覆盖），保证首成即停 + 优先级生效
   const sources = buildQuoteSourceList(market);
@@ -2145,9 +2145,9 @@ async function fetchQuotes(market, syms, force){
       const urls = src.buildUrls(syms);
       const bodies = await Promise.all(urls.map(function(u){ return src.text ? _fetchText(u, 8000) : _fetchJson(u, 8000); }));
       const map = src.parse(bodies, syms);
-      const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0 && _quoteSane(s, map[s]); });
+      const valid = syms.filter(function(s){ return map[s]!=null && isFinite(map[s]) && map[s]>0 && _quoteSane(s, map[s], market); });
       if(valid.length){
-        valid.forEach(function(s){ const v=map[s]; if(_quoteSane(s,v)) quoteCache[market+':'+s]={usd:v, ts:now, src:src.name}; else console.warn('[行情] '+market+' '+s+' 报价异常被拒('+v+')'); });
+        valid.forEach(function(s){ const v=map[s]; if(_quoteSane(s,v,market)) quoteCache[market+':'+s]={usd:v, ts:now, src:src.name}; else console.warn('[行情] '+market+' '+s+' 报价异常被拒('+v+')'); });
         try{ localStorage.setItem('famdash_quote_cache', JSON.stringify(quoteCache)); }catch(e){}
         console.info('[行情] '+market+' 源 '+src.name+' 成功，更新 '+valid.length+'/'+syms.length);
         return true;
@@ -2321,7 +2321,7 @@ function fetchSecWhenReady(attempt){
           const todo=['astock','hk','us'].filter(function(m){
             const syms=_allSecSymbols(m);
             if(!syms.length) return false;
-            return !syms.every(function(s){ const c=quoteCache[m+':'+s]; return c && (Date.now()-c.ts)<CRYPTO_TTL_MS; });
+            return !syms.every(function(s){ const c=quoteCache[m+':'+s]; return c && (Date.now()-c.ts)<CRYPTO_TTL_MS && _quoteSane(s, c.usd, m); });
           });
           if(todo.length){
             Promise.all(todo.map(function(m){ return fetchQuotes(m, _allSecSymbols(m), true).catch(function(){}); }))
@@ -6780,7 +6780,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v93';
+const APP_VERSION='2026-08-05-v95';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -6874,7 +6874,17 @@ function _fxSane(key,v){
   return true;
 }
 const QUOTE_SANE = { BTC:[5000,500000], ETH:[100,20000], SOL:[1,2000], BNB:[10,5000], DOGE:[0.001,10], USDT:[0.5,1.5], USDC:[0.5,1.5] };
-function _quoteSane(sym, v){ if(v==null||!isFinite(v)||v<=0) return false; const r=QUOTE_SANE[sym]; if(!r) return true; if(v<r[0]||v>r[1]){ try{ console.warn('[QUOTE] 拒绝异常报价 '+sym+'='+v+'（合理区间 '+r[0]+'~'+r[1]+'）'); }catch(e){} return false; } return true; }
+// v95：证券行情合理区间（原生币种/股）。读缓存与写缓存统一校验，防止 localStorage 残留超区间价污染市值。
+const SEC_QUOTE_SANE = { us:[1,2000], hk:[0.05,2000], astock:[0.5,2000] };
+// 显示名 → 行情符号（缓存键统一用 COIN_IDS 短名，但旧数据/本地 fixture 可能用显示名，读侧需能对上区间）
+const CRYPTO_NAME_SYM = { 'BITCOIN':'BTC','ETHEREUM':'ETH','SOLANA':'SOL','BUILD AND BUILD':'BNB','TETHER':'USDT','TETHER USD':'USDT','USD COIN':'USDC','DOGECOIN':'DOGE' };
+function _cryptoSymOf(name){
+  const n=String(name==null?'':name).trim().toUpperCase();
+  if(QUOTE_SANE[n]) return n;
+  return CRYPTO_NAME_SYM[n]||n;
+}
+// v95：读缓存时同样做 sane 校验（此前只在写入时拦截，本地残留的超区间值会污染读侧）。market 传入时按证券区间兜底。
+function _quoteSane(sym, v, market){ if(v==null||!isFinite(v)||v<=0) return false; const r=QUOTE_SANE[sym]||(SEC_QUOTE_SANE[market]||null); if(!r) return true; if(v<r[0]||v>r[1]){ try{ console.warn('[QUOTE] 拒绝异常报价 '+sym+'='+v+'（合理区间 '+r[0]+'~'+r[1]+'）'); }catch(e){} return false; } return true; }
 function applyFxRates(rates){
   if(_fxSane('USD_CNY',rates.USD_CNY)){ FX.USD_CNY=rates.USD_CNY; FX_USD_CNY=rates.USD_CNY; }
   if(_fxSane('CNY_HKD',rates.CNY_HKD)){ FX.CNY_HKD=rates.CNY_HKD; FX_CNY_HKD=rates.CNY_HKD; FX_USD_HKD=FX_USD_CNY*rates.CNY_HKD; }
