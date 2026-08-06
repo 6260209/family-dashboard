@@ -4151,7 +4151,11 @@ function addHolding(aid,sec,vals,idx){
     // 现金/固收金额被手动修改时，清除 _manual_base 让 recomputeCashAccount 按新金额自洽重算
     if(sec==='cash_holdings' && oldItem && oldItem.amount!==o.amount) delete o._manual_base;
     a[sec][idx]=o;
-  }else{a[sec].push(o);}
+  }else{
+    a[sec].push(o);
+    // v91：用户主动新增 → 即时清墓碑，否则陈旧墓碑会在 syncPush/load 时把新条目静默剔除
+    _clearTombstonesOnAdd(aid, o);
+  }
   afterEdit(aid);
   // 详细日志
   const labelMap={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'};
@@ -5393,7 +5397,11 @@ function applyTxToHolding(tx, actionType){
         if(existing.price==null) existing.price=existing.cost_price;
         existing.market_value_cny=(existing.market_value_cny||0)+costCny;
       } else {
-        a.securities.push({asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||''),location:tx.location||'',notes:tx.note||''});
+        const _newSec={asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||''),location:tx.location||'',notes:tx.note||''};
+        a.securities.push(_newSec);
+        // v91：通过「添加交易」买入新建持仓时，同样清掉陈旧墓碑（典型场景：之前删过 QNDX，
+        // 现在又通过买入想买回来——必须即时作废旧墓碑，否则 syncPush 把它抹掉、流水留下）
+        _clearTombstonesOnAdd(tx.account, _newSec);
       }
       if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)a.summary_cny.total_asset_cny+=costCny;
     } else {
@@ -6713,7 +6721,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v90';
+const APP_VERSION='2026-08-05-v91';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7344,6 +7352,30 @@ function _clearNameTombstone(aid, sec, name){
     if(set.has(k1)){ set.delete(k1); changed=true; }
     if(k2!==k1 && set.has(k2)){ set.delete(k2); changed=true; }
     if(changed) localStorage.setItem('famdash_deleted_items', JSON.stringify([...set]));
+  }catch(_){}
+}
+/* v91 修复：用户主动新增一笔持仓/现金/基金时，即时作废同账户、同归一名在「明细数组」
+   与「统一 holdings 层」的墓碑。否则 syncPush→buildPushSnapshot→mergeAccountsForPush→
+   purgeDeletedItems（以及 loadEditsLocal 的 purgeDeletedItems）会把刚加的子项当成
+   「已删」再剔除——典型症状：「账户流水有 13 条 QNDX 买入，但持仓里没有 QNDX」
+   （每次买入流水都成功落盘，持仓却被陈旧墓碑静默抹掉，用户体感"资产怎么都添加不进去"）。
+   思路与 renameInstrument 里的 _clearNameTombstone 同源：用户主动重新引入同名条目就是
+   在宣告"该墓碑无效"，必须即时作废，并通过 scheduleSyncPush→syncPush 把清除后的
+   famdash_deleted_items 推到云端，避免下次 syncPull 把云端墓碑复活回本地。 */
+function _clearTombstonesOnAdd(aid, item){
+  try{
+    if(!aid || !item) return;
+    const nm=String(item.asset_name||item.name||item.product_id||'').trim();
+    if(!nm) return;
+    // 现金用规范名；其余按 asset_name/name。两侧都清，覆盖明细数组与 holdings 层。
+    if(item.currency){
+      const cnm=(typeof cashNameCanon==='function')?cashNameCanon(item):(item.name||'');
+      _clearNameTombstone(aid, 'cash_holdings', cnm);
+      _clearNameTombstone(aid, 'holdings', cnm);
+    }
+    _clearNameTombstone(aid, 'securities', nm);
+    _clearNameTombstone(aid, 'fund_holdings', nm);
+    _clearNameTombstone(aid, 'holdings', nm);
   }catch(_){}
 }
 function renameInstrument(sec, oldRaw, newRaw){
