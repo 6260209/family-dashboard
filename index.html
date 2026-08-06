@@ -3490,7 +3490,7 @@ function getItemKey(sec, it){
   return sec+':'+String(nm).trim().toUpperCase();
 }
 function getDeletedItems(){ try{ return JSON.parse(localStorage.getItem('famdash_deleted_items')||'[]'); }catch(e){ return []; } }
-function addDeletedItem(aid, sec, it){ if(!aid)return; const k=aid+'::'+getItemKey(sec,it); const s=new Set(getDeletedItems()); s.add(k); try{ localStorage.setItem('famdash_deleted_items', JSON.stringify([...s])); }catch(e){} }
+function addDeletedItem(aid, sec, it){ if(!aid)return; const k=aid+'::'+getItemKey(sec,it); const s=new Set(getDeletedItems()); s.add(k); try{ localStorage.setItem('famdash_deleted_items', JSON.stringify([...s])); }catch(e){} try{ if(typeof setSyncMeta==='function') setSyncMeta('famdash_deleted_items', Date.now()); }catch(e){} }
 /* 双查：新归一键 + 旧原样键。旧键按「当年写入时的原始字面」回退匹配，
    因此小写墓碑 qqqi 只会命中同样小写的条目，不会误伤大写正品 QQQI。 */
 function isItemDeleted(aid, sec, it){
@@ -3510,6 +3510,41 @@ function purgeDeletedItems(accts){
     secs.forEach(function(sec){ if(!a[sec])return; a[sec]=a[sec].filter(function(it){ return !isItemDeleted(a.id, sec, it); }); });
   });
   return accts;
+}
+/* ============ 流水删除 Tombstone（v93：删除流水也跨同步持久化） ============
+ * 旧逻辑 delTx 只过滤本地 DATA.transactions，云端 sync.json 仍含该流水；
+ * buildPushSnapshot/applyCloudToData 用 mergeRecordsById 做 union（本地∪云端），
+ * 云端旧副本把本地已删的流水并回来 → 「删了又复活」。
+ * 修法：delTx 删除流水时把 id 写进 famdash_deleted_items（键 aid::tx:id，与持仓墓碑
+ * aid::sec:name 同集合，互不冲突——purgeDeletedItems 只认 secs 数组，不会误碰 tx 键），
+ * 推送/拉取前 purgeDeletedTxns 差集剔除，删除既持久化于本地，也随同步传播到云端。 */
+function addDeletedTx(aid, id){
+  if(id==null||id==='') return;
+  const k=(aid||'')+'::tx:'+id;
+  const s=new Set(getDeletedItems()); s.add(k);
+  try{ localStorage.setItem('famdash_deleted_items', JSON.stringify([...s])); }catch(e){}
+  /* v93：墓碑写入同步打时间戳。否则 syncApply 拉回云端 famdash_deleted_items 时
+     （尤其 CDN 陈旧快照的 updatedAt 比本地新）会把本地刚写的墓碑整体覆盖丢，
+     已删流水在下一次 pull 里被并集复活。打戳后 cu<lm 保护本地墓碑不被陈旧云端覆盖。 */
+  try{ if(typeof setSyncMeta==='function') setSyncMeta('famdash_deleted_items', Date.now()); }catch(e){}
+}
+/* 是否流水墓碑键：aid::tx:<id> 前缀匹配（持仓墓碑是 aid::sec:name，不含 ::tx:）。 */
+function isTxTombstoneKey(d){ return typeof d==='string' && d.indexOf('::tx:')>=0; }
+/* 收集全部已删流水 id（跨账户）。tx id 全局唯一（'tx'+Date.now()），按 id 差集零误杀。 */
+function txTombstoneIds(){
+  const ids=new Set();
+  getDeletedItems().forEach(function(d){
+    if(!isTxTombstoneKey(d)) return;
+    const i=d.indexOf('::tx:')+5;
+    if(i<d.length) ids.add(d.slice(i));
+  });
+  return ids;
+}
+/* 剔除已删流水：本地流水 − 墓碑命中 → 云端/本地都不再被删除的流水复活。 */
+function purgeDeletedTxns(txns){
+  if(!Array.isArray(txns)||!txns.length) return Array.isArray(txns)?txns:[];
+  const ids=txTombstoneIds(); if(!ids.size) return txns;
+  return txns.filter(function(t){ return !t||!t.id||!ids.has(String(t.id)); });
 }
 function deleteAccount(aid){
   const a=acct(aid); if(!a)return;
@@ -5512,6 +5547,8 @@ function addTx(){
 function delTx(id){
   const t=DATA.transactions.find(x=>x.id===id);
   DATA.transactions=DATA.transactions.filter(x=>x.id!==id);
+  /* v93：删除流水写墓碑，防云端并集把已删流水复活（Gap1） */
+  if(t) addDeletedTx(t.account||t.account_from||t.account_to, t.id);
   if(t&&t.type==='income'){ DATA.income.records=DATA.income.records.filter(r=>r.id!==id); computeIncomeAgg(); }
   /* 反写持仓：删除买入/卖出交易时同步修改 a.securities，防止幽灵持仓 */
   if(t&&(t.type==='buy'||t.type==='sell')){
@@ -5523,6 +5560,13 @@ function delTx(id){
         const idx=a.securities.findIndex(s=>s.asset_name===t.asset_name);
         if(idx>=0){
           const removed=a.securities.splice(idx,1)[0];
+          /* v93：反写掉持仓时必须同步写持仓墓碑，否则下次同步 purgeDeletedItems
+             无键可剔 → 持仓被云端并集复活（Gap2）。只写「确实被反写掉的那条」，
+             若反写后仍有剩余数量（部分反写）不写墓碑，避免误杀真实持仓。 */
+          if(removed){
+            addDeletedItem(t.account, 'securities', removed);
+            if(removed.id) addDeletedItem(t.account, 'holdings', removed);
+          }
           if(a.summary_cny&&a.summary_cny.total_asset_cny!=null)
             a.summary_cny.total_asset_cny=Math.max(0,(a.summary_cny.total_asset_cny||0)-costCny);
         }
@@ -5591,9 +5635,14 @@ function delTxSecurity(aid,codeOrName){
     (DATA.transactions.filter(t=>t.account===aid&&(t.type==='buy'||t.type==='sell')&&(t.code===codeOrName||t.asset_name===codeOrName)).length)+
     ' 条交易记录。')) return;
   const before=DATA.transactions.length;
+  const removedTxs=DATA.transactions.filter(t=>(
+    t.account===aid&&(t.type==='buy'||t.type==='sell')&&(t.code===codeOrName||t.asset_name===codeOrName)
+  ));
   DATA.transactions=DATA.transactions.filter(t=>!(
     t.account===aid&&(t.type==='buy'||t.type==='sell')&&(t.code===codeOrName||t.asset_name===codeOrName)
   ));
+  /* v93：批量删除流水同样写墓碑，防云端并集复活（Gap1） */
+  removedTxs.forEach(function(t){ if(t&&t.id) addDeletedTx(t.account||t.account_from||t.account_to, t.id); });
   const removed=before-DATA.transactions.length;
   saveEditsLocal(); renderTx(); recomputePortfolio();
   const a=DATA.accounts.find(x=>x.id===aid);
@@ -5827,10 +5876,20 @@ function recomputeCashAccount(aid){
       // 否则脏 _manual_base 会覆盖归一化结果，造成"改了余额却数值没有变"的回滚 bug。
       const _proj=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
       const held=holdingsCashValue(aid, ccy);
-      const _bad = ch._manual_base < -10000 && (held!=null ? Math.abs(_proj-held)>0.01 : Math.abs(_proj-Number(ch.amount||0))>0.01);
-      if(_bad){
+      const _cur=Number(ch.amount||0);
+      const _bad = ch._manual_base < -10000 && (held!=null ? Math.abs(_proj-held)>0.01 : Math.abs(_proj-_cur)>0.01);
+      /* v93 幻影 base：旧版本在幽灵流水存在时锁定的负 _manual_base（如 v91 E2E 加
+         QNDX 幽灵流水后 USD 桶 base 被锁成 -1184.44）。删掉幽灵流水后 txDerivedNet
+         变化（+1184.44 → -550），陈旧 base 把金额重算出负数（-1638.72）→ 同步后
+         双 USD 桶（本地脏 h-zxbr3tc 与云端 h-0o31cwg 并存）。
+         判据（全部满足才重置，绝不误杀干净数据）：base 为负（正常现金桶的本金不会为负）
+         且投影金额与当前已存储金额明显不符（base 与当前流水集不一致）。
+         重置：以当前已存储金额为真实余额反推新 base，金额保持不漂移。
+         幂等：干净数据时投影恒等于存储金额，changed=false 不落盘、不触发推送。 */
+      const _phant = !_bad && Number(ch._manual_base||0) < 0 && Math.abs(_proj-_cur)>1.0;
+      if(_bad || _phant){
         delete ch._manual_base;
-        const target=(held!=null)?held:Number(ch.amount||0);
+        const target=(held!=null && !_phant)?held:_cur;
         ch.amount=+target.toFixed(2);
         ch._manual_base=+(ch.amount-incSum-net).toFixed(2);
       }
@@ -6721,7 +6780,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-05-v91';
+const APP_VERSION='2026-08-05-v93';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -8340,10 +8399,10 @@ function applyCloudToData(snap, overwrite){
         if(!cloudAcctMap[k]){ (o.accounts||(o.accounts=[])).push(a); cloudAcctMap[k]=a; }
       });
       mergedLocal=(localV1.accounts||[]).some(function(a){ return !cloudAcctMap[a.id||a.name]; });
-      // 合并交易流水与收入：云端为准，但保留本地独有记录
-      const localTx=localV1.transactions||[];
+      // 合并交易流水与收入：云端为准，但保留本地独有记录；已删流水（墓碑命中）两侧都剔除
+      const localTx=purgeDeletedTxns(localV1.transactions||[]);
       if(o.transactions || localTx.length){
-        o.transactions=mergeRecordsById(o.transactions||[], localTx, function(x){return x.id;});
+        o.transactions=mergeRecordsById(purgeDeletedTxns(o.transactions||[]), localTx, function(x){return x.id;});
       }
       const localInc=incomeRecordsFrom(localV1.income);
       const cloudInc=incomeRecordsFrom(o.income);
@@ -8358,7 +8417,7 @@ function applyCloudToData(snap, overwrite){
       try{ if(healOrphanCatIds(DATA.accounts,'cloud-apply')>0) o.accounts=DATA.accounts; }catch(_){}
       DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl); try{normalizeLegacyCashNames();}catch(_){} } // v44：云端落地的现金名也一并归一（防其他设备旧「美金」名复活）
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
-    o.transactions=sanitizeTxns(o.transactions,o.income);   // v44.2：剔除「收入记录本身」混入的重复交易，防删了又复活
+    o.transactions=sanitizeTxns(purgeDeletedTxns(o.transactions),o.income);   // v44.2：剔除「收入记录本身」混入的重复交易；v93：剔除墓碑命中的已删流水
     if(o.transactions)DATA.transactions=o.transactions;
     try{ localStorage.setItem('famdash_v1', JSON.stringify(o)); }catch(e){}
   }catch(e){console.warn('applyCloudToData',e);return false;}
@@ -8451,7 +8510,8 @@ function buildPushSnapshot(localSnap, cloudSnap){
   }catch(e){}
   const mergedV1={
     accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts, cloudWins),
-    transactions: mergeRecordsById(cv1.transactions||[], lv1.transactions||[], function(x){return x.id;}, true),
+    // v93：推送前先差集剔除已删流水（本地/云端两侧都剔），云端不再被删流水复活
+    transactions: mergeRecordsById(purgeDeletedTxns(cv1.transactions||[]), purgeDeletedTxns(lv1.transactions||[]), function(x){return x.id;}, true),
     income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;}, true)}
   };
   const out={ syncedAt: localSnap.syncedAt, version: localSnap.version, keys:{} };
