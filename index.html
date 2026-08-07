@@ -2421,6 +2421,15 @@ function normalizeAccount(a){
   a.holdings=dedupeHoldingsById(a.holdings, a.id||a.name, 'holdings', false);
   if(a.holdings.length!==_hb){ try{ jRecomputeSummary(a); }catch(e){} try{ window._fdDedupeDirty=true; }catch(e){} }
   const H=a.holdings;
+  /* v100-BUG#1：cash_holdings 是现金口径真源（_manual_base + 交易净额 + _credits），
+     而 holdings 只是展示投影。此处重建投影时若直接丢掉 _manual_base/_credits，
+     随后的 healCashDerived→recomputeCashAccount 会把 _manual_base 按
+     amount(旧投影值) − incSum − net 重推 —— 在买入净额为负时（如 ETH 买入 −250），
+     新 base = 旧 amount + |net| = 3752.4 + 250 = 4002.4，现金被净额篡改（v100 事故）。
+     修法：重建前先把现有 cash_holdings 的 _manual_base/_credits/_auto_credit 快照，
+     重建投影后原样回填；本地真值永远优先，绝不从云端金额/净额重推。 */
+  const _cashMeta={};
+  (a.cash_holdings||[]).forEach(function(_c){ if(!_c) return; const _k=_c.id||('cash:'+String((_c.currency||'CNY')).toUpperCase()+':'+String(_c.name||'')); if(_k) _cashMeta[_k]={base:_c._manual_base,credits:_c._credits,auto:_c._auto_credit,profit:_c.profit,return_pct:_c.return_pct}; });
   a.securities=[]; a.fund_holdings=[]; a.cash_holdings=[];
   a.crypto=[];
   for(const h of H){
@@ -2471,7 +2480,19 @@ function normalizeAccount(a){
     if(['现金','货币基金','银行理财','保险','债券','流动现金'].indexOf(cat)>=0||(h.source==='cash')){
       const profit=(pnl==null?0:pnl);
       const pct=(val>0&&profit!=null)?+((profit/val)*100).toFixed(2):(h.pnl_pct||0);
-      a.cash_holdings.push(Object.assign({amount:val,profit:profit,return_pct:pct,currency:ccy,type:h.asset_type||h.source||'现金'},common));
+      const _entry=Object.assign({amount:val,profit:profit,return_pct:pct,currency:ccy,type:h.asset_type||h.source||'现金'},common);
+      /* v100-BUG#1：回填 _manual_base/_credits/_auto_credit —— 本地现金真源绝不因投影重建丢失。
+         投影（holdings）可能携带旧金额/旧市值，若放任 base 被重推会把现金桶净额篡改（见上方注释）。 */
+      const _ck=_entry.id||('cash:'+String(ccy).toUpperCase()+':'+String(h.name||''));
+      const _oldMeta=_cashMeta[_ck]||_cashMeta['cash:'+String(ccy).toUpperCase()+':'+String((h.name||'').toUpperCase())];
+      if(_oldMeta){
+        if(_oldMeta.base!=null) _entry._manual_base=_oldMeta.base;
+        if(_oldMeta.credits) _entry._credits=_oldMeta.credits;
+        if(_oldMeta.auto) _entry._auto_credit=true;
+        if(_oldMeta.profit!=null) _entry.profit=_oldMeta.profit;
+        if(_oldMeta.return_pct!=null) _entry.return_pct=_oldMeta.return_pct;
+      }
+      a.cash_holdings.push(_entry);
       continue;
     }
     // 默认：证券（美股/港股/A股/期权等）
@@ -2509,6 +2530,15 @@ function syncHoldingsFromLegacy(a){
   const prevMap={};
   (a.holdings||[]).forEach(h=>{ if(h&&h.id) prevMap[h.id]={value:Number(h.value||0),pnl:(h.pnl==null?'':h.pnl)}; });
   const pv=(id,fbVal,fbPnl)=>{const p=id&&prevMap[id];return p?{value:p.value,pnl:p.pnl}:{value:fbVal,pnl:fbPnl};};
+  /* v100-BUG#2：重建 holdings 时把生成的 id 回写进 legacy 源数组（securities/crypto…），
+     保证孪生条目共享同一 id —— 否则同一标的在 securities 与 holdings 各持不同 id，
+     healDetailHoldings 会把它当成两条、重复建孪生（ETH 双桶根因）。 */
+  const _hidset=new Set();
+  const _ensureHid=function(x){ if(!x||typeof x!=='object') return ''; if(x.id&&String(x.id).trim()){ _hidset.add(x.id); return x.id; } const _nid=genHid(); try{ x.id=_nid; }catch(e){} _hidset.add(_nid); return _nid; };
+  (a.securities||[]).forEach(function(t){ if(t&&!t.id) _ensureHid(t); });
+  (a.fund_holdings||[]).forEach(function(f){ if(f&&!f.id) _ensureHid(f); });
+  (a.cash_holdings||[]).forEach(function(c){ if(c&&!c.id) _ensureHid(c); });
+  (a.crypto||[]).forEach(function(c){ if(c&&!c.id) _ensureHid(c); });
   (a.securities||[]).forEach(t=>{const ccy=t.currency||'CNY';const f=pv(t.id,_fwdVal(t,ccy),t.pnl_amount);H.push({id:t.id||genHid(),name:t.asset_name,code:t.code,qty:t.quantity,cost_price:t.cost_price,price:t.price,value:f.value,pnl:f.pnl,cat:t.asset_category||marketToCat(t.market)||'美股',cat_id:t.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:t.location||'',project:t.project||'',source:'sec',market:t.market||'',asset_type:t.asset_type||''});});
   (a.fund_holdings||[]).forEach(f=>{const ccy=f.currency||'CNY';const v=Number(f.amount||0);const f2=pv(f.id,v,f.profit);H.push({id:f.id||genHid(),name:f.name,code:f.code,qty:null,cost_price:null,price:null,value:v,pnl:f2.pnl,cat:f.asset_category||'基金',cat_id:f.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:f.location||'',project:f.project||'',source:'fund',market:'',asset_type:''});});
   (a.cash_holdings||[]).forEach(c=>{const ccy=c.currency||'CNY';const v=Number(c.amount||0);const f2=pv(c.id,v,c.profit);H.push({id:c.id||genHid(),name:c.name,code:'',qty:null,cost_price:null,price:null,value:v,pnl:f2.pnl,cat:c.asset_category||'现金',cat_id:c.cat_id||'',ccy:ccy,currency:ccy,holder:a.holder,location:c.location||'',project:c.project||'',source:'cash',market:'',asset_type:c.type||''});});
@@ -5493,7 +5523,11 @@ function applyTxToHolding(tx, actionType){
     if(t==='buy'){
       if(!a.securities)a.securities=[];
       const name=(tx.asset_name||'').trim();
-      const existing=a.securities.find(s=>(s.asset_name||'').trim().toUpperCase()===name.toUpperCase());
+      /* v100-BUG#2：买入合并键必须含币种，且新建即赋 id —— 否则同一标的在 securities /
+         holdings / crypto 三处各建一次、id 互不相同，healDetailHoldings 把同一条 ETH
+         重复建孪生（h-rxl1mpc + h-ii27yaw 双桶事故）。按 (name+币种) 匹配已持仓直接合并。 */
+      const ccyKey=String(tx.currency||'CNY').toUpperCase();
+      const existing=a.securities.find(s=>(s.asset_name||'').trim().toUpperCase()===name.toUpperCase() && String(s.currency||'CNY').toUpperCase()===ccyKey);
       if(existing){
         const q1=Number(existing.quantity||0), c1=Number(existing.cost_price||0);
         const q2=Number(tx.quantity||0), c2=Number(tx.price||0);
@@ -5502,8 +5536,10 @@ function applyTxToHolding(tx, actionType){
         existing.cost_price=totalQty?+((q1*c1+q2*c2)/totalQty).toFixed(6):0;
         if(existing.price==null) existing.price=existing.cost_price;
         existing.market_value_cny=(existing.market_value_cny||0)+costCny;
+        if(!existing.id) existing.id=genHid(); // 旧数据无 id 的存量持仓补 id，保证孪生同 id
       } else {
-        const _newSec={asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||''),location:tx.location||'',notes:tx.note||''};
+        const _nid=genHid();
+        const _newSec={id:_nid,asset_name:tx.asset_name||'',code:tx.code,market:tx.market,quantity:tx.quantity,cost_price:tx.price,price:tx.price,currency:tx.currency||'CNY',market_value_cny:costCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||''),location:tx.location||'',notes:tx.note||''};
         a.securities.push(_newSec);
         // v91：通过「添加交易」买入新建持仓时，同样清掉陈旧墓碑（典型场景：之前删过 QNDX，
         // 现在又通过买入想买回来——必须即时作废旧墓碑，否则 syncPush 把它抹掉、流水留下）
@@ -5958,6 +5994,12 @@ function recomputeCashAccount(aid){
          重置：以当前已存储金额为真实余额反推新 base，金额保持不漂移。
          幂等：干净数据时投影恒等于存储金额，changed=false 不落盘、不触发推送。 */
       const _phant = !_bad && Number(ch._manual_base||0) < 0 && Math.abs(_proj-_cur)>1.0;
+      /* v100-BUG#1：base 是本地真值，禁止在这里用 holdings/云端金额重推。
+         曾尝试按「base == holdings现金值 + |net|」识别净额篡改（4002.4==3752.4+250），
+         但实测会误伤合法账户：usmart_sg USD 的合法状态 base=811.2 恰好也满足
+         811.2 == 566.2 + 245（其 holdings 未含 credits，代数上不可区分）。
+         因此自愈只做「保留本地 _manual_base」——由 normalizeAccount 快照回填实现，
+         杜绝 cash 投影重建时把 base 丢掉后按错误金额重推（那才是篡改的入口）。 */
       if(_bad || _phant){
         delete ch._manual_base;
         const target=(held!=null && !_phant)?held:_cur;
@@ -5966,6 +6008,18 @@ function recomputeCashAccount(aid){
       }
     }
     ch.amount=+(Number(ch._manual_base||0)+net+incSum).toFixed(2);
+    /* v100-BUG#3：现金落地/重算后统一 holdings 里 source=cash 条目的 value，
+       与 cash_holdings.amount 对齐（口径归一）。否则 addTx 先 syncHoldingsFromLegacy
+       再 recomputeCashAccount 的顺序会让 holdings 沿用旧现金值，两处漂移
+       （实测 USDT cash=3862.45 vs holdings=3752.4，差=_credits 110.05）。 */
+    try{
+      const _twins=(a.holdings||[]).filter(function(h){ return h && h.source==='cash'
+        && (h.ccy||h.currency||'').toUpperCase()===ccy; });
+      _twins.forEach(function(tw){
+        if(tw.id && ch.id && tw.id===ch.id){ tw.value=ch.amount; return; }
+        if(!tw.id && (tw.name||'')===(ch.name||'')){ tw.value=ch.amount; }
+      });
+    }catch(e){}
   });
   // 2) 为「有交易净额但尚无现金子账户」的币种新建（如转账收款方币种）
   //    断链转账（对手方账户不存在）不得触发建桶——见 _txPeerAlive 注释。
@@ -6083,14 +6137,27 @@ function healDetailHoldings(){
           : ' 删除重复副本(无编辑凭证，保留原件数量 '+oldQty+'，未采纳副本 '+s.quantity+')'));
       }else{
         // 不是副本：补 id 并建 holdings 孪生，让这笔「看得见的钱」进总额
-        const nid=genHid(); s.id=nid;
+        /* v100-BUG#2：若同账户已存在「同名 + 同币种 + 同数量」的 holdings 真源
+           （如 syncHoldingsFromLegacy 已为这条 ETH 建过孪生），直接复用其 id，
+           绝不再建第二条孪生 —— 否则 ETH 在 holdings/securities/crypto 双桶。 */
         const ccy=s.currency||'CNY';
-        a.holdings.push({id:nid,source:'sec',name:s.asset_name||'',code:s.code||'',qty:s.quantity,
-          cost_price:s.cost_price,price:s.price,value:_fwdVal(s,ccy),pnl:s.pnl_amount,
-          cat:s.asset_category||marketToCat(s.market)||'美股',cat_id:s.cat_id||'',ccy:ccy,currency:ccy,
-          holder:a.holder,location:s.location||'',project:s.project||'',market:s.market||'',asset_type:s.asset_type||''});
-        byId[nid]=a.holdings[a.holdings.length-1];
-        changed++; notes.push(acctName(a.id)+'·'+(s.asset_name||'')+' 补建持仓真源');
+        const nm2=(s.asset_name||'').trim().toUpperCase();
+        const qt2=Number(s.quantity||0);
+        const _twin=(a.holdings||[]).find(function(h){ return h && h.source==='sec'
+          && (h.name||'').trim().toUpperCase()===nm2
+          && String(h.ccy||h.currency||'').toUpperCase()===String(ccy).toUpperCase()
+          && Math.abs(Number(h.qty||0)-qt2)<1e-9; });
+        const nid=(_twin&&_twin.id)?_twin.id:genHid(); s.id=nid;
+        if(_twin){
+          changed++; notes.push(acctName(a.id)+'·'+(s.asset_name||'')+' 复用已有持仓真源 '+nid);
+        } else {
+          a.holdings.push({id:nid,source:'sec',name:s.asset_name||'',code:s.code||'',qty:s.quantity,
+            cost_price:s.cost_price,price:s.price,value:_fwdVal(s,ccy),pnl:s.pnl_amount,
+            cat:s.asset_category||marketToCat(s.market)||'美股',cat_id:s.cat_id||'',ccy:ccy,currency:ccy,
+            holder:a.holder,location:s.location||'',project:s.project||'',market:s.market||'',asset_type:s.asset_type||''});
+          byId[nid]=a.holdings[a.holdings.length-1];
+          changed++; notes.push(acctName(a.id)+'·'+(s.asset_name||'')+' 补建持仓真源');
+        }
       }
     }
 
@@ -8301,6 +8368,24 @@ function mergeCashEntry(win, lose, aid){ return reconcileSameEntry(win, lose, ai
 function dedupeHoldingsById(arr, aid, label, idOnly){
   if(!Array.isArray(arr)||arr.length<2) return arr;
   const seen={}; const out=[]; let dropped=0;
+  /* v100-BUG#2：同 id 之外再加一道「(name+币种+数量)」指纹去重。
+     病根：买入新建持仓时 securities 与 holdings 各自 genHid → 同一标的两行不同 id，
+     云端于是躺着 2 条 ETH（h-rxl1mpc + h-ii27yaw）。仅按 id 去重拦不住它们，
+     必须按业务指纹兜底。判据取 qty/quantity/amount 中实际存在的数量字段，
+     只有「同名 + 同币种 + 同数量」才算重复；90 股/60 股这类不同数量绝不误吞。 */
+  const _qtyOf=function(x){
+    if(x.qty!=null&&x.qty!=='') return String(x.qty);
+    if(x.quantity!=null&&x.quantity!=='') return String(x.quantity);
+    if(x.amount!=null&&x.amount!=='') return String(x.amount); // crypto 桶数量字段是 amount
+    return '';
+  };
+  const _fp=function(x){
+    const k=holdingKeyFn(x);
+    if(!k) return '';
+    const q=_qtyOf(x);
+    if(q==='') return '';      // 基金/现金等无数量字段 → 不做数量指纹（避免误并同值基金）
+    return 'fp:'+k+'|'+q;
+  };
   for(const x of arr){
     if(!x||typeof x!=='object') continue;
     const id=(x.id!=null&&x.id!=='')?String(x.id):'';
@@ -8309,7 +8394,17 @@ function dedupeHoldingsById(arr, aid, label, idOnly){
     else if(idOnly){ out.push(x); continue; }   // 现金桶无 id 时不做指纹去重（同名同额可能是两个真实桶）
     // 无 id 的历史条目：用 键+数量+市值 做指纹，完全一致才算重复（90 股/60 股 指纹不同，不会被误吞）
     else sig='sig:'+holdingKeyFn(x)+'|'+String(x.qty==null?'':x.qty)+'|'+String(x.value==null?'':x.value)+'|'+String(x.amount==null?'':x.amount);
+    /* id 存在但属于「同名同币同量」的另一行（跨设备/旧版本重复建桶产物）——
+       若该指纹已有先到者，则丢弃后到者，防止 ETH 双桶在同步中持续双计数。
+       先到者优先（本地先入即本地优先），后到者被吸收，不产生新行。 */
     if(sig in seen){ dropped++; continue; }
+    if(!idOnly){
+      const fpid=_fp(x);
+      if(fpid && (fpid in seen)){
+        dropped++; continue;
+      }
+      seen[fpid]=1;
+    }
     seen[sig]=1; out.push(x);
   }
   if(dropped>0){ try{ logActivity('重复持仓自愈', (aid||'')+' · '+(label||'holdings')+' 清除重复 '+dropped+' 条，保留 '+out.length+' 条'); }catch(e){} }
