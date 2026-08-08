@@ -1555,7 +1555,13 @@ function renderConsolidated(){
       const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(4)+' title="实时行情单价；无行情显示 —，不回退成本价">现价<span class="arrow"></span></th>';
       const thMv='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(5)+'>市值<span class="arrow"></span></th>';
       const colspan=isFund?2:5;
-      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr>'+thAcct+thHolder+thQty+thCost+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+      /* v102 根治：CSS table-layout:fixed + nth-child 在 chromium 窄屏下 5/6 列
+         clientWidth=0（computedW 正确但 layout 错位）。改用 <colgroup> 显式列宽 + table-layout:fixed，
+         浏览器分配列宽时优先用 colgroup.width，绕开 nth-child bug。 */
+      const _colgroup=isFund
+        ? '<colgroup><col style="width:90px"><col style="min-width:60px"></colgroup>'
+        : '<colgroup><col style="width:90px"><col style="width:60px"><col style="width:60px"><col style="width:80px"><col style="width:110px"><col style="width:120px"></colgroup>';
+      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table">'+_colgroup+'<thead><tr>'+thAcct+thHolder+thQty+thCost+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
