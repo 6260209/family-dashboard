@@ -3286,7 +3286,7 @@ function openAcct(aid){
         ? '<button class="edt" title="编辑" onclick="openTxEdit(DATA.transactions.find(x=>x.id===\''+t.id+'\'),\''+aid+'\')" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> '
         : '<span style="color:var(--dim);font-size:11px;margin-right:4px" title="系统自动生成，不可编辑，仅可删除">审计</span>')
         +'<button class="del" title="删除该条流水" onclick="delTx(\''+t.id+'\')" aria-label="删除">×</button>';
-      atxHtml+=`<tr><td>${t.date||'—'}</td><td><span class="tag ${_atxCls[t.type]||'t-afund'}">${TX_TYPE_LABEL[t.type]||'其他'}</span></td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${escapeAttr(t.asset_name||t.name||'')}">${target||'—'}</td><td>${qty}</td><td class="${sign==='+'?'gn':'rd'}">${sign}${fmtNative(Math.abs(Number(t.amount)||0),ccy)}</td><td>${ccy}</td><td>${ops}</td></tr>`;
+      atxHtml+=`<tr><td>${t.date||'—'}<br><small style="color:var(--dim);font-size:10px">${t.time||''}</small></td><td><span class="tag ${_atxCls[t.type]||'t-afund'}">${TX_TYPE_LABEL[t.type]||'其他'}</span></td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${escapeAttr(t.asset_name||t.name||'')}">${target||'—'}</td><td>${qty}</td><td class="${sign==='+'?'gn':'rd'}">${sign}${fmtNative(Math.abs(Number(t.amount)||0),ccy)}</td><td>${ccy}</td><td>${ops}</td></tr>`;
     });
     atxHtml+='</tbody></table></div>';
   }
@@ -3320,7 +3320,11 @@ function renderLog(){
     const key=l.id||(l.date+'|'+(l.action||l.type||'')+'|'+(l.detail||l.desc||''));
     if(seen.has(key)) continue; seen.add(key); all.push(l);
   }
-  all.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  all.sort((a,b)=>{
+    const _bd=(b.date||''),_ad=(a.date||'');
+    if(_bd!==_ad) return _bd.localeCompare(_ad);
+    return (b.time||'').localeCompare(a.time||'');
+  });
   document.getElementById('log').innerHTML=all.map(l=>
     `<div class="log-item"><div class="ld">${l.date}</div><div class="lt"><b>${l.action||l.type||''}</b> — ${l.detail||l.desc||''}</div></div>`).join('')||
     '<div style="color:var(--dim);padding:20px;text-align:center">暂无日志</div>';
@@ -4808,7 +4812,11 @@ function renderInc(){
       status:'projected', _src:'预计'
     };
   });
-  const allRecs=[...manualRecs,...confirmedTodos,...pendingTodos].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const allRecs=[...manualRecs,...confirmedTodos,...pendingTodos].sort((a,b)=>{
+    const _bd=(b.date||''),_ad=(a.date||'');
+    if(_bd!==_ad) return _bd.localeCompare(_ad);
+    return (b.time||'').localeCompare(a.time||'');
+  });
 
   // === 持有人筛选（列出全部持有人：账户持有人 ∪ 有收入的持有人）===
   if(!window._incHolderFilter) window._incHolderFilter='全部';
@@ -5324,13 +5332,14 @@ function openTxModal(type){ txCur=type;
   const el=document.getElementById('tx-tabs');
   for(let i=0;i<el.children.length;i++){ el.children[i].classList.toggle('active', TX_TYPES[i].k===type); }
   const today=new Date().toISOString().slice(0,10);
+  const nowHM=new Date().toTimeString().slice(0,5);
   const ccySug=getCashCcys();
   const nameSug=[...new Set(DATA.flat.map(r=>r.name).filter(Boolean))].slice(0,40);
   const catOpts='<option value="">— 可选 —</option>'+catNames().map(n=>`<option value="${n}">${escapeHtml(n)}</option>`).join('');
   const typeLabels={income:'<svg class="ic-svg" width="14" height="14"><use href="#i-income"/></svg> 录入收入',transfer:'<svg class="ic-svg" width="14" height="14"><use href="#i-exchange"/></svg> 录入转账',buy:'<svg class="ic-svg" width="14" height="14"><use href="#i-arrow-up"/></svg> 录入买入',sell:'<svg class="ic-svg" width="14" height="14"><use href="#i-arrow-down"/></svg> 录入卖出',manual_adjust:'<svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg> 编辑手动调整'};
   let f='';
   if(type==='income'){
-    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
+    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"><input id="tx-time" type="time" value="${nowHM}" style="margin-left:6px"></div>
       <div class="row"><label>所属账户</label><select id="tx-account">${acctOptions('')}</select></div>
       <div class="row"><label>资产类型</label><select id="tx-itype"><option value="dividend">股票股息</option><option value="fcn_coupon">FCN票息</option><option value="fund_div">基金分红</option><option value="interest">利息</option><option value="bond_interest">债券利息</option><option value="crypto_income">加密货币收益</option><option value="other">其他收入</option></select></div>
       <div class="row"><label>投资项目</label><select id="tx-project">
@@ -5355,7 +5364,7 @@ function openTxModal(type){ txCur=type;
       if(sel)sel.onchange=function(){document.getElementById('custom-proj-row').style.display=this.value==='_custom'?'flex':'none';};
     },0);
   } else if(type==='transfer'){
-    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
+    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"><input id="tx-time" type="time" value="${nowHM}" style="margin-left:6px"></div>
       <div class="row"><label>转出账户</label><select id="tx-from">${acctOptions('')}</select></div>
       <div class="row"><label>转入账户</label><select id="tx-to">${acctOptions('')}</select></div>
       <div class="row"><label>金额</label><input id="tx-amount" type="number" placeholder="金额"></div>
@@ -5363,7 +5372,7 @@ function openTxModal(type){ txCur=type;
       <div class="row"><label>手续费</label><input id="tx-fee" type="number" placeholder="可选" value="0"></div>
       <div class="row"><label>备注</label><input id="tx-note" placeholder="可选" style="min-width:160px"></div>`;
   } else if(type==='manual_adjust'){
-    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
+    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"><input id="tx-time" type="time" value="${nowHM}" style="margin-left:6px"></div>
       <div class="row"><label>账户</label><select id="tx-account">${acctOptions('')}</select></div>
       <div class="row" style="align-items:flex-start"><label>标的</label><div style="flex:1">
         <input id="tx-instrument" list="tx-instr-list" autocomplete="off" placeholder="输入或选择标的名称" oninput="resolveInstrumentInto('tx')" onchange="resolveInstrumentInto('tx')" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--card);color:var(--text)">
@@ -5377,7 +5386,7 @@ function openTxModal(type){ txCur=type;
       <div class="row"><label>币种</label><select id="tx-ccy">${ccySug.map(c=>`<option>${c}</option>`).join('')}</select></div>
       <div class="row"><label>备注</label><input id="tx-note" placeholder="可选" style="min-width:160px"></div>`;
   } else {
-    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"></div>
+    f=`<div class="row"><label>日期</label><input id="tx-date" type="date" value="${today}"><input id="tx-time" type="time" value="${nowHM}" style="margin-left:6px"></div>
       <div class="row"><label>账户</label><select id="tx-account">${acctOptions('')}</select></div>
       <div class="row" style="align-items:flex-start"><label>标的</label><div style="flex:1">
         <input id="tx-instrument" list="tx-instr-list" autocomplete="off" placeholder="输入或选择标的名称（自动带出代码/子账户）" oninput="resolveInstrumentInto('tx')" onchange="resolveInstrumentInto('tx')" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--card);color:var(--text)">
@@ -5525,6 +5534,7 @@ function tradeFormDividend(){
 function saveTrade(){
   const tab=tradeTab;
   const date=document.getElementById('tr-date').value||new Date().toISOString().slice(0,10);
+  const time=document.getElementById('tx-time')?.value||new Date().toTimeString().slice(0,5);
   const note=document.getElementById('tr-note').value||'';
   const tx={id:'tx'+Date.now(),date,type:tab,note};
   const typeLabels={buy:'买入',sell:'卖出',dividend:'股息'};
@@ -5537,7 +5547,7 @@ function saveTrade(){
     if(!tx.account){toast('请选择账户');return;}
     if(!tx.name){toast('请填写来源/标的');return;}
     if(tx.amount<=0){toast('金额需大于0');return;}
-    const inc={id:'inc'+Date.now(),date:tx.date,type:'dividend',type_label:'股息/分红',account:acctName(tx.account),holder:'',name:tx.name,project:'',currency:tx.currency,amount:tx.amount,status:tx.status,location:document.getElementById('tr-location').value||'',note:tx.note};
+    const inc={id:'inc'+Date.now(),date:tx.date,time:tx.time,type:'dividend',type_label:'股息/分红',account:acctName(tx.account),holder:'',name:tx.name,project:'',currency:tx.currency,amount:tx.amount,status:tx.status,location:document.getElementById('tr-location').value||'',note:tx.note};
     inc.cny=toCny(tx.amount,tx.currency);
     DATA.income.records.push(inc); computeIncomeAgg();
     if(inc.status==='received') creditIncomeToCash(tx.account, inc); // v15：分红自动入账对应币种现金
@@ -5673,6 +5683,7 @@ function addTx(){
   try {
   const type=txCur;
   const date=document.getElementById('tx-date').value||new Date().toISOString().slice(0,10);
+  const time=document.getElementById('tx-time')?.value||new Date().toTimeString().slice(0,5);
   const note=document.getElementById('tx-note').value||'';
   const tx={id:'tx'+Date.now(),date,type,note};
   if(type==='income'){
@@ -5738,7 +5749,7 @@ function addTx(){
     const _incId='inc'+Date.now();
     tx.id=_incId;   /* v101：income 流水与 income.records 共用 id（'inc…'），delTx/delInc 双向联动可对上 */
     tx._isIncomeLedger=true;  /* v101：标记为收入台账流水，sanitizeTxns 不得按 id 剔除（否则流水页看不到收入） */
-    const inc={id:_incId,date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
+    const inc={id:_incId,date:tx.date,time:tx.time,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
     /* v101 根治：inc 必须带 amount，否则 creditIncomeToCash 里 !(Number(inc.amount)>0)
        永远 return —— 收入现金入账从未生效过（用户"录收入账户没反应"的根因之一）。 */
     inc.amount=tx.amount;
@@ -6397,7 +6408,11 @@ function renderLedger(){
       amount:0, currency:'', fee:0, status:'', _src:'编辑'
     }));
   // 合并+排序
-  const all=[...txRows,...todoRows,...incRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const all=[...txRows,...todoRows,...incRows,...editRows].sort((a,b)=>{
+    const _bd=(b.date||''),_ad=(a.date||'');
+    if(_bd!==_ad) return _bd.localeCompare(_ad);
+    return (b.time||'').localeCompare(a.time||'');
+  });
   const typeTag=t=>{
     const m={买入:'t-astock',卖出:'t-struct',收入:'t-afund',转账:'t-cash',股息:'t-bond',编辑:'t-bond',余额变更:'t-bal'};
     return `<span class="tag ${m[t.type]||'t-qdii'}">${t.type}</span>`;
@@ -6410,7 +6425,7 @@ function renderLedger(){
       `<tr><td colspan="9" style="text-align:center;padding:8px"><button class="btn sm ghost" onclick="ledgerExpanded=true;renderLedger()">展开更多 ${all.length-6} 条 ▼</button></td></tr>`:'';
     const amtCell=(t.typeRaw==='edit')?'—':(sign+fmtNative(t.amount,t.currency));
     const rowBtns=(t._src==='编辑')?'<span style="color:var(--dim);font-size:11px">审计</span>':`<button class="edt sm" onclick="editLedgerRow('${t.id}','${t._src}')" title="编辑" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> <button class="del sm" onclick="delLedgerRow('${t.id}','${t._src}')" title="删除" aria-label="删除">×</button>`;
-    return `<tr><td>${t.date||'—'}</td><td>${typeTag(t)}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${t.account||'—'}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${t.target}">${t.target||'—'}</td><td class="${cls}">${amtCell}</td><td>${t.currency}</td><td><span class="tag ${t._src==='计划确认'?'active':t._src==='手动录入'?'t-bond':''}" style="font-size:10px">${t._src}</span></td><td>${t.status==='confirmed'?'已确认':t.status==='received'?'已到账':t.status}</td><td>${rowBtns}</td></tr>${more}`;
+    return `<tr><td>${t.date||'—'}<br><small style="color:var(--dim);font-size:10px">${t.time||''}</small></td><td>${typeTag(t)}</td><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${t.account||'—'}</td><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${t.target}">${t.target||'—'}</td><td class="${cls}">${amtCell}</td><td>${t.currency}</td><td><span class="tag ${t._src==='计划确认'?'active':t._src==='手动录入'?'t-bond':''}" style="font-size:10px">${t._src}</span></td><td>${t.status==='confirmed'?'已确认':t.status==='received'?'已到账':t.status}</td><td>${rowBtns}</td></tr>${more}`;
   }).join('');
   const collapseBtn=all.length>6&&ledgerExpanded?
     `<tr><td colspan="9" style="text-align:center;padding:6px"><button class="btn sm ghost" onclick="ledgerExpanded=false;renderLedger()">收起 ▲</button></td></tr>`:'';
@@ -6454,7 +6469,7 @@ function openTxEdit(t, onDoneAid){
   };
   setTimeout(()=>{
     try{
-      set('tx-date',t.date);
+      set('tx-date',t.date);set('tx-time',t.time||new Date().toTimeString().slice(0,5));
       set('tx-note',t.note);
       if(t.type==='income'){
         set('tx-account',t.account); set('tx-name',t.name); set('tx-amount',t.amount);
@@ -6524,11 +6539,15 @@ function renderTx(){
       target:(l.detail||''), code:'',
       amount:0, currency:'', fee:0, status:'', _src:'edit'
     }));
-  const all=[...txRows,...editRows].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const all=[...txRows,...editRows].sort((a,b)=>{
+    const _bd=(b.date||''),_ad=(a.date||'');
+    if(_bd!==_ad) return _bd.localeCompare(_ad);
+    return (b.time||'').localeCompare(a.time||'');
+  });
   const typeLabel=TX_TYPE_LABEL;
   document.getElementById('tx-body').innerHTML=all.map(t=>{
     if(t._src==='edit'){
-      return `<tr><td>${t.date||'—'}</td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
+      return `<tr><td>${t.date||'—'}<br><small style="color:var(--dim);font-size:10px">${t.time||''}</small></td><td><span class="tag t-bond">编辑</span></td><td>${escapeHtml(t.account)||'—'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(t.target)}">${escapeHtml(t.target)}</td><td>—</td><td></td><td><span style="color:var(--dim);font-size:11px">同步记录</span></td></tr>`;
     }
     let acc,dir,amt=t.amount||0,ccy=t.currency||'CNY';
     if(t.type==='balance_change'){ acc=acctName(t.account); dir='余额 '+(t.from||0).toFixed(2)+' → '+(t.to||0).toFixed(2); }
@@ -6541,7 +6560,7 @@ function renderTx(){
     const sign=(t.type==='balance_change')?(Number(t.amount)>=0?'+':'−'):(t.type==='income'||t.type==='sell'||t.type==='dividend')?'+':(t.type==='adjust'?(Number(t.quantity)>=0?'+':'−'):'−');
     const tagClass=t.type==='buy'?'t-astock':t.type==='sell'?'t-struct':t.type==='transfer'?'t-cash':t.type==='manual_adjust'?'t-bond':t.type==='balance_change'?'t-bal':'t-afund';
     const _editBtn=(t.type==='balance_change')?'':`<button class="edt sm" onclick="openTxEdit(DATA.transactions.find(x=>x.id==='${t.id}'))" aria-label="编辑"><svg class="ic-svg" width="14" height="14"><use href="#i-edit"/></svg></button> `;
-    return `<tr><td>${t.date}</td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="${Number(t.amount)<0&&t.type==='balance_change'?'rd':'gn'}">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${_editBtn}<button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
+    return `<tr><td>${t.date}<br><small style="color:var(--dim);font-size:10px">${t.time||''}</small></td><td><span class="tag ${tagClass}">${typeLabel[t.type]||'其他'}</span></td><td>${acc}</td><td>${dir}</td><td class="${Number(t.amount)<0&&t.type==='balance_change'?'rd':'gn'}">${sign}${fmtCny(toCny(amt,ccy))}</td><td>${ccy}</td><td>${_editBtn}<button class="del" onclick="delTx('${t.id}')" aria-label="删除">×</button></td></tr>`;
   }).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--dim);padding:20px">暂无流水，点上方类型开始记录</td></tr>';
   let inc=0,buy=0,sell=0,trf=0,div=0;
   DATA.transactions.forEach(t=>{
@@ -7033,7 +7052,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-08-v103';
+const APP_VERSION='2026-08-08-v104';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
