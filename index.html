@@ -327,13 +327,17 @@ tbody tr:hover{background:#f8fafc}
 .ad-dist-table tfoot td{font-weight:700;border-top:1px solid var(--border);border-bottom:none;padding-top:6px}
 .ad-dist-table small{color:var(--dim);font-weight:400;margin-left:3px;font-size:10.5px}
 @media (max-width:640px){
-  .ad-dist-table{table-layout:fixed;width:auto;min-width:520px}
-  .ad-dist-table th:nth-child(1),.ad-dist-table td:nth-child(1){min-width:90px}
-  .ad-dist-table th:nth-child(2),.ad-dist-table td:nth-child(2){min-width:60px}
-  .ad-dist-table th:nth-child(3),.ad-dist-table td:nth-child(3){min-width:60px}
-  .ad-dist-table th:nth-child(4),.ad-dist-table td:nth-child(4){min-width:80px}
-  .ad-dist-table th:nth-child(5),.ad-dist-table td:nth-child(5){min-width:90px}
-  .ad-dist-table th:nth-child(6),.ad-dist-table td:nth-child(6){min-width:120px}
+  /* v102 修：table-layout:fixed 下 min-width 不稳（被 first-row nowrap 内容挤到 0），
+     改用显式 width + table-layout:fixed 强制列宽不被压扁。 */
+  .ad-dist-table{table-layout:fixed;width:520px;min-width:520px}
+  .ad-dist-table th:nth-child(1),.ad-dist-table td:nth-child(1){width:90px}
+  .ad-dist-table th:nth-child(2),.ad-dist-table td:nth-child(2){width:60px}
+  .ad-dist-table th:nth-child(3),.ad-dist-table td:nth-child(3){width:60px}
+  .ad-dist-table th:nth-child(4),.ad-dist-table td:nth-child(4){width:80px}
+  .ad-dist-table th:nth-child(5),.ad-dist-table td:nth-child(5){width:110px}
+  .ad-dist-table th:nth-child(6),.ad-dist-table td:nth-child(6){width:120px}
+  /* 第一行单元格内容超出固定宽时隐藏溢出，避免破坏列宽 */
+  .ad-dist-table th,.ad-dist-table td{overflow:hidden;text-overflow:ellipsis}
 }
 @media(max-width:640px){
   .ad-metrics{grid-template-columns:repeat(2,1fr)}
