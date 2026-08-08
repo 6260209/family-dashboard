@@ -7,31 +7,39 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-08-v106">
+<meta name="app-version" content="2026-08-08-v107">
 <title>家庭资产账户整合</title>
 <script>
-/* v106 客户端版本自检 v2：
-   任何情况（老 HTML 无 meta / head≠runtime / runtime 旧）→ fetch 服务器最新 meta
-   → 服务器有更新版本 → location.replace(带版本号) 强制绕缓存重新拉取
-   防死循环：reload 后 headV===runtimeV 且带 ?v= 参数，不再触发。
+/* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
+   不管 URL 是否带 ?v= 参数，每次都 fetch 服务器最新 meta，对比 runtimeV：
+   - serverV === runtimeV → 已最新，return
+   - serverV !== runtimeV → 强制 location.replace 绕缓存重新拉取
+   防死循环：每次 replace 加 &_=时间戳 浏览器认为是新请求
+   一次性修正：老 v105/v106 用户只要再访问一次，自动跳到 v107
 */
 (function(){
   try{
     var headV=(document.querySelector('meta[name="app-version"]')||{}).content||'';
     var runtimeV=(typeof window.APP_VERSION==='string')?window.APP_VERSION:'';
-    if(headV && runtimeV && headV===runtimeV){ return; }   // 本页已是新版
-    // 版本漂移或老 HTML → fetch 服务器最新 meta 判断
-    var u=location.pathname;
-    if(/\?v=/.test(location.search)){ return; }            // 已带版本号（上次 reload 落地的），避免死循环
-    fetch(u, {cache:'no-store'}).then(function(r){ return r.text(); })
+    if(!runtimeV){ console.warn('[v107-cache] runtimeV 缺失 → 走 fetch 自检'); }
+    // 关键：不再检查 ?v= 参数（v106 的 bug 根因）
+    // 每次都 fetch 服务器最新 meta，对比当前 runtimeV
+    var u=location.pathname+(location.search?location.search+'&':'?')+'_='+Date.now();
+    fetch(u, {cache:'no-store', method:'GET'})
+      .then(function(r){ if(!r.ok)throw new Error('http '+r.status); return r.text(); })
       .then(function(txt){
-        var mm=txt.match(/<meta name="app-version" content="([^"]+)"/);
-        if(mm && mm[1] && mm[1]!==headV && mm[1]!==runtimeV){
-          console.log('[v106-cache] 检测到新版 '+mm[1]+' → 强制刷新');
-          location.replace(u+'?v='+encodeURIComponent(mm[1])+'&_='+Date.now());
+        var m=txt.match(/<meta name="app-version" content="([^"]+)"/);
+        if(!m || !m[1]) return;
+        var serverV=m[1];
+        if(serverV===runtimeV){
+          console.log('[v107-cache] 已最新 ('+serverV+')，跳过');
+          return;
         }
-      }).catch(function(){});
-  }catch(e){ console.warn('[v106-cache]',e); }
+        console.log('[v107-cache] 服务器 '+serverV+' ≠ 当前 '+runtimeV+' → 强制刷新');
+        location.replace(location.pathname+'?v='+encodeURIComponent(serverV)+'&_='+Date.now());
+      })
+      .catch(function(e){ console.warn('[v107-cache] fetch 失败',e); });
+  }catch(e){ console.warn('[v107-cache]',e); }
 })();
 </script>
 <!-- 使用 bootcdn 镜像（国内可访问），备用 npmmirror -->
@@ -7083,7 +7091,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-08-v106';
+const APP_VERSION='2026-08-08-v107';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
