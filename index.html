@@ -7,40 +7,31 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-08-v105">
+<meta name="app-version" content="2026-08-08-v106">
 <title>家庭资产账户整合</title>
 <script>
-/* v105：客户端版本自检 + 强制 reload
-   每次用户进入页面，HEAD 请求 / 静态响应头（GitHub Pages 总是返回 200 + ETag）
-   → 抓 <meta name="app-version"> 与运行时 APP_VERSION 比较
-   → 不一致 → location.reload(true) 强制忽略磁盘缓存重新拉取
+/* v106 客户端版本自检 v2：
+   任何情况（老 HTML 无 meta / head≠runtime / runtime 旧）→ fetch 服务器最新 meta
+   → 服务器有更新版本 → location.replace(带版本号) 强制绕缓存重新拉取
+   防死循环：reload 后 headV===runtimeV 且带 ?v= 参数，不再触发。
 */
 (function(){
   try{
-    // 同步 head meta 当前版本
-    var headV=(document.querySelector('meta[name="app-version"]')||{}).content;
+    var headV=(document.querySelector('meta[name="app-version"]')||{}).content||'';
     var runtimeV=(typeof window.APP_VERSION==='string')?window.APP_VERSION:'';
-    if(!headV){ return; }                       // 老版本没 meta tag，正常
-    if(runtimeV && headV!==runtimeV){
-      console.log('[v105-cache] version drift: head='+headV+' runtime='+runtimeV+' → reload');
-      try{ location.replace(location.pathname+'?v='+headV+'&_='+Date.now()); return; }
-      catch(e){ location.reload(true); return; }
-    }
-    // 老用户加载旧 index.html（无 meta tag）：试着 fetch head 一份新版 head tag
-    if(!runtimeV){
-      fetch(location.pathname, {cache:'no-store', method:'GET'}).then(function(r){
-        if(!r.ok) return;
-        return r.text();
-      }).then(function(txt){
-        var m=txt.match(/<meta name="app-version" content="([^"]+)"/);
-        if(m && m[1]!=='PLACEHOLDER_OLD_VERSION'){
-          // 服务器有新版 → 强制 reload 拉取
-          console.log('[v105-cache] older version detected → reloading');
-          location.replace(location.pathname+'?v='+m[1]+'&_='+Date.now());
+    if(headV && runtimeV && headV===runtimeV){ return; }   // 本页已是新版
+    // 版本漂移或老 HTML → fetch 服务器最新 meta 判断
+    var u=location.pathname;
+    if(/\?v=/.test(location.search)){ return; }            // 已带版本号（上次 reload 落地的），避免死循环
+    fetch(u, {cache:'no-store'}).then(function(r){ return r.text(); })
+      .then(function(txt){
+        var mm=txt.match(/<meta name="app-version" content="([^"]+)"/);
+        if(mm && mm[1] && mm[1]!==headV && mm[1]!==runtimeV){
+          console.log('[v106-cache] 检测到新版 '+mm[1]+' → 强制刷新');
+          location.replace(u+'?v='+encodeURIComponent(mm[1])+'&_='+Date.now());
         }
       }).catch(function(){});
-    }
-  }catch(e){ console.warn('[v105-cache]',e); }
+  }catch(e){ console.warn('[v106-cache]',e); }
 })();
 </script>
 <!-- 使用 bootcdn 镜像（国内可访问），备用 npmmirror -->
@@ -7092,7 +7083,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-08-v105';
+const APP_VERSION='2026-08-08-v106';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
