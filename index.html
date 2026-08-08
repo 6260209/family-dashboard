@@ -312,9 +312,17 @@ tbody tr:hover{background:#f8fafc}
 .ad-chips{margin:0 0 10px}
 .ad-dist{margin:0 0 10px}
 .ad-dist-title{font-size:12px;font-weight:700;color:#0e7490;margin-bottom:5px}
-.ad-dist-table{width:100%;border-collapse:collapse;font-size:12px}
+/* v102 根治：账户分布表窄屏列被压扁为 0 宽
+   原 table-layout:auto 时 td max-content 容易被浏览器收缩到 0，
+   且 td:not(:first-child){white-space:nowrap} 让数字列不换行，
+   窄屏（<640px）下后 5 列被陆续压扁、内容溢出不可见（用户截图"5 列堆右侧"现象）。
+   修法：容器加横向滚动 + 表格设最小宽度，桌面（容器≥900px）不触发滚动，
+   窄屏触发横向滚动而非压扁。同时给 td 设 min-width 防止内容被切。 */
+.ad-dist{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.ad-dist-table{width:100%;min-width:520px;border-collapse:collapse;font-size:12px;table-layout:auto}
 .ad-dist-table th{text-align:left;color:#64748b;font-weight:600;padding:4px 6px;border-bottom:1px solid var(--border);font-size:11px}
-.ad-dist-table td{padding:5px 6px;border-bottom:1px solid #f1f5f9;color:var(--text);vertical-align:top}
+.ad-dist-table td{padding:5px 6px;border-bottom:1px solid #f1f5f9;color:var(--text);vertical-align:top;min-width:60px}
+.ad-dist-table td:first-child{min-width:80px}
 .ad-dist-table td:not(:first-child){text-align:right;white-space:nowrap}
 .ad-dist-table tfoot td{font-weight:700;border-top:1px solid var(--border);border-bottom:none;padding-top:6px}
 .ad-dist-table small{color:var(--dim);font-weight:400;margin-left:3px;font-size:10.5px}
@@ -6997,7 +7005,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-08-v101';
+const APP_VERSION='2026-08-08-v102';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
