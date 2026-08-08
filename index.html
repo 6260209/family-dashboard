@@ -4250,6 +4250,34 @@ function addHolding(aid,sec,vals,idx){
     // 现金/固收金额被手动修改时，清除 _manual_base 让 recomputeCashAccount 按新金额自洽重算
     if(sec==='cash_holdings' && oldItem && oldItem.amount!==o.amount) delete o._manual_base;
     a[sec][idx]=o;
+    /* v101 根治（用户规则）：modal 编辑持仓 → 数量/金额变化时自动生成 adjust 流水。
+       此前只有新增(!isEdit)和行内编辑(saveSecInline)会写流水，modal 编辑被完全遗漏，
+       导致「我改了持仓，流水页什么都没有」。现在补上：证券按 quantity/市值、
+       基金按 amount、现金按 amount、加密按 qty/value 检测差异，有变化即记流水。 */
+    try{
+      const _nm=o.asset_name||o.name||o.product_id||'';
+      const _secLabel={securities:'证券持仓',fund_holdings:'基金持仓',holdings:'加密/代币',crypto:'加密/代币',cash_holdings:'现金/固收'}[sec]||sec;
+      const _qKey=(sec==='securities')?'quantity':((sec==='holdings'||sec==='crypto')?'qty':(sec==='fund_holdings'||sec==='cash_holdings')?'amount':null);
+      let _dq=0, _dv=0;
+      if(_qKey){ const _ov=Number(oldItem&&oldItem[_qKey]!=null?oldItem[_qKey]:0)||0; const _nv=Number(o[_qKey]!=null?o[_qKey]:0)||0; _dq=+(_nv-_ov).toFixed(6); }
+      if(sec==='securities'){ const _ov=Number(oldItem&&oldItem.market_value_cny!=null?oldItem.market_value_cny:0)||0; const _nv=Number(o.market_value_cny!=null?o.market_value_cny:0)||0; _dv=+(Math.abs(_nv-_ov)).toFixed(2); }
+      else if(sec==='holdings'||sec==='crypto'){ const _ov=Number(oldItem&&oldItem.value!=null?oldItem.value:0)||0; const _nv=Number(o.value!=null?o.value:0)||0; _dv=+(Math.abs(_nv-_ov)).toFixed(2); }
+      const _changed=(Math.abs(_dq)>1e-6)||(Math.abs(_dv)>1e-6);
+      if(_changed&&_nm){
+        if(!DATA.transactions) DATA.transactions=[];
+        DATA.transactions.push({
+          id:'tx_adj_'+Date.now(), date:new Date().toISOString().slice(0,10),
+          type:'adjust', account:aid,
+          asset_name:_nm, code:o.code||'', market:o.market||'',
+          quantity:_dq, price:o.cost_price||o.price||0,
+          amount:(_dv>1e-6)?_dv:Math.abs(_dq*((o.cost_price!=null?o.cost_price:0)||(o.price!=null?o.price:0)||0)),
+          currency:o.currency||'CNY', fee:0,
+          note:'账户内调整'+_secLabel+' '+(_dq>0?'+':'')+_dq+' '+_nm,
+          status:'completed', asset_category:o.asset_category||o.cat||'', cat_id:o.cat_id||'',
+          project:o.project||'', location:o.location||'', _src:'账户内调整'
+        });
+      }
+    }catch(_e){ console.error('edit-adjust-tx:', _e); }
     // v98：holdings 编辑后同步 legacy crypto 孪生数组（amount/value_usdt），
     // 否则 syncHoldingsFromLegacy 优先读 a.crypto 重建 holdings 时会把本次 qty/value 修改覆盖掉
     if((sec==='holdings'||sec==='crypto') && Array.isArray(a.crypto)){
@@ -5570,7 +5598,40 @@ function applyTxToHolding(tx, actionType){
       }
     }
   }
-  if((t==='buy'||t==='sell')&&tx.account){ const _aa=acct(tx.account); if(_aa){ syncHoldingsFromLegacy(_aa); jRecomputeSummary(_aa); } }
+  /* v101 根治（用户规则）：manual_adjust 流水 → 同步更新持仓。
+     此前 applyTxToHolding 只处理 buy/sell，用户录「手动调整」流水时持仓纹丝不动
+     （流水记了、持仓不增不减，反复困惑）。现在：按 (name+币种) 找到已有持仓则
+     数量带符号累加；找不到则新建一条持仓（数量=绝对值，金额作市值/成本）。
+     语义约定：带数量(quantity≠0) = 持仓调整（更新持仓，现金不再计，见 txCashDelta）；
+              无数量(quantity=0) = 现金调整（只入现金，不动持仓）。 */
+  if(t==='manual_adjust'&&tx.account){
+    const a=acct(tx.account); if(!a) return;
+    const name=(tx.asset_name||'').trim();
+    const dq=Number(tx.quantity||0);
+    if(!name || dq===0) return;   // 无标的或无数量 → 视为现金调整，不走持仓
+    const ccyKey=String(tx.currency||'CNY').toUpperCase();
+    const amtCny=toCny(tx.amount||0,tx.currency||'CNY');
+    let sec=a.securities&&a.securities.find(s=>(s.asset_name||'').trim().toUpperCase()===name.toUpperCase()&&String(s.currency||'CNY').toUpperCase()===ccyKey);
+    if(sec){
+      const q0=Number(sec.quantity||0);
+      sec.quantity=+(q0+dq).toFixed(6);
+      if(amtCny>0){
+        const oldCost=Number(sec.cost_price||0)*q0;
+        sec.cost_price=sec.quantity?+((oldCost+amtCny)/sec.quantity).toFixed(6):sec.cost_price;
+        sec.market_value_cny=Math.max(0,+(Number(sec.market_value_cny||0)+amtCny).toFixed(2));
+      }
+      if(!sec.id) sec.id=genHid();
+      if(sec.price==null||sec.price===0) sec.price=sec.cost_price;
+    } else {
+      if(!a.securities) a.securities=[];
+      const _qty=Math.abs(dq)||1;
+      const _unit=amtCny>0?_qty?+(amtCny/_qty).toFixed(6):0:0;
+      const _newSec={id:genHid(),asset_name:name,code:tx.code||'',market:tx.market||'',quantity:_qty,cost_price:_unit,price:_unit||tx.price||0,currency:tx.currency||'CNY',market_value_cny:amtCny,project:tx.project||'',asset_category:tx.asset_category||marketToCat(tx.market||'')||'',cat_id:tx.cat_id||resolveCatIdSafe(marketToCat(tx.market||'')||'')||'',location:tx.location||'',notes:tx.note||''};
+      a.securities.push(_newSec);
+      _clearTombstonesOnAdd(tx.account,_newSec);
+    }
+  }
+  if((t==='buy'||t==='sell'||t==='manual_adjust')&&tx.account){ const _aa=acct(tx.account); if(_aa){ syncHoldingsFromLegacy(_aa); jRecomputeSummary(_aa); } }
 }
 function addTx(){
   try {
@@ -5632,10 +5693,22 @@ function addTx(){
       if(tx.quantity>(_s.quantity||0)){toast('卖出数量超过持仓（持有'+(_s.quantity||0)+'）');return;}
     }
   }
-  if(type!=='income'){ DATA.transactions.push(tx); }
+  /* v101 根治（用户规则）：收入也要写进流水列表，流水页可见。
+     原来 income 只进 DATA.income.records，用户录收入后在「流水」页什么都看不到，
+     误以为"没有记录没有反应"。现在统一写进 transactions（type='income'）；
+     现金入账仍走 creditIncomeToCash（见 txCashDelta 已移除 income 现金分支，防双算）。 */
+  DATA.transactions.push(tx);
   if(type==='income'){
-    const inc={id:'inc'+Date.now(),date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
+    const _incId='inc'+Date.now();
+    tx.id=_incId;   /* v101：income 流水与 income.records 共用 id（'inc…'），delTx/delInc 双向联动可对上 */
+    tx._isIncomeLedger=true;  /* v101：标记为收入台账流水，sanitizeTxns 不得按 id 剔除（否则流水页看不到收入） */
+    const inc={id:_incId,date:tx.date,type:tx.income_type,type_label:({dividend:'股票股息',fcn_coupon:'FCN票息',fund_div:'基金分红',interest:'利息',bond_interest:'债券利息',crypto_income:'加密货币收益',other:'其他收入'})[tx.income_type]||tx.income_type,account:acctName(tx.account),holder:'',name:tx.name,project:tx.project||'',currency:tx.currency,status:tx.status,note:tx.note};
+    /* v101 根治：inc 必须带 amount，否则 creditIncomeToCash 里 !(Number(inc.amount)>0)
+       永远 return —— 收入现金入账从未生效过（用户"录收入账户没反应"的根因之一）。 */
+    inc.amount=tx.amount;
     inc.cny=toCny(tx.amount,tx.currency);
+    /* v101：income 流水里补 asset_name=name，方便流水列表显示与后续台账查看 */
+    tx.asset_name=tx.name||tx.asset_name||'收入';
     DATA.income.records.push(inc); computeIncomeAgg();
     if(inc.status==='received') creditIncomeToCash(tx.account, inc); // v15：收入自动入账对应币种现金
   }
@@ -5656,7 +5729,7 @@ function delTx(id){
   DATA.transactions=DATA.transactions.filter(x=>x.id!==id);
   /* v93：删除流水写墓碑，防云端并集把已删流水复活（Gap1） */
   if(t) addDeletedTx(t.account||t.account_from||t.account_to, t.id);
-  if(t&&t.type==='income'){ DATA.income.records=DATA.income.records.filter(r=>r.id!==id); computeIncomeAgg(); }
+  if(t&&t.type==='income'){ const _inc=DATA.income.records.find(r=>r.id===id); DATA.income.records=DATA.income.records.filter(r=>r.id!==id); if(_inc&&_inc.account)revertIncomeCash(_inc.account,id); computeIncomeAgg(); }
   /* 反写持仓：删除买入/卖出交易时同步修改 a.securities，防止幽灵持仓 */
   if(t&&(t.type==='buy'||t.type==='sell')){
     const a=acct(t.account);
@@ -5718,11 +5791,15 @@ function txCashDelta(aid){
     const dupInCash=(a&&a.cash_holdings||[]).some(function(ch){
       return (ch.currency||'CNY')===(t.currency||'CNY') && Math.abs(Number(ch.amount||0)-Number(t.amount||0))<1e-6;
     });
-    if(t.type==='income'&&t.account===aid){ if(!dupInCash) d+=v; }
+    /* v101：income 现金已由 creditIncomeToCash 直接入账 cash_holdings，
+       这里不再重复计入（否则 income 写流水后现金双算）。 */
+    if(t.type==='income'&&t.account===aid){ /* 现金入账走 creditIncomeToCash，此处不加 */ }
     else if(t.type==='transfer'){ if(t.account_from===aid)d-=v; if(t.account_to===aid)d+=v; }
     else if(t.type==='buy'&&t.account===aid) d-=(v+f);
     else if(t.type==='sell'&&t.account===aid) d+=(v-f);
-    else if(t.type==='manual_adjust'&&t.account===aid){ if(!dupInCash) d+=v; }
+    /* v101：manual_adjust 带数量(≠0)=持仓调整，持仓已由 applyTxToHolding 更新，
+       现金不能再计（否则双算）；无数量=现金调整，才走现金。 */
+    else if(t.type==='manual_adjust'&&t.account===aid){ if(!(Number(t.quantity||0)!==0) && !dupInCash) d+=v; }
   });
   return d;
 }
@@ -5816,11 +5893,13 @@ function txCashDeltaByCcy(aid){
     const ccy=(t.currency||'CNY').toUpperCase(), v=Number(t.amount||0), f=Number(t.fee||0);
     // 与 txCashDelta 口径一致：已有同币种同金额的现金子账户则视为已计入，避免重复。
     const dupInCash=(a&&a.cash_holdings||[]).some(function(ch){ return (ch.currency||'CNY')===(t.currency||'CNY') && Math.abs(Number(ch.amount||0)-v)<1e-6; });
-    if(t.type==='income'&&t.account===aid){ if(!dupInCash) m[ccy]=(m[ccy]||0)+v; }
+    /* v101：income 现金已入账 cash_holdings，这里不再重复计入（防双算）。 */
+    if(t.type==='income'&&t.account===aid){ /* 现金入账走 creditIncomeToCash，此处不加 */ }
     else if(t.type==='transfer'){ if(t.account_from===aid) m[ccy]=(m[ccy]||0)-v; if(t.account_to===aid) m[ccy]=(m[ccy]||0)+v; }
     else if(t.type==='buy'&&t.account===aid) m[ccy]=(m[ccy]||0)-(v+f);
     else if(t.type==='sell'&&t.account===aid) m[ccy]=(m[ccy]||0)+(v-f);
-    else if(t.type==='manual_adjust'&&t.account===aid){ if(!dupInCash) m[ccy]=(m[ccy]||0)+v; }
+    /* v101：manual_adjust 带数量(≠0)=持仓调整，现金不再计；无数量=现金调整才计。 */
+    else if(t.type==='manual_adjust'&&t.account===aid){ if(!(Number(t.quantity||0)!==0) && !dupInCash) m[ccy]=(m[ccy]||0)+v; }
   });
   return m;
 }
@@ -6918,7 +6997,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-08-v100';
+const APP_VERSION='2026-08-08-v101';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -7731,7 +7810,7 @@ function sanitizeTxns(txns, income){
   var recs=incomeRecordsFrom(income);            // 兼容 {records:[...]} 与数组两种形态
   if(!recs||!recs.length) return txns;
   var ids={}; for(var i=0;i<recs.length;i++){ if(recs[i]&&recs[i].id) ids[recs[i].id]=1; }
-  var out=[]; for(var j=0;j<txns.length;j++){ var t=txns[j]; if(t&&t.id&&ids[t.id]) continue; out.push(t); }
+  var out=[]; for(var j=0;j<txns.length;j++){ var t=txns[j]; if(t&&t.id&&ids[t.id]&&!t._isIncomeLedger) continue; out.push(t); }
   return out;
 }
 /* ===================== 标的完整编辑（需求2） =====================
@@ -8642,6 +8721,14 @@ function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
       const la=lMap[k];
       if(la){
         const m=Object.assign({},a);
+        /* v101 根治：账户名/持有人/标签是用户主动编辑的元数据，云端优先合并时
+           这些字段必须**本地优先**——否则本地刚改的账户名（如 盈立香港→盈立新加坡）
+           会在下一次云端合并里被 cloudWins=true 分支的 Object.assign 覆盖回旧名
+           （用户"改完过两次又被改回去"的根因）。持仓/流水仍按并集合并。 */
+        if(la.platform!=null && String(la.platform).trim()!=='' && la.platform!==a.platform) m.platform=la.platform;
+        if(la.holder!=null && String(la.holder).trim()!=='' && la.holder!==a.holder) m.holder=la.holder;
+        if(la.account_type!=null && String(la.account_type).trim()!=='' && la.account_type!==a.account_type) m.account_type=la.account_type;
+        if(la.account_category!=null && String(la.account_category).trim()!=='' && la.account_category!==a.account_category) m.account_category=la.account_category;
         ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
           // 云端在前：同一条目以云端为准，本地仅补充云端没有的字段/条目
           m[key]=unionHoldings(a[key]||[], la[key]||[], holdingKeyFor(key), holdingMergeFor(key));
