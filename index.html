@@ -1554,8 +1554,8 @@ function renderConsolidated(){
           while(cells.length<3) cells.push('');
           return '<div class="ad-dist-b">' + cells.slice(0,3).map(_aCell).join('') + '</div>';
         }).join('');
-        const foot='<div class="ad-dist-foot ad-dist-b">'+_aCell('小计')+_aCell('')+_aCell(foot)+'</div>';
-        return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div>'+head+bodyRows+foot+'</div>';
+        const footR='<div class="ad-dist-foot ad-dist-b">'+_aCell('小计')+_aCell('')+_aCell(foot)+'</div>';
+        return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div>'+head+bodyRows+footR+'</div>';
       } else {
         // 方案 A：6 列 CSS Grid（彻底代替 <table>）。数值列 min-width 绑 px 不被压扁。
         const head='<div class="ad-dist-h ad-dist-a">' + _aCell('账户')+_aCell('持有人')+_aCell('数量')+_aCell('成本')+_aCell('现价')+_aCell('市值') + '</div>';
@@ -1564,8 +1564,8 @@ function renderConsolidated(){
           while(cells.length<6) cells.push('');
           return '<div class="ad-dist-a">' + cells.slice(0,6).map(_aCell).join('') + '</div>';
         }).join('');
-        const foot='<div class="ad-dist-foot ad-dist-a">'+_aCell('小计')+_aCell('')+_aCell('')+_aCell('')+_aCell('')+_aCell(foot)+'</div>';
-        return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><div class="ad-dist-wrap">'+head+bodyRows+foot+'</div></div>';
+        const footR='<div class="ad-dist-foot ad-dist-a">'+_aCell('小计')+_aCell('')+_aCell('')+_aCell('')+_aCell('')+_aCell(foot)+'</div>';
+        return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><div class="ad-dist-wrap">'+head+bodyRows+footR+'</div></div>';
       }
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
