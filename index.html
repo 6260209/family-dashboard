@@ -312,33 +312,32 @@ tbody tr:hover{background:#f8fafc}
 .ad-chips{margin:0 0 10px}
 .ad-dist{margin:0 0 10px}
 .ad-dist-title{font-size:12px;font-weight:700;color:#0e7490;margin-bottom:5px}
-/* v102 根治：账户分布表窄屏列被压扁为 0 宽
-   原 table-layout:auto 时 td max-content 容易被浏览器收缩到 0，
-   且 td:not(:first-child){white-space:nowrap} 让数字列不换行，
-   窄屏（<640px）下后 5 列被陆续压扁、内容溢出不可见（用户截图"5 列堆右侧"现象）。
-   修法：容器加横向滚动 + 表格设最小宽度，桌面（容器≥900px）不触发滚动，
-   窄屏触发横向滚动而非压扁。同时给 td 设 min-width 防止内容被切。 */
-.ad-dist{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
-/* v102：默认 auto 桌面列宽自适应；窄屏切 fixed+显式列宽，避免数字列被压扁为 0 */
-.ad-dist-table{width:100%;min-width:520px;border-collapse:collapse;font-size:12px;table-layout:auto}
-.ad-dist-table th{text-align:left;color:#64748b;font-weight:600;padding:4px 6px;border-bottom:1px solid var(--border);font-size:11px}
-.ad-dist-table td{padding:5px 6px;border-bottom:1px solid #f1f5f9;color:var(--text);vertical-align:top}
-.ad-dist-table td:not(:first-child){text-align:right;white-space:nowrap}
-.ad-dist-table tfoot td{font-weight:700;border-top:1px solid var(--border);border-bottom:none;padding-top:6px}
-.ad-dist-table small{color:var(--dim);font-weight:400;margin-left:3px;font-size:10.5px}
-@media (max-width:640px){
-  /* v102 修：table-layout:fixed 下 min-width 不稳（被 first-row nowrap 内容挤到 0），
-     改用显式 width + table-layout:fixed 强制列宽不被压扁。 */
-  .ad-dist-table{table-layout:fixed;width:520px;min-width:520px}
-  .ad-dist-table th:nth-child(1),.ad-dist-table td:nth-child(1){width:90px}
-  .ad-dist-table th:nth-child(2),.ad-dist-table td:nth-child(2){width:60px}
-  .ad-dist-table th:nth-child(3),.ad-dist-table td:nth-child(3){width:60px}
-  .ad-dist-table th:nth-child(4),.ad-dist-table td:nth-child(4){width:80px}
-  .ad-dist-table th:nth-child(5),.ad-dist-table td:nth-child(5){width:110px}
-  .ad-dist-table th:nth-child(6),.ad-dist-table td:nth-child(6){width:120px}
-  /* 第一行单元格内容超出固定宽时隐藏溢出，避免破坏列宽 */
-  .ad-dist-table th,.ad-dist-table td{overflow:hidden;text-overflow:ellipsis}
-}
+/* ===== v103 根治：彻底从 <table> 切到 CSS Grid =====
+   原 table-layout:fixed+nth-child 在 chromium 窄屏下错位（截图证实 #3 列偏右崩）
+   + min-width 在 nowrap 数字列下被压扁为 0。CSS Grid 用真实 px min-width 绑死列宽，
+   容器 overflow-x:auto 在窄屏触发横向滚动而非压缩。所有设备、任何浏览器都能正确对齐。 */
+
+/* 方案B：基金类（isFund）3 列 */
+.ad-dist-b{display:grid;grid-template-columns:minmax(90px,1.2fr) minmax(60px,1fr) minmax(100px,1.4fr);
+  gap:0;border-top:1px solid var(--border);font-size:12px}
+.ad-dist-b>div{padding:6px 8px;border-bottom:1px solid #f1f5f9}
+
+/* 方案A：股票类 6 列 — 关键：数值列用 minmax(min-width, 1fr) 不被压扁 */
+.ad-dist-a{display:grid;
+  grid-template-columns:minmax(95px,1.4fr) minmax(60px,1fr) minmax(60px,1fr) minmax(80px,1.1fr) minmax(100px,1.4fr) minmax(115px,1.6fr);
+  gap:0;border-top:1px solid var(--border);font-size:12px;min-width:580px}
+.ad-dist-a>div,.ad-dist-h{box-sizing:border-box;padding:6px 8px;border-bottom:1px solid #f1f5f9;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ad-dist-wrap{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+.ad-dist-h{display:grid;font-size:11px;color:#64748b;font-weight:600;border-bottom:1px solid var(--border);background:#fafbfc}
+.ad-dist-h>div{padding:4px 8px;border-bottom:1px solid var(--border)}
+.ad-dist-cell{box-sizing:border-box}
+.ad-dist-a>div:nth-child(n+2),.ad-dist-h>div:nth-child(n+2){text-align:right;white-space:nowrap}
+.ad-dist-a>div:nth-child(n+2){font-variant-numeric:tabular-nums}
+.ad-dist-foot{display:grid;font-weight:700;border-top:1px solid var(--border);background:#f8fafc;min-width:580px}
+.ad-dist-foot>div{padding:6px 8px;color:var(--text)}
+.ad-dist-foot>div:last-child{text-align:right}
+.ad-dist small{color:var(--dim);font-weight:400;margin-left:3px;font-size:10.5px}
+.ad-dist .empty{padding:12px;color:var(--dim);text-align:center;border-bottom:1px solid #f1f5f9}
 @media(max-width:640px){
   .ad-metrics{grid-template-columns:repeat(2,1fr)}
 }
@@ -1542,26 +1541,32 @@ function renderConsolidated(){
       let foot;
       if(mixedCcy){ foot=fmtCny(_rowMv)+' CNY'; }
       else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
-      /* v102 根治：CSS nth-child + table-layout:fixed 在 chromium 窄屏下第 5/6 列
-         clientWidth=0（computedW=110/120px 但 box 实际宽度 0，渲染 bug）。
-         改用 inline style 绑死列宽，绕过选择器+渲染问题。 */
-      const _wAttr=(i)=>' style="width:'+[90,60,60,80,110,120][i]+'px;min-width:'+[90,60,60,80,110,120][i]+'px;max-width:'+[90,60,60,80,110,120][i]+'px"';
-      const thAcct='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(0)+'>账户<span class="arrow"></span></th>';
-      const thHolder='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(1)+'>持有人<span class="arrow"></span></th>';
-      const thQty=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(2)+'>数量<span class="arrow"></span></th>';
-      /* v88：拆列。「成本」＝买入成本价(cost_price 加权均价)，「现价」＝真实时行情(无则 —)。
-         sortTableByCol 按 th 在行内的 index 定位列，新增列无需改排序逻辑。 */
-      const thCost=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(3)+' title="买入成本价（同账户多批次取加权均价）">成本<span class="arrow"></span></th>';
-      const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(4)+' title="实时行情单价；无行情显示 —，不回退成本价">现价<span class="arrow"></span></th>';
-      const thMv='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(5)+'>市值<span class="arrow"></span></th>';
-      const colspan=isFund?2:5;
-      /* v102 根治：CSS table-layout:fixed + nth-child 在 chromium 窄屏下 5/6 列
-         clientWidth=0（computedW 正确但 layout 错位）。改用 <colgroup> 显式列宽 + table-layout:fixed，
-         浏览器分配列宽时优先用 colgroup.width，绕开 nth-child bug。 */
-      const _colgroup=isFund
-        ? '<colgroup><col style="width:90px"><col style="min-width:60px"></colgroup>'
-        : '<colgroup><col style="width:90px"><col style="width:60px"><col style="width:60px"><col style="width:80px"><col style="width:110px"><col style="width:120px"></colgroup>';
-      return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table">'+_colgroup+'<thead><tr>'+thAcct+thHolder+thQty+thCost+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
+      /* v103 根治：彻底脱离 <table> 改 CSS Grid。
+         - 基金类：方案B 3 列（账户/持有人/市值），grid-template-columns:minmax(90px,1.2fr) minmax(60px,1fr) minmax(100px,1.4fr)
+         - 股票类：方案A 6 列（账户/持有人/数量/成本/现价/市值），数值列 minmax(min-width,1fr) 绑死不被压扁
+         容器 overflow-x:auto 横向滚动，CSS Grid min-width 永远生效（不像 table-layout:fixed 在 chromium 下崩）。*/
+      const _aCell=(s)=>'<div class="ad-dist-cell">'+s+'</div>';
+      if(isFund){
+        // 方案 B：3 列（账户/持有人/市值）
+        const head='<div class="ad-dist-h ad-dist-b">' + _aCell('账户')+_aCell('持有人')+_aCell('市值') + '</div>';
+        const bodyRows=rows.split('</tr>').filter(s=>s.trim()).map(r=>{
+          const cells=(r.match(/<td[^>]*>([\s\S]*?)<\/td>/g)||[]).map(s=>s.replace(/<td[^>]*>/,'').replace(/<\/td>/,''));
+          while(cells.length<3) cells.push('');
+          return '<div class="ad-dist-b">' + cells.slice(0,3).map(_aCell).join('') + '</div>';
+        }).join('');
+        const foot='<div class="ad-dist-foot ad-dist-b">'+_aCell('小计')+_aCell('')+_aCell(foot)+'</div>';
+        return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div>'+head+bodyRows+foot+'</div>';
+      } else {
+        // 方案 A：6 列 CSS Grid（彻底代替 <table>）。数值列 min-width 绑 px 不被压扁。
+        const head='<div class="ad-dist-h ad-dist-a">' + _aCell('账户')+_aCell('持有人')+_aCell('数量')+_aCell('成本')+_aCell('现价')+_aCell('市值') + '</div>';
+        const bodyRows=rows.split('</tr>').filter(s=>s.trim()).map(r=>{
+          const cells=(r.match(/<td[^>]*>([\s\S]*?)<\/td>/g)||[]).map(s=>s.replace(/<td[^>]*>/,'').replace(/<\/td>/,''));
+          while(cells.length<6) cells.push('');
+          return '<div class="ad-dist-a">' + cells.slice(0,6).map(_aCell).join('') + '</div>';
+        }).join('');
+        const foot='<div class="ad-dist-foot ad-dist-a">'+_aCell('小计')+_aCell('')+_aCell('')+_aCell('')+_aCell('')+_aCell(foot)+'</div>';
+        return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><div class="ad-dist-wrap">'+head+bodyRows+foot+'</div></div>';
+      }
     })();
     const detail=`<div class="consol-detail" id="consol-detail-${idx}">
       <div class="flat-card" data-idx="${idx}">
@@ -7028,7 +7033,7 @@ function renderMine(){
 }
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
-const APP_VERSION='2026-08-08-v102';
+const APP_VERSION='2026-08-08-v103';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
