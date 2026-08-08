@@ -1542,9 +1542,13 @@ function renderConsolidated(){
       let foot;
       if(mixedCcy){ foot=fmtCny(_rowMv)+' CNY'; }
       else { let s=0; for(const k of keys) s+=map[k].nativeMv; foot=fmtNative(s,r.currency); }
-      const thAcct='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">账户<span class="arrow"></span></th>';
-      const thHolder='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">持有人<span class="arrow"></span></th>';
-      const thQty=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">数量<span class="arrow"></span></th>';
+      /* v102 根治：CSS nth-child + table-layout:fixed 在 chromium 窄屏下第 5/6 列
+         clientWidth=0（computedW=110/120px 但 box 实际宽度 0，渲染 bug）。
+         改用 inline style 绑死列宽，绕过选择器+渲染问题。 */
+      const _wAttr=(i)=>' style="width:'+[90,60,60,80,110,120][i]+'px;min-width:'+[90,60,60,80,110,120][i]+'px;max-width:'+[90,60,60,80,110,120][i]+'px"';
+      const thAcct='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(0)+'>账户<span class="arrow"></span></th>';
+      const thHolder='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(1)+'>持有人<span class="arrow"></span></th>';
+      const thQty=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(2)+'>数量<span class="arrow"></span></th>';
       /* v88：拆列。「成本」＝买入成本价(cost_price 加权均价)，「现价」＝真实时行情(无则 —)。
          sortTableByCol 按 th 在行内的 index 定位列，新增列无需改排序逻辑。 */
       const thCost=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)" title="买入成本价（同账户多批次取加权均价）">成本<span class="arrow"></span></th>';
