@@ -1551,9 +1551,9 @@ function renderConsolidated(){
       const thQty=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(2)+'>数量<span class="arrow"></span></th>';
       /* v88：拆列。「成本」＝买入成本价(cost_price 加权均价)，「现价」＝真实时行情(无则 —)。
          sortTableByCol 按 th 在行内的 index 定位列，新增列无需改排序逻辑。 */
-      const thCost=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)" title="买入成本价（同账户多批次取加权均价）">成本<span class="arrow"></span></th>';
-      const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)" title="实时行情单价；无行情显示 —，不回退成本价">现价<span class="arrow"></span></th>';
-      const thMv='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)">市值<span class="arrow"></span></th>';
+      const thCost=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(3)+' title="买入成本价（同账户多批次取加权均价）">成本<span class="arrow"></span></th>';
+      const thPx=isFund?'':'<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(4)+' title="实时行情单价；无行情显示 —，不回退成本价">现价<span class="arrow"></span></th>';
+      const thMv='<th class="sortable" onclick="event.stopPropagation();sortTableByCol(this)"'+_wAttr(5)+'>市值<span class="arrow"></span></th>';
       const colspan=isFund?2:5;
       return '<div class="ad-dist"><div class="ad-dist-title">账户分布</div><table class="ad-dist-table"><thead><tr>'+thAcct+thHolder+thQty+thCost+thPx+thMv+'</tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="'+colspan+'">小计</td><td>'+foot+'</td></tr></tfoot></table></div>';
     })();
