@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-09-v117">
+<meta name="app-version" content="2026-08-10-v103">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -1926,9 +1926,15 @@ function acctLiveTotalCny(a){
       const unit=(live!=null)?live:(h.cost_price!=null&&Number(h.cost_price)>0?Number(h.cost_price):null);
       if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
     } else if(h.source==='sec'){
+      // v103 fix②：与详情 _rowOf 的 fallback 链对齐（live → price → cost_price → value×qty）。
+      // 此前行情未到位(secLivePrice=null)且 price 缺失时 unit=0，总额直接取 h.value||0
+      // （飞鱼科技 49550 股 price=0/value=0 → 按 ¥0 计，ZA 总额 ¥4,446 vs 明细 ¥26,931 差 ¥22,485，
+      //  Q7 根因）。现在补 cost_price 回退：飞鱼 49550×0.5117 HKD 计入；
+      // 币安/富途 QQQM 同样走 price/cost×qty，不再用存量 h.value 当总额价——总额/明细口径统一。
       const live=secLivePrice(h);
-      const unit=(live!=null)?live:Number(h.price||0);
-      if(unit>0 && h.qty!=null) total=Number(h.qty)*unit;
+      const _cost=(h.cost_price!=null)?Number(h.cost_price):null;
+      const unit=(live!=null)?live:(h.price?Number(h.price):(_cost!=null?_cost:null));
+      if(unit!=null && unit>0 && h.qty!=null) total=Number(h.qty)*unit;
       else total=Number(h.value||0);
     } else if(h.source==='fund' || h.source==='struct'){
       // 批3 #10/#11 同源修复：账户实时总额此前无 fund/struct 分支 → 基金/结构持仓被完全漏算，
@@ -3630,6 +3636,61 @@ function purgeDeletedItems(accts){
   });
   return accts;
 }
+/* v103 fix①：启动自愈——清除「墓碑-活体冲突」的陈旧墓碑（Q1/Q2/Q5 死循环根因）。
+   v102 线上复现：famdash_deleted_items 含 9 个陈旧墓碑（yangxiaqin_za::cash:USD:USD /
+   holdings:USD / cash:HKD:HKD / cash:CNY:USD、xiejunchen_binance::cash:USDC:USDC /
+   holdings:USDC、manual_1785298693676::cash:USD:USD / holdings:USD / cash:USD:qqqi /
+   holdings:qqqi），但对应活体条目（USD/USDC/HKD 现金桶、QQQI 等）在明细区仍存在。
+   每次 push 时 purgeDeletedItems 按墓碑把活体编辑剔除，recomputeCashAccount §2 再按
+   流水净额重建 → 死循环（Q1/Q5：USD 改 0 被还原成 -1688）。
+   修法（v47 双条件守卫思想：活体存在 + 命中墓碑 = 冲突）：凡墓碑命中但明细区仍存在
+   活体的，从 deleted_items 移除该墓碑（对齐「网页上看到什么就是什么」）。
+   【注意】只清「活体仍存在」的墓碑：真删条目（无活体）保留墓碑，杜绝已删数据复活。
+   幂等：无冲突时 deleted_items 不变，不落盘、不触发推送。 */
+function _healStaleTombstonesOnLive(accounts){
+  try{
+    const del=getDeletedItems(); if(!del.length||!Array.isArray(accounts)) return 0;
+    const secs=['securities','fund_holdings','holdings','cash_holdings','crypto','bond_holdings'];
+    const live=new Set();
+    accounts.forEach(function(a){
+      if(!a||!a.id) return;
+      secs.forEach(function(sec){
+        (a[sec]||[]).forEach(function(it){
+          if(!it) return;
+          live.add(a.id+'::'+getItemKey(sec,it));
+          if(sec==='cash_holdings'){
+            // 现金旧键历史存在大小写变体（cash:<ccy>:<name>），与 _clearTombstonesOnAdd L7771 一致全量登记
+            const cnm=(typeof cashNameCanon==='function')?cashNameCanon(it):(it.name||'');
+            const ccy=String(it.currency||'').trim();
+            if(ccy&&cnm){
+              [cnm,String(cnm).toUpperCase(),String(cnm).toLowerCase()].forEach(function(v){
+                [ccy,ccy.toUpperCase(),ccy.toLowerCase()].forEach(function(cc){
+                  live.add(a.id+'::cash:'+cc+':'+v);
+                });
+              });
+            }
+          } else {
+            // 旧原样键（大小写原样），与 isItemDeleted 的 raw 回退查一致
+            const raw=it.asset_name||it.name||it.symbol||it.product_id||it.id||'';
+            if(raw) live.add(a.id+'::'+sec+':'+raw);
+          }
+        });
+      });
+    });
+    if(!live.size) return 0;
+    const before=del.length;
+    const out=del.filter(function(d){
+      if(typeof d!=='string'||!d) return true;
+      if(isTxTombstoneKey(d)) return true;   // 流水墓碑（aid::tx:id）不参与：已删流水必须保留
+      return !live.has(d);
+    });
+    if(out.length!==before){
+      try{ localStorage.setItem('famdash_deleted_items', JSON.stringify(out)); }catch(e){}
+      try{ if(typeof setSyncMeta==='function') setSyncMeta('famdash_deleted_items', Date.now()); }catch(e){}
+    }
+    return before-out.length;
+  }catch(e){ return 0; }
+}
 /* ============ 流水删除 Tombstone（v93：删除流水也跨同步持久化） ============
  * 旧逻辑 delTx 只过滤本地 DATA.transactions，云端 sync.json 仍含该流水；
  * buildPushSnapshot/applyCloudToData 用 mergeRecordsById 做 union（本地∪云端），
@@ -4348,17 +4409,27 @@ function addHolding(aid,sec,vals,idx){
       if(_qKey){ const _ov=Number(oldItem&&oldItem[_qKey]!=null?oldItem[_qKey]:0)||0; const _nv=Number(o[_qKey]!=null?o[_qKey]:0)||0; _dq=+(_nv-_ov).toFixed(6); }
       if(sec==='securities'){ const _ov=Number(oldItem&&oldItem.market_value_cny!=null?oldItem.market_value_cny:0)||0; const _nv=Number(o.market_value_cny!=null?o.market_value_cny:0)||0; _dv=+(Math.abs(_nv-_ov)).toFixed(2); }
       else if(sec==='holdings'||sec==='crypto'){ const _ov=Number(oldItem&&oldItem.value!=null?oldItem.value:0)||0; const _nv=Number(o.value!=null?o.value:0)||0; _dv=+(Math.abs(_nv-_ov)).toFixed(2); }
+      else if(sec==='cash_holdings'){
+        // v103 fix④：现金桶金额变更取「绝对差」作流水金额（原来 cost_price/price 为 null → amount=0，
+        // 流水显示 "+¥0 CNY" 无意义）；币种用现金桶真实币种（oldItem.currency），非默认 CNY。
+        const _ov2=Number(oldItem&&oldItem.amount!=null?oldItem.amount:0)||0;
+        const _nv2=Number(o.amount!=null?o.amount:0)||0;
+        _dv=+(Math.abs(_nv2-_ov2)).toFixed(2);
+      }
       const _changed=(Math.abs(_dq)>1e-6)||(Math.abs(_dv)>1e-6);
       if(_changed&&_nm){
         if(!DATA.transactions) DATA.transactions=[];
+        const _ccy=(sec==='cash_holdings'&&oldItem&&oldItem.currency)?oldItem.currency:(o.currency||'CNY');
         DATA.transactions.push({
           id:'tx_adj_'+Date.now(), date:toISOStringLocal(new Date()).slice(0,10), time:new Date().toTimeString().slice(0,5),
           type:'adjust', account:aid,
           asset_name:_nm, code:o.code||'', market:o.market||'',
           quantity:_dq, price:o.cost_price||o.price||0,
           amount:(_dv>1e-6)?_dv:Math.abs(_dq*((o.cost_price!=null?o.cost_price:0)||(o.price!=null?o.price:0)||0)),
-          currency:o.currency||'CNY', fee:0,
-          note:'账户内调整'+_secLabel+' '+(_dq>0?'+':'')+_dq+' '+_nm,
+          currency:_ccy, fee:0,
+          note:(sec==='cash_holdings')
+            ? ('账户内调整'+_secLabel+' 金额 '+Number((oldItem&&oldItem.amount!=null)?oldItem.amount:0).toFixed(2)+' → '+Number(o.amount!=null?o.amount:0).toFixed(2)+' '+_ccy)
+            : ('账户内调整'+_secLabel+' '+(_dq>0?'+':'')+_dq+' '+_nm),
           status:'completed', asset_category:o.asset_category||o.cat||'', cat_id:o.cat_id||'',
           project:o.project||'', location:o.location||'', _src:'账户内调整'
         });
@@ -6204,6 +6275,14 @@ function recomputeCashAccount(aid){
     if(!_txPeerAlive(t)) return;
     if(t.account!==aid && !(t.type==='transfer'&&(t.account_from===aid||t.account_to===aid))) return;
     const ccy=(t.currency||'CNY').toUpperCase();
+    /* v103 fix③：手动已对齐守卫（Q1/Q5 死循环）——若该账户+币种存在 balance_change
+       （用户手动改过余额，如 USD -1688 → 0），禁止按流水净额自动建桶。
+       否则墓碑误 purge 活体后，§2 会按 QQQM 买入 net -1688 重建回 -1688，覆盖手动值。
+       保留手动值优先于流水推导：缺桶时该币种按 0 计，绝不把用户显式输入改回去。
+       参考 v93 _phant 思路：手动真值是本地唯一可信基准。 */
+    let _manualAligned=false;
+    try{ _manualAligned=(DATA.transactions||[]).some(function(x){ return x && x.account===aid && x.type==='balance_change' && (x.currency||'CNY').toUpperCase()===ccy; }); }catch(_e){}
+    if(_manualAligned) return;
     const net=txDerivedNet(aid, ccy);
     if(Math.abs(net)<1e-6) return;
     if(a.cash_holdings.some(ch=>(ch.currency||'CNY').toUpperCase()===ccy)) return;
@@ -7103,7 +7182,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-08-09-v117';
+window.APP_VERSION='2026-08-10-v103';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -8819,6 +8898,11 @@ function applyCloudToData(snap, overwrite){
     try{ const _cd=snapGet(snap,'famdash_deleted_accounts'); if(_cd){ const _arr=JSON.parse(_cd); const _set=new Set(getDeletedAccounts()); _arr.forEach(function(x){_set.add(x);}); try{localStorage.setItem('famdash_deleted_accounts',JSON.stringify([..._set]));}catch(e){} } }catch(e){}
     // ── 子项目删除 tombstone：合并云端已删子项清单，使现金/持仓删除跨同步持久化
     try{ const _ci=snapGet(snap,'famdash_deleted_items'); if(_ci){ const _a=JSON.parse(_ci); const _s2=new Set(getDeletedItems()); _a.forEach(function(x){_s2.add(x);}); try{localStorage.setItem('famdash_deleted_items',JSON.stringify([..._s2]));}catch(e){} } }catch(e){}
+    /* v103 fix①：墓碑合并后、purge 前，先清「墓碑-活体冲突」的陈旧墓碑。
+       必须赶在 purgeDeletedItems 之前：此刻 o.accounts 仍是未 purge 的云端活体
+       （USD/USDC 现金桶等），一旦先 purge，活体被剔除后就无法证明"墓碑指向活体"，
+       冲突墓碑将永远保留、循环往复（Q1/Q2/Q5 死循环）。 */
+    try{ _healStaleTombstonesOnLive(o.accounts); }catch(_e){}
     if(o.accounts) o.accounts=purgeDeletedAccounts(purgeDeletedItems(o.accounts));
     if(!overwrite && localV1){
       const cloudAcctMap={}; (o.accounts||[]).forEach(function(a){ cloudAcctMap[a.id||a.name]=a; });
@@ -8868,6 +8952,10 @@ function applyCloudToData(snap, overwrite){
   try{ (DATA.accounts||[]).forEach(function(a){ normalizeAccount(a); }); }
   catch(e){ console.warn('applyCloudToData normalize', e); }
   try{ healCashDerived(); }catch(e){ console.warn('applyCloudToData heal', e); }
+  /* v103 fix①（第二遍）：normalizeAccount/heal 之后 holdings 孪生已生成（现金桶的
+     holdings:USD/USDC 孪生、QQQI 等），此时再清一次「墓碑-活体冲突」——否则下一轮
+     push 的 purgeDeletedItems 会用 holdings:USD 等墓碑把刚生成的孪生剔除（Q2 死循环）。 */
+  try{ _healStaleTombstonesOnLive(DATA.accounts); }catch(_e){}
   return mergedLocal;
 }
 function getDeviceLabel(){
