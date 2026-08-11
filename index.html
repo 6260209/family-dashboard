@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-11-v119">
+<meta name="app-version" content="2026-08-11-v120">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -4394,6 +4394,19 @@ function addHolding(aid,sec,vals,idx){
     // 现金/固收金额被手动修改时，清除 _manual_base 让 recomputeCashAccount 按新金额自洽重算
     if(sec==='cash_holdings' && oldItem && oldItem.amount!==o.amount) delete o._manual_base;
     a[sec][idx]=o;
+    /* v109 fix：持仓/现金编辑打 LWW 时间戳 —— 本地新值必须胜过云端旧值。
+       (a) 条目级 _editTs：供合并函数判断「本地编辑更新 → 本地优先」，同 id 绝不双留/被云端旧值覆盖；
+       (b) 账户级 _meta.<holdings_ts|cash_ts>：供 syncPush 陈旧守卫识别「本设备有未推送的持仓/现金编辑」，
+           避免把用户刚改的数量/金额误判为「陈旧本地」而整体跳过推送、被云端覆盖回滚（v108 8/9 项回滚根因）。 */
+    try{
+      const _nowTs=Date.now();
+      o._editTs=_nowTs;
+      a._meta=a._meta||{};
+      a._meta[sec==='cash_holdings'?'cash_ts':'holdings_ts']=_nowTs;
+      const _share=(o.id||o.name||'');
+      if(_share && Array.isArray(a.holdings)){ a.holdings.forEach(function(x){ if(x&&((o.id&&x.id===o.id)||(!o.id&&x.name===o.name))) x._editTs=_nowTs; }); }
+      if(_share && Array.isArray(a.crypto)){ a.crypto.forEach(function(x){ if(x&&((o.id&&(x.id===o.id||x.uid===o.id))||(!o.id&&x.name===o.name))) x._editTs=_nowTs; }); }
+    }catch(_e){}
     // v117 fix：编辑 = 用户确认该条目存在，清除其残留删除墓碑——
     // 否则历史删除墓碑（如 v115/v116 清理时写的 holdings:HKD / holdings:USD）会在推送
     // purgeDeletedItems 时把刚编辑的条目 purge 掉，heal 时被 transfer 流水重建回旧值
@@ -4567,6 +4580,8 @@ function saveSecInline(aid,idx){
     });
   }
   t._editBaselineQty=_newQty;
+  // v109 fix：行内证券编辑同样打 LWW 时间戳（数量/成本/市值变化 → 本地优先推送）
+  try{ const _nowTs=Date.now(); t._editTs=_nowTs; a._meta=a._meta||{}; a._meta.holdings_ts=_nowTs; }catch(_e){}
   afterEdit(aid);
   logActivity('\u4fee\u6539\u8bc1\u5238\u6301\u4ed7', acctName(aid)+' · '+t.asset_name+' · \u6570\u91cf '+t.quantity);
 }
@@ -4603,6 +4618,8 @@ function saveHoldingsInline(aid,idx){
       }
     });
   }
+  // v109 fix：行内加密持仓编辑打 LWW 时间戳
+  try{ const _nowTs=Date.now(); t._editTs=_nowTs; a._meta=a._meta||{}; a._meta.holdings_ts=_nowTs; }catch(_e){}
   afterEdit(aid);
 }
 function editCashInline(aid,idx){
@@ -4656,6 +4673,8 @@ function saveCashInline(aid,idx){
       ts:Date.now(), src:'cash_inline'
     });
   }
+  // v109 fix：行内现金编辑打 LWW 时间戳（金额/币种/类型变化 → 本地优先推送，base 不被云端旧值回填）
+  try{ const _nowTs=Date.now(); c._editTs=_nowTs; a._meta=a._meta||{}; a._meta.cash_ts=_nowTs; }catch(_e){}
   afterEdit(aid);
   try{ renderTx(); }catch(e){}
   logActivity('修改现金持仓',`${acctName(aid)} · ${c.name} · ${c.currency} ${_oldAmt.toFixed(2)} → ${_newAmt.toFixed(2)}`);
@@ -7195,7 +7214,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-08-11-v119';
+window.APP_VERSION='2026-08-11-v120';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -9010,9 +9029,19 @@ function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
           else if(_lts>0){ m[_f]=_lv; }
           /* 其余（含两侧均无时间戳）→ 保持云端 m[_f]=_cv，防陈旧本地覆盖 */
         });
-        ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
+        ['securities','crypto_holdings','cryptos','fund_holdings','bond_holdings'].forEach(function(key){
           // 云端在前：同一条目以云端为准，本地仅补充云端没有的字段/条目
           m[key]=unionHoldings(a[key]||[], la[key]||[], holdingKeyFor(key), holdingMergeFor(key));
+        });
+        /* v109 fix：持仓/现金按「本地编辑时间戳」LWW —— 用户刚编辑过 qty/amount 的账户，
+           即使本次整体以云端为准（cloudWins），该账户的持仓/现金也必须本地优先合并，
+           否则同 id 条目会因 mergeHoldingEntry 冲突返回 null 而保留云端旧值、丢弃本地新值
+           （v108 8/9 项 UI 编辑被云端旧值回滚的 push 侧根因之一）。
+           判据与 v107 acctFieldTs 一致：本地 _meta.holdings_ts/cash_ts 较新 → 该 key 本地优先。 */
+        ['holdings','cash_holdings'].forEach(function(key){
+          const _lts=acctFieldTs(la,key), _cts=acctFieldTs(a,key);
+          if(_lts>0 && _lts>_cts){ m[key]=unionHoldings(la[key]||[], a[key]||[], holdingKeyFor(key), holdingMergeFor(key)); }
+          else { m[key]=unionHoldings(a[key]||[], la[key]||[], holdingKeyFor(key), holdingMergeFor(key)); }
         });
         out.push(m);
       } else out.push(a);
@@ -9132,7 +9161,7 @@ function _doSyncPush(tok,attempt){
         if(cs){
           const _cloudT=(function(){ try{ const t=new Date(cs.syncedAt).getTime(); if(t)return t; }catch(e){} const u=cs&&cs.keys&&cs.keys.famdash_v1&&Number(cs.keys.famdash_v1.updatedAt)||0; return u; })();
           const _lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
-          const _hasNewerLocalField=(function(){ try{ return (DATA.accounts||[]).some(function(_a){ return ['platform','holder','account_type','account_category'].some(function(_f){ return acctFieldTs(_a,_f)>_cloudT+5000; }); }); }catch(e){ return false; } })();
+          const _hasNewerLocalField=(function(){ try{ return (DATA.accounts||[]).some(function(_a){ return ['platform','holder','account_type','account_category','holdings','cash_holdings'].some(function(_f){ return acctFieldTs(_a,_f)>_cloudT+5000; }); }); }catch(e){ return false; } })();
           staleLocal = _cloudT>0 && _cloudT > _lastPull + 5000 && !_hasNewerLocalField;
           if(staleLocal){ console.warn('[v107] 陈旧本地跳过 push，转拉取覆盖云端', 'cloudT=', _cloudT, 'lastPull=', _lastPull); }
         }
