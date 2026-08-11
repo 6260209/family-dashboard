@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-10-v118">
+<meta name="app-version" content="2026-08-11-v119">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -1310,7 +1310,7 @@ function renderAccts(){
       const top=a.holdings.filter(h=>!h.is_cash).slice(0,3).map(h=>{const n=h.name||h.code||'—'; const p=h.pnl_pct!=null?((h.pnl_pct>=0?'+':'')+h.pnl_pct+'%'):''; return p?n+' '+p:n;}).join('、');
       detail=top;
     }
-    return `<div class="acct" style="position:relative" onclick="openAcct('${a.id}')"><div class="top"><div><div class="pn">${a.platform}<span class="htag">${a.holder}</span></div>`+
+    return `<div class="acct" style="position:relative" onclick="openAcct('${a.id}')"><div class="top"><div><div class="pn">${acctDisplayName(a)}<span class="htag">${a.holder}</span></div>`+
       `<div class="at">${a.account_type||''}</div></div>`+
       `</div>`+
       `<div class="av">${av}</div><div class="ap">${asub}</div>`+
@@ -3794,6 +3794,8 @@ function saveAccountInfo(aid){
   a.holder=holder;
   a.account_type=type;
   a.account_category=type;
+  /* v107 fix②：账户元字段写入字段级时间戳（per-field LWW 依据，防陈旧设备覆盖新名） */
+  try{ a._meta=a._meta||{}; a._meta.platform_ts=Date.now(); a._meta.holder_ts=Date.now(); a._meta.account_type_ts=Date.now(); a._meta.account_category_ts=Date.now(); }catch(e){}
   saveEditsLocal();
   logActivity('编辑账户信息', platform+' · '+holder+(type?(' · '+type):''));
   const m=document.getElementById('edit-acct-modal'); if(m)m.remove();
@@ -5368,8 +5370,19 @@ function allCurrencyCodes(){const base=['CNY','HKD','USD'];const extra=getCurren
 function currencyOptions(sel){return allCurrencyCodes().map(c=>`<option ${String(c)===String(sel)?'selected':''}>${escapeHtml(c)}</option>`).join('');}
 // 货币代码 → 中文名（内置 + 货币管理自定义）
 function ccyName(code){const m={CNY:'人民币',HKD:'港币',USD:'美元',USDT:'泰达币(USDT)',USDC:'USD Coin'};const c=String(code||'').toUpperCase();if(m[c])return m[c];const cu=getCurrencies().find(x=>String(x.code).toUpperCase()===c);return cu?cu.name||c:c;}
-function acctName(id){const a=DATA.accounts.find(x=>x.id===id);return a?a.platform:(id||'未知账户');}
-function acctOptions(sel){return '<option value="">选择账户</option>'+DATA.accounts.map(a=>`<option value="${a.id}" ${sel===a.id?'selected':''}>${a.platform}（${a.holder}）</option>`).join('');}
+/* v107 fix③：账户展示名——按账户 id 加地域后缀，防 sg/hk 两个 uSMART 同名；
+   云端 platform 已含「新加坡/香港」时不重复加（数据恢复后 sg=盈立新加坡/hk=盈立香港 自然区分） */
+function acctDisplayName(a){
+  try{
+    const p=(a&&a.platform)||''; const id=(a&&a.id)||'';
+    if(/新加坡|香港/.test(p)) return p;
+    if(/usmart_sg/i.test(id)) return p+'（新加坡）';
+    if(/usmart_hk/i.test(id)) return p+'（香港）';
+  }catch(e){}
+  return (a&&a.platform)||'';
+}
+function acctName(id){const a=DATA.accounts.find(x=>x.id===id);return a?acctDisplayName(a):(id||'未知账户');}
+function acctOptions(sel){return '<option value="">选择账户</option>'+DATA.accounts.map(a=>`<option value="${a.id}" ${sel===a.id?'selected':''}>${acctDisplayName(a)}（${a.holder}）</option>`).join('');}
 /* 多选标签输入：可选已有建议，也可输入新建 */
 function makeMultiInput(containerId, opts){
   const el=document.getElementById(containerId); if(!el)return;
@@ -7182,7 +7195,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-08-10-v118';
+window.APP_VERSION='2026-08-11-v119';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -8972,6 +8985,9 @@ function snapV1(snap){ const e=snap&&snap.keys&&snap.keys.famdash_v1; if(!e)retu
 // 推送前合并云端账户：默认本地优先，但保留云端独有账户；匹配账户的持仓/子账户做并集，避免云端持仓被整体覆盖。
 // 当 cloudWins=true（云端时间戳比本地修改时间更新）时，云端账户整体优先，本地仅补充「云端没有的账户」，
 // 防止旧设备/旧基线把已修复的云端数值又覆盖回去。
+/* v107 fix②：账户元字段字段级时间戳——用户编辑时写入 _meta.<field>_ts（见 saveAccountInfo）；
+   读不到则返回 0（历史数据视为「无编辑时间戳」）。 */
+function acctFieldTs(acc, f){ try{ const v=acc&&acc._meta&&acc._meta[f+'_ts']; return v?Number(v):0; }catch(e){ return 0; } }
 function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
   localAcc=localAcc||[]; cloudAcc=cloudAcc||[];
   if(cloudWins){
@@ -8982,14 +8998,18 @@ function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
       const la=lMap[k];
       if(la){
         const m=Object.assign({},a);
-        /* v101 根治：账户名/持有人/标签是用户主动编辑的元数据，云端优先合并时
-           这些字段必须**本地优先**——否则本地刚改的账户名（如 盈立香港→盈立新加坡）
-           会在下一次云端合并里被 cloudWins=true 分支的 Object.assign 覆盖回旧名
-           （用户"改完过两次又被改回去"的根因）。持仓/流水仍按并集合并。 */
-        if(la.platform!=null && String(la.platform).trim()!=='' && la.platform!==a.platform) m.platform=la.platform;
-        if(la.holder!=null && String(la.holder).trim()!=='' && la.holder!==a.holder) m.holder=la.holder;
-        if(la.account_type!=null && String(la.account_type).trim()!=='' && la.account_type!==a.account_type) m.account_type=la.account_type;
-        if(la.account_category!=null && String(la.account_category).trim()!=='' && la.account_category!==a.account_category) m.account_category=la.account_category;
+        /* v107 fix②：账户元字段 per-field LWW（last-write-wins）——取字段级时间戳较新者。
+           v101 无条件「本地优先」会让陈旧本地把云端较新的改名（盈立新加坡→盈立证券）
+           覆盖回去（08-08 事故路径）。改为：字段级时间戳较新者胜；两侧都无时间戳时
+           （历史数据）以云端为准，杜绝旧设备把新名回退成旧名。 */
+        ['platform','holder','account_type','account_category'].forEach(function(_f){
+          const _lv=la[_f], _cv=a[_f];
+          if(_lv==null||String(_lv).trim()===''||_lv===_cv) return;
+          const _lts=acctFieldTs(la,_f), _cts=acctFieldTs(a,_f);
+          if(_lts>0 && _cts>0){ if(_lts>_cts) m[_f]=_lv; }
+          else if(_lts>0){ m[_f]=_lv; }
+          /* 其余（含两侧均无时间戳）→ 保持云端 m[_f]=_cv，防陈旧本地覆盖 */
+        });
         ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
           // 云端在前：同一条目以云端为准，本地仅补充云端没有的字段/条目
           m[key]=unionHoldings(a[key]||[], la[key]||[], holdingKeyFor(key), holdingMergeFor(key));
@@ -9012,6 +9032,14 @@ function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
       ['securities','crypto_holdings','cryptos','holdings','cash_holdings','fund_holdings','bond_holdings'].forEach(function(key){
         m[key]=unionHoldings(a[key]||[], c[key]||[], holdingKeyFor(key), holdingMergeFor(key));
       });
+      /* v107 fix②：本地优先合并时，云端元字段若有更新的字段级时间戳 → 云端该字段胜
+         （本地只改金额/持仓、另设备改了账户名时，新名必须保留，防旧设备把新名改回去） */
+      ['platform','holder','account_type','account_category'].forEach(function(_f){
+        const _lv=a[_f], _cv=c[_f];
+        if(_cv==null||String(_cv).trim()===''||_lv===_cv) return;
+        const _lts=acctFieldTs(a,_f), _cts=acctFieldTs(c,_f);
+        if(_cts>0 && _cts>_lts) m[_f]=_cv;
+      });
       out.push(m);
     } else out.push(a);
   });
@@ -9023,7 +9051,9 @@ function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
 // 构造「推送到云端」的快照：把云端数据合并进本地，保证云端独有账户/流水/收入不被覆盖。
 // famdash_v1 走账户并集 + 流水/收入按 id 合并（云端优先、本地覆盖同名 → 本地改动不丢）；
 // 其余同步键按 updatedAt 取较新一方，避免把云端更新的设置/持有人等回退成旧值。
-function buildPushSnapshot(localSnap, cloudSnap){
+// v107 fix②：staleLocal=true 时（本设备陈旧，云端比本地最后一次拉取新）famdash_v1 整体以云端为准，
+// 本地数据不写回；墓碑键仍在 SYNC_KEYS 循环按 updatedAt 取新，删除传播不回归。
+function buildPushSnapshot(localSnap, cloudSnap, staleLocal){
   const lv1=snapV1(localSnap)||{}; const cv1=snapV1(cloudSnap)||{};
   // 判断本次合并是否应以云端为准：云端 sync 时间比本地任何未推送修改都新时，避免旧本地覆盖新云端。
   let cloudWins=false;
@@ -9032,12 +9062,17 @@ function buildPushSnapshot(localSnap, cloudSnap){
     const localMod=Number(localStorage.getItem('famdash_sync_localmod')||'0')||0;
     cloudWins=cloudT>0 && cloudT>localMod;
   }catch(e){}
-  const mergedV1={
-    accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts, cloudWins),
-    // v93：推送前先差集剔除已删流水（本地/云端两侧都剔），云端不再被删流水复活
-    transactions: mergeRecordsById(purgeDeletedTxns(cv1.transactions||[]), purgeDeletedTxns(lv1.transactions||[]), function(x){return x.id;}, true),
-    income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;}, true)}
-  };
+  let mergedV1;
+  if(staleLocal){
+    mergedV1=cv1;   // 陈旧本地：famdash_v1 云端原样，本地内容不写回
+  } else {
+    mergedV1={
+      accounts: mergeAccountsForPush(lv1.accounts, cv1.accounts, cloudWins),
+      // v93：推送前先差集剔除已删流水（本地/云端两侧都剔），云端不再被删流水复活
+      transactions: mergeRecordsById(purgeDeletedTxns(cv1.transactions||[]), purgeDeletedTxns(lv1.transactions||[]), function(x){return x.id;}, true),
+      income: {records: mergeRecordsById(incomeRecordsFrom(cv1.income), incomeRecordsFrom(lv1.income), function(x){return x.id;}, true)}
+    };
+  }
   const out={ syncedAt: localSnap.syncedAt, version: localSnap.version, keys:{} };
   SYNC_KEYS.forEach(function(k){
     if(k==='famdash_v1'){ out.keys[k]={updatedAt:Date.now(), value:JSON.stringify(mergedV1)}; return; }
@@ -9088,12 +9123,26 @@ function _doSyncPush(tok,attempt){
     .then(function(gitRes){
       const cs=gitRes.snap;
       const blobSha=gitRes.blobSha;
+      /* v107 fix①/②：陈旧守卫——云端 syncedAt 比本设备最后一次拉取(最后同步)新
+         → 本设备从未见过当前云端，本地可能陈旧：禁止把本地内容写回云端。
+         仅当本地 famdash_v1 在云端更新之后又有显式字段级编辑（_meta.*_ts）才放行（推新名）。
+         判定成功后：跳过 push，只 pull（云端强制覆盖本地）。 */
+      let staleLocal=false;
+      try{
+        if(cs){
+          const _cloudT=(function(){ try{ const t=new Date(cs.syncedAt).getTime(); if(t)return t; }catch(e){} const u=cs&&cs.keys&&cs.keys.famdash_v1&&Number(cs.keys.famdash_v1.updatedAt)||0; return u; })();
+          const _lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
+          const _hasNewerLocalField=(function(){ try{ return (DATA.accounts||[]).some(function(_a){ return ['platform','holder','account_type','account_category'].some(function(_f){ return acctFieldTs(_a,_f)>_cloudT+5000; }); }); }catch(e){ return false; } })();
+          staleLocal = _cloudT>0 && _cloudT > _lastPull + 5000 && !_hasNewerLocalField;
+          if(staleLocal){ console.warn('[v107] 陈旧本地跳过 push，转拉取覆盖云端', 'cloudT=', _cloudT, 'lastPull=', _lastPull); }
+        }
+      }catch(e){ staleLocal=false; }
       // 合并云端数据后再上传：避免「本地未拉取过的云端账户/流水/收入」被整体覆盖（此前多设备竞态会丢数据）。
       // 旧逻辑用 cloudT>localMod 直接放弃推送并改用云端，但漏掉了「本地比云端新、却从未拉取云端独有数据」的情况，
       // 导致本地整体覆盖云端、云端独有账户丢失。改为永远把云端合并进上传快照。
       let snapToPush=null;
       try{
-        if(cs){ snapToPush=buildPushSnapshot(snap, cs); }
+        if(cs){ snapToPush=buildPushSnapshot(snap, cs, staleLocal); }
         else { snapToPush=snap; } // 首次推送：云端无文件，直接推本地
         snapToPush=healPushSnapshot(snapToPush); // v46：上传前净化现金桶，避免把云端脏桶原样推回（见函数注释）
       }catch(e){
@@ -9101,6 +9150,44 @@ function _doSyncPush(tok,attempt){
         console.error('syncPush merge failed, abort to protect cloud', e);
         try{ toast('同步跳过：合并云端失败，已保护云端数据，请稍后重试'); }catch(_){}
         return Promise.resolve(false);
+      }
+      if(staleLocal){
+        /* v107 fix②：陈旧本地 → 不 PUT 本地内容；只以云端覆盖本地（pull-only），
+           与 syncPullForce 同语义，绝不把旧值推上云。 */
+        try{
+          syncApply(cs); applyCloudToData(cs, true);
+          try{loadEditsLocal();}catch(e){}
+          healCashDerived();
+          localStorage.setItem('famdash_sync_lastpull', String(new Date(cs.syncedAt).getTime()));
+          localStorage.setItem('famdash_sync_localmod','0');
+          try{sessionStorage.removeItem('famdash_session_edited');}catch(e){}
+          try{ recomputePortfolio(); }catch(e){}
+          try{ toast('检测到云端数据较新，已用云端覆盖本地（跳过上传）'); }catch(e){}
+        }catch(e){ console.warn('[v107] staleLocal pull', e); }
+        return Promise.resolve(false);
+      }
+      /* v107 fix①：登录后自愈/刷新会 saveEditsLocal→scheduleSyncPush，但内容与云端相同
+         （applyCloudToData 已把本地==云端）。推送内容与云端无差异时跳过 PUT（防 08-08
+         陈旧基线在登录后被无谓推上云、也省一次写操作）。 */
+      if(cs && snapToPush && snapToPush.keys){
+        try{
+          let _same=true;
+          SYNC_KEYS.forEach(function(k){
+            if(!_same)return;
+            const lk=snapToPush.keys[k]; const ck=cs.keys[k];
+            if(!lk&&!ck)return;
+            if(!lk||!ck){ _same=false; return; }
+            const lv=(lk.value!=null)?lk.value:lk; const cv=(ck.value!=null)?ck.value:ck;
+            if(String(lv)!==String(cv)) _same=false;
+          });
+          if(_same){
+            console.warn('[v107] 推送内容与云端相同，跳过 PUT');
+            localStorage.setItem('famdash_sync_lastpull', String(new Date(cs.syncedAt).getTime()));
+            localStorage.setItem('famdash_sync_localmod','0');
+            try{sessionStorage.removeItem('famdash_session_edited');}catch(e){}
+            return Promise.resolve(true);
+          }
+        }catch(e){ console.warn('[v107] diff-check skipped', e); }
       }
       const content=_b64encode(JSON.stringify(snapToPush));
       const body={message:'sync: '+fmtSyncTime(snap.syncedAt)+' · '+getDeviceLabel(),content:content};
@@ -9364,6 +9451,9 @@ function syncPullOnLoad(){
         localStorage.setItem('famdash_sync_lastpull',String(new Date(res.snap.syncedAt).getTime()));
         // 登录时云端覆盖本地，因此把 localMod 归零。
         localStorage.setItem('famdash_sync_localmod','0');
+        /* v107 fix①：登录/解锁后只执行 pull，禁止 push——清除 session_edited 防止
+           releaseSyncPullGate 在登录后补推陈旧本地（08-08 事故路径） */
+        try{ sessionStorage.removeItem('famdash_session_edited'); }catch(e){}
         recomputePortfolio();
         /* v90：云端落地后证券行情重拉一次。
            fetchSecWhenReady 在页面加载时启动，若当时云端 code 尚未落地
@@ -9415,6 +9505,10 @@ function releaseSyncPullGate(reason){
   _syncPullGate=false;
   const dropped=_syncGateDropped; _syncGateDropped=0;
   console.warn('[v66] 同步门闸已开（'+reason+'）'+(dropped?('，门闸期间被拦下 '+dropped+' 次自动推送'):''));
+  /* v107 fix①：登录/解锁成功（云端已应用）后【禁止】补推——此刻本地已被云端覆盖（applyCloudToData
+     overwrite=true），本地==云端，补推只会把「登录前的陈旧基线/旧本地」写回云端（08-08 事故路径：
+     电脑端陈旧本地在登录拉取落地前被推上云）。仅非登录场景（拉取失败/超时兜底）保留 v117 补推。 */
+  if(reason && String(reason).indexOf('云端已应用')===0){ return; }
   // v117 fix：门闸期间有编辑被拦下 → 开闸后补推一次，否则本地编辑永不进云端
   if(dropped>0 && sessionStorage.getItem('famdash_session_edited')==='1'){
     try{ setTimeout(function(){ const s=getSettings(); if(s.syncEnabled!==false) syncPush(); }, 300); }catch(e){}
