@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-17-v123">
+<meta name="app-version" content="2026-08-17-v124">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -7224,7 +7224,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-08-17-v123';
+window.APP_VERSION='2026-08-17-v124';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -8222,6 +8222,12 @@ function saveInstrumentAttrs(payloadJson){
        显式不碰：id / _credits / _manual_base / asset_type / market / _editBaselineQty。
        （v90 起 code 允许编辑，故从「不碰」清单移除。） */
     Object.assign(it, patch);
+    /* v124 fix：基金/证券/现金批量编辑补写账户级编辑时间戳。
+       原代码走字段级 Object.assign 但不碰 _meta.*_ts，导致 _doSyncPush 的 staleLocal
+       守卫（_hasNewerLocalField）完全不认得 fund_holdings 编辑 → 用户改完「投资项目」刷新即被
+       云端旧值覆盖（本次复现根因：排障手真实浏览器插桩确认）。
+       与证券/现金单笔编辑（L4594/4687）保持一致：基金/证券写 holdings_ts，现金写 cash_ts。 */
+    try{ const _nowTs=Date.now(); it._editTs=_nowTs; h.a._meta=h.a._meta||{}; h.a._meta[(p.sec==='cash_holdings')?'cash_ts':'holdings_ts']=_nowTs; }catch(_e){}
     changed++; accts.add(h.a.id||h.a.name);
 
     /* 币种变了必须重算市值，否则「港币改美元金额纹丝不动」，总资产口径又分裂。 */
@@ -9048,11 +9054,13 @@ function mergeAccountsForPush(localAcc, cloudAcc, cloudWins){
            否则同 id 条目会因 mergeHoldingEntry 冲突返回 null 而保留云端旧值、丢弃本地新值
            （v108 8/9 项 UI 编辑被云端旧值回滚的 push 侧根因之一）。
            判据与 v107 acctFieldTs 一致：本地 _meta.holdings_ts/cash_ts 较新 → 该 key 本地优先。 */
-        ['holdings','cash_holdings'].forEach(function(key){
+        ['holdings','cash_holdings','securities','fund_holdings'].forEach(function(key){
           // v109.1 fix：ts 字段名与 stamp 写入名对齐（现金 = cash_ts）。旧代码把 cash_holdings
           // 直接当 ts 名读 _meta.cash_holdings_ts（全文件 0 次写入）→ 现金编辑 LWW 恒判为 0，
           // cloudWins 时本地现金被云端旧值覆盖（v109 生产真测 C 回滚根因）。
-          const _tsKey=(key==='cash_holdings')?'cash':key;
+          // v124：证券/基金批量编辑现也写 holdings_ts（instrEditSave），故并入 LWW 守卫，
+          // cloudWins 时本地编辑过的证券/基金条目优先，避免被云端旧值回滚。
+          const _tsKey=(key==='cash_holdings')?'cash':(key==='securities'||key==='fund_holdings')?'holdings':key;
           const _lts=acctFieldTs(la,_tsKey), _cts=acctFieldTs(a,_tsKey);
           if(_lts>0 && _lts>_cts){ m[key]=unionHoldings(la[key]||[], a[key]||[], holdingKeyFor(key), holdingMergeFor(key)); }
           else { m[key]=unionHoldings(a[key]||[], la[key]||[], holdingKeyFor(key), holdingMergeFor(key)); }
@@ -9175,7 +9183,11 @@ function _doSyncPush(tok,attempt){
         if(cs){
           const _cloudT=(function(){ try{ const t=new Date(cs.syncedAt).getTime(); if(t)return t; }catch(e){} const u=cs&&cs.keys&&cs.keys.famdash_v1&&Number(cs.keys.famdash_v1.updatedAt)||0; return u; })();
           const _lastPull=Number(localStorage.getItem('famdash_sync_lastpull')||'0')||0;
-          const _hasNewerLocalField=(function(){ try{ return (DATA.accounts||[]).some(function(_a){ return ['platform','holder','account_type','account_category','holdings','cash'].some(function(_f){ return acctFieldTs(_a,_f)>_cloudT+5000; }); }); }catch(e){ return false; } })();
+          /* v124 fix：去掉 +5000ms 容差。原 +5000 会让「同步后数秒内」的本地字段编辑
+             （acctFieldTs ≈ cloudT）永远判不进 _hasNewerLocalField → staleLocal 误触发 →
+             本地编辑在 L9201 被云端整体覆盖（基金 project 被还原的根因之一）。
+             改为「本地字段编辑时间不旧于云端即视为有新编辑」。 */
+          const _hasNewerLocalField=(function(){ try{ return (DATA.accounts||[]).some(function(_a){ return ['platform','holder','account_type','account_category','holdings','cash'].some(function(_f){ return acctFieldTs(_a,_f)>=_cloudT; }); }); }catch(e){ return false; } })();
           staleLocal = _cloudT>0 && _cloudT > _lastPull + 5000 && !_hasNewerLocalField;
           if(staleLocal){ console.warn('[v107] 陈旧本地跳过 push，转拉取覆盖云端', 'cloudT=', _cloudT, 'lastPull=', _lastPull); }
         }
