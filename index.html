@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-31-v125">
+<meta name="app-version" content="2026-09-01-v126">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -2435,6 +2435,11 @@ function refreshCryptoViews(){
   try{ if(typeof recomputePortfolio==='function') recomputePortfolio(); }catch(e){}
   try{ const m=document.getElementById('acct-modal'); if(m && m.classList.contains('open') && typeof _openAcctId!=='undefined' && _openAcctId){ openAcct(_openAcctId); } }catch(e){}
   try{ if(typeof renderConsolidated==='function') renderConsolidated(); }catch(e){}
+  /* v126：行情/云端落地后，持有人卡片(持有人管理)必须同步重渲染。
+     原 refreshCryptoViews 只重算聚合(recomputePortfolio)+重渲染聚合视图(renderConsolidated)，
+     漏了持有人卡片 → 首屏若云端同步/行情晚于首渲染，卡片显示陈旧合计，需切到 accounts 页才自愈
+     （用户反馈）。此处补一次，使其在 quotes 落地、手动刷新行情时自动更新。 */
+  try{ if(typeof renderHolderMgmt==='function') renderHolderMgmt(); }catch(e){}
 }
 
 function jGetTotalHkd(a){
@@ -7236,7 +7241,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-08-31-v125';
+window.APP_VERSION='2026-09-01-v126';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -9556,6 +9561,10 @@ function syncPullOnLoad(){
         try{ fetchSecPrices(false).then(function(){ try{refreshCryptoViews();}catch(_){} }).catch(function(){}); }catch(e){}
         // 合并/应用云端后就地重渲染当前视图(绝不 location.reload：避免手机重复输密码、且本地有云端缺的数据时无限重载)
         try{ var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
+        /* v126：云端覆盖本地后，立即补一次持有人卡片重渲染（不依赖当前激活页是否为 accounts）。
+           原 switchTab(tn) 只重渲染当前激活页，若首屏激活页是首页，持有人卡片仍停在首渲染的陈旧值，
+           需切页才自愈。此处与 refreshCryptoViews 双保险，确保云端/行情落地后卡片即时正确。 */
+        try{ if(typeof renderHolderMgmt==='function') renderHolderMgmt(); }catch(e){}
         try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
         // 全新设备同步后不 location.reload——reload 会让 sessionStorage 标志残留、_syncShouldApply 因本地==云端跳过拉取，最终基线覆盖云端
         if(!hasLocal && !alreadyPulled){
@@ -9564,6 +9573,7 @@ function syncPullOnLoad(){
       } else if(res.snap){
         // 墓碑已写入并清理内存，但整份云端快照未应用：仍需就地重渲染让清理生效
         try{ recomputePortfolio(); var cur=document.querySelector('.bottom-nav .ntab.active'); var tn='accounts'; if(cur){ var oc=cur.getAttribute('onclick')||''; var i=oc.indexOf("\'"); if(i>=0){ var j=oc.indexOf("\'",i+1); if(j>i) tn=oc.substring(i+1,j); } } switchTab(tn); }catch(e){}
+        try{ if(typeof renderHolderMgmt==='function') renderHolderMgmt(); }catch(e){}
         try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
       } else {
         try{ sessionStorage.setItem('famdash_onload_pulled','1'); }catch(e){}
