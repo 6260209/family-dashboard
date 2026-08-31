@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-08-17-v124">
+<meta name="app-version" content="2026-08-31-v125">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -2697,7 +2697,19 @@ function jBuildFlat(accounts){
         const _lp=cryptoLiveUnitPrice(h);
         const _unit=(_lp!=null)?_lp:(h.cost_price!=null&&Number(h.cost_price)>0?Number(h.cost_price):null);
         if(_unit>0 && h.qty!=null) _mvRaw=Number(h.qty)*_unit;
-      } else if(h.source==='sec'){ const _lp=secLivePrice(h); if(_lp!=null && h.qty!=null) _mvRaw=Number(h.qty)*_lp; else _mvRaw=Number(h.value||0); }
+      } else if(h.source==='sec'){
+        // v125 fix：回退链与 acctLiveTotalCny(L1934-1938) 严格对齐：live → price → cost_price → value。
+        // 根因：v103 只给 acctLiveTotalCny 补了 price/cost_price 回退、漏了本函数（本行原为
+        // live→value 两段式）→ 「无实时行情且 h.value 陈旧/为 0」的证券持仓在持有人卡片按
+        // price×qty 算得出钱、在聚合表却算 0 → 凭空产生「未归类金额」（真测 ¥91,027；
+        // 代码 L1931-1932 注释已记录飞鱼科技 49550 股 price=0/value=0 案例）。
+        // 此处补齐回退，两套口径统一，未归类金额应趋近 0。
+        const _lp=secLivePrice(h);
+        const _cost=(h.cost_price!=null)?Number(h.cost_price):null;
+        const _unit=(_lp!=null)?_lp:(h.price?Number(h.price):(_cost!=null?_cost:null));
+        if(_unit!=null && _unit>0 && h.qty!=null) _mvRaw=Number(h.qty)*_unit;
+        else _mvRaw=Number(h.value||0);
+      }
       else if(h.source==='fund'||h.source==='struct'){
         // 批2 #1/#11 同源修复：基金/结构性产品用真实市值(value)；value 缺失才回退 qty×price
         if(h.value!=null && Number(h.value)>0){ _mvRaw=Number(h.value); }
@@ -7224,7 +7236,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-08-17-v124';
+window.APP_VERSION='2026-08-31-v125';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
@@ -8935,6 +8947,29 @@ function mergeRecordsById(cloudArr, localArr, idFn, localWins){
 // 仅当本地存在云端没有的账户/流水/收入时，才把这些「本地独有记录」追加到云端。
 // 交易流水与收入是跨设备共享记录，但**本地尚未推送的新增记录必须保留**，否则用户刚录的内容会
 // 在「push→pull」后立即消失。
+/* v125：清除账户上遗留的「券商快照」死字段。
+   背景：本系统【无任何券商 API 接入】，账户数据全为用户手工录入（2026-07-30 已纠错定论）。
+   这些字段是历史遗留垃圾，v33 曾清洗（sha 3bca37e6）并断言 0 残留，但 2026-08-31 复查发现
+   16/17 账户又全部带回来（含已清零又重现的 structured_nv_hkd=152539.37）——成因是陈旧设备
+   经 union 合并并回云端（v107/v109 并集语义不删字段）+ jRecomputeSummary 回写部分字段。
+   只删【全代码 0 处读取】的死字段；total_asset_hkd / securities_nv_hkd / total_asset_cny /
+   total_asset_usdt / holding_profit_cny / today_pnl_hkd / total_pnl 仍被兜底读取
+   (L1286/L1299/L1963/L2755/L2764/L2792/L2821) 与现金流记账 (L5797/L5818/L5972/L5991 直接加减)
+   使用，一律保留。幂等：无死字段时返回 0，不落盘不推送。 */
+const BROKER_SNAPSHOT_JUNK_KEYS=['structured_nv_hkd','remaining_liquidity_hkd','max_buying_power_hkd',
+  'buying_power_hkd','cash_hkd','leverage','today_pnl_pct','risk_status'];
+function purgeBrokerSnapshotFields(accounts){
+  let n=0;
+  (accounts||[]).forEach(function(a){
+    if(!a) return;
+    ['summary','summary_cny','account_summary'].forEach(function(sk){
+      const s=a[sk];
+      if(!s || typeof s!=='object') return;
+      BROKER_SNAPSHOT_JUNK_KEYS.forEach(function(k){ if(k in s){ delete s[k]; n++; } });
+    });
+  });
+  return n;
+}
 function applyCloudToData(snap, overwrite){
   const v1=snapGet(snap,'famdash_v1');
   if(!v1)return false;
@@ -8975,6 +9010,9 @@ function applyCloudToData(snap, overwrite){
       /* v66：云端也可能带着别的设备/旧基线推上来的失效 cat_id，落地即重映射，并写回快照防止再推回去。
          必须放在 syncApply 之后（那时 famdash_categories 已落 localStorage），否则安全门会跳过。 */
       try{ if(healOrphanCatIds(DATA.accounts,'cloud-apply')>0) o.accounts=DATA.accounts; }catch(_){}
+      /* v125：清除「券商快照」死字段。收口在此（云端落地唯一入口），使 syncPullOnLoad / 手动同步 /
+         强制拉取 / 恢复备份 / 推送回灌 五条路径全部自动净化，杜绝死灰复燃（散补必漏，v35/v46 教训）。 */
+      try{ if(purgeBrokerSnapshotFields(DATA.accounts)>0) o.accounts=DATA.accounts; }catch(_){}
       DATA.accounts.forEach(normalizeSecurityMv);DATA.accounts.forEach(normalizeSecPnl); try{normalizeLegacyCashNames();}catch(_){} } // v44：云端落地的现金名也一并归一（防其他设备旧「美金」名复活）
     if(o.income){DATA.income.records=incomeRecordsFrom(o.income);computeIncomeAgg();}
     o.transactions=sanitizeTxns(purgeDeletedTxns(o.transactions),o.income);   // v44.2：剔除「收入记录本身」混入的重复交易；v93：剔除墓碑命中的已删流水
