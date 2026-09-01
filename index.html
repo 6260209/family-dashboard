@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-09-01-v126">
+<meta name="app-version" content="2026-09-01-v127">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -2483,15 +2483,7 @@ function jUnderlyingIndex(name,code,cat,tags){
   if(cat==='A股证券'||cat==='港股'||cat==='美股')return name;
   return '其他主题';
 }
-// v122: jUnderlyingIndex 的硬编码兜底名（纳斯达克100/标普500…）若与用户真实项目名（如 纳指100）近义，
-// 在主题聚合时并入用户项目，避免环形图出现「设置里没有的」幽灵分类（两个纳指重复）。
-function _themeAliasOf(und, projNames){
-  if(!und || projNames.indexOf(und)>=0) return und;        // 已是用户项目，直接用
-  const KW={'纳斯达克100':['纳指','纳斯达克'],'标普500':['标普'],'港股宽基':['港股'],'A50/MSCI':['A50','MSCI'],'红利低波':['红利'],'科创创业':['科创','创业']};
-  const kws=KW[und];
-  if(kws){ for(const p of projNames){ if(kws.some(k=>p.indexOf(k)>=0)) return p; } }
-  return und;
-}
+// v127 删除：_themeAliasOf —— 别名机制已被永久移除（让 chip 名称 vs 筛选器严格一致，裸标归'其他主题'由用户手动归类）。
 function jRegionOf(underlying){
   if(underlying==='纳斯达克100'||underlying==='标普500'||underlying==='美股个股')return '美国';
   if(underlying==='恒生科技'||underlying==='港股宽基'||underlying==='港股个股')return '香港';
@@ -2907,8 +2899,18 @@ function recomputeAggregations(){
   const settingsLocs=getLocations();
   const locNormMap={}; settingsLocs.forEach(l=>locNormMap[normLoc(l)]=l);
   const region_map={},theme_map={};
+  // v127: 去掉 _themeAliasOf 别名调用，让"环形图/项目栏"与"筛选器"严格用 project 字段精确匹配。
+  //      裸标 (project 空) 统一归入 "其他主题"，由用户登录网页手动归类（v127 设计选择）。
+  //      之前 alias 偷偷把 underlying 关键词（如'纳斯达克100'）映射到项目名（如'纳指100'），
+  //      导致同一 chip 名字在两处算出不同数字——本次永久修复。
   const _projNames=getProjects().map(p=>(p&&p.name)||p).filter(Boolean);
-  for(const r of flat){const L=locNormMap[normLoc(r.loc)]||r.loc||remapRegion(jRegionOf(r.underlying))||jRegionOf(r.underlying);region_map[L]=(region_map[L]||0)+(r.mv||0);let themeKey=r.project||'';if(!themeKey){const und=r.underlying||'其他主题';themeKey=(_themeAliasOf(und,_projNames))||'其他主题';}theme_map[themeKey]=(theme_map[themeKey]||0)+(r.mv||0);}
+  for(const r of flat){
+    const L=locNormMap[normLoc(r.loc)]||r.loc||remapRegion(jRegionOf(r.underlying))||jRegionOf(r.underlying);
+    region_map[L]=(region_map[L]||0)+(r.mv||0);
+    let themeKey=r.project||'';
+    if(!themeKey){themeKey='其他主题';}                  // 没了 alias：裸标不再自动归任何用户项目
+    theme_map[themeKey]=(theme_map[themeKey]||0)+(r.mv||0);
+  }
   const region_summary=[];
   for(const L of settingsLocs){const v=region_map[L];if(v>0)region_summary.push({name:L,value:Math.round(v),pct:Math.round(v/(invested_cny||1)*1000)/10,color:REGION_COLORS[L]||'#64748b'});}
   const knownLocs=new Set(settingsLocs);
@@ -7241,7 +7243,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-09-01-v126';
+window.APP_VERSION='2026-09-01-v127';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
