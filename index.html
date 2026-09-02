@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-09-01-v137">
+<meta name="app-version" content="2026-09-01-v138">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -1456,7 +1456,7 @@ function renderConsolidated(){
   consolRows=rows;
 
   // 汇总指标（紧凑条）
-  const totalMv=(consolTab==='现金'?(DATA.metrics&&DATA.metrics.cash_cny||0):rows.reduce((s,r)=>s+r.mv,0)); // v129: filter=现金 时直接读 DATA.metrics.cash_cny（= baseCashCny 之和），免得 mv=0 导致合计 ¥0 误导
+  const totalMv=(consolTab==='现金'?((typeof window!=='undefined'&&window.__hero_cash_cny!=null)?window.__hero_cash_cny:((DATA.metrics&&DATA.metrics.cash_cny)||0)):rows.reduce((s,r)=>s+r.mv,0)); // v137: filter=现金 时直接读 __hero_cash_cny（与 hero/recon 同源 = baseCashCny 之和）
   // 修复 v82：r.pnl 字段对 BTC/QQQM 等异常大（实测为 mv×pct/100 而非 mv×pct/(100+pct)，
   // e.g. QQQM mv=100659 pct=451.54% 字段 pnl=454516，推算应为 82408），会污染顶部 chip 数字。
   // chip 单独用 pct 推算（"当前浮盈"）加总，与 row 级 pct 自洽；flat.pnl 字段保留不动（用户数据真相）。
@@ -1470,7 +1470,7 @@ function renderConsolidated(){
   // 批2 #11 补行：口径对齐首页总资产（仅展示，严禁改动任何总额计算）
   const _csAll=DATA.category_summary||[];
   const _cashSet=new Set(['现金','货币基金','银行理财']);
-  const _cashSum=(DATA.metrics&&DATA.metrics.cash_cny)||0; // v130: 跟首页/子账户 filter 同源（=baseCashCny 总和），三处显示同一个数
+  const _cashSum=(typeof window!=='undefined'&&window.__hero_cash_cny!=null)?window.__hero_cash_cny:((DATA.metrics&&DATA.metrics.cash_cny)||0); // v137: 三处同源（hero/核对说明/filter 全读 window.__hero_cash_cny）
   const _unallocSum=Math.round((DATA.theme_map&&DATA.theme_map['其他'])||0); // v128: 未归类金额改读 theme_map「其他」（=project 空持仓合计，与环图投资项目维度同源）
   const _mvSum=_csAll.filter(d=>!_cashSet.has(d.name)&&d.name!=='未归类金额').reduce((s,d)=>s+d.value,0)-_unallocSum; // v128: 减去「其他」让 投资+现金+未归类=总资产 恒等
   const _pano=_mvSum+_cashSum+_unallocSum;
@@ -7246,7 +7246,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-09-01-v137';
+window.APP_VERSION='2026-09-01-v138';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
