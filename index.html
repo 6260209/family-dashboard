@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-09-01-v129">
+<meta name="app-version" content="2026-09-01-v130">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -1470,7 +1470,7 @@ function renderConsolidated(){
   // 批2 #11 补行：口径对齐首页总资产（仅展示，严禁改动任何总额计算）
   const _csAll=DATA.category_summary||[];
   const _cashSet=new Set(['现金','货币基金','银行理财']);
-  const _cashSum=_csAll.filter(d=>_cashSet.has(d.name)).reduce((s,d)=>s+d.value,0);
+  const _cashSum=(DATA.metrics&&DATA.metrics.cash_cny)||0; // v130: 跟首页/子账户 filter 同源（=baseCashCny 总和），三处显示同一个数
   const _unallocSum=Math.round((DATA.theme_map&&DATA.theme_map['其他'])||0); // v128: 未归类金额改读 theme_map「其他」（=project 空持仓合计，与环图投资项目维度同源）
   const _mvSum=_csAll.filter(d=>!_cashSet.has(d.name)&&d.name!=='未归类金额').reduce((s,d)=>s+d.value,0)-_unallocSum; // v128: 减去「其他」让 投资+现金+未归类=总资产 恒等
   const _pano=_mvSum+_cashSum+_unallocSum;
@@ -2930,8 +2930,8 @@ function recomputeAggregations(){
   const return_pct=cost_basis?Math.round(hold_pnl_cny/cost_basis*10000)/100:0;
   // 现金/债券/货币基金/银行理财按【子账户】精确汇总（与聚合页筛选口径一致，根除首页与聚合页不一致）
   // 关键：用本函数局部 flat（jBuildFlat 输出），不是 DATA.flat（DATA.flat 还在本函数末尾才赋值，会读到旧值）
-  const cash_cny_val=Math.round(cat_sum['现金']||0); // v129: 直接读 cat_sum（= baseCashCny 之和），不要 v45 那套 flat.filter(r=>r.mv||0) 的旧算法（v79 现金 mv=0 导致永远 = 0）
-  const bond_cny_val=Math.round(cat_sum['债券']||0); // v129: 同上，直接读 cat_sum
+  const cash_cny_val=Math.round(accounts.reduce((s,a)=>s+baseCashCny(a),0)); // v130: 现金就用 baseCashCny 之和（=现金子账户 amount 累加），不要 v45/v46 孪生去重（cat_sum['现金'] 减了 _twinMv=9861 才 ¥99874；孪生防双计只管 cat_sum 别重复，不该影响现金总额）
+  const bond_cny_val=Math.round(cat_sum['债券']||0); // bond 无孪生问题，cat_sum 即可
   // —— 写回 DATA ——
   DATA.allocation=alloc.map(d=>({name:d.name,value:Math.round(jHkdToCny(d.value)),pct:d.pct,color:d.color}));
   DATA.account_breakdown=ab.map(x=>({name:x.name.replace(/^[^·]*\s*·\s*/,''),value:Math.round(jHkdToCny(x.asset_hkd)),pct:x.pct}));
@@ -7244,7 +7244,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-09-01-v129';
+window.APP_VERSION='2026-09-01-v130';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
