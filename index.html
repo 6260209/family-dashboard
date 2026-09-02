@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-09-01-v128">
+<meta name="app-version" content="2026-09-01-v129">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -1456,7 +1456,7 @@ function renderConsolidated(){
   consolRows=rows;
 
   // 汇总指标（紧凑条）
-  const totalMv=rows.reduce((s,r)=>s+r.mv,0);
+  const totalMv=(consolTab==='现金'?(DATA.metrics&&DATA.metrics.cash_cny||0):rows.reduce((s,r)=>s+r.mv,0)); // v129: filter=现金 时直接读 DATA.metrics.cash_cny（= baseCashCny 之和），免得 mv=0 导致合计 ¥0 误导
   // 修复 v82：r.pnl 字段对 BTC/QQQM 等异常大（实测为 mv×pct/100 而非 mv×pct/(100+pct)，
   // e.g. QQQM mv=100659 pct=451.54% 字段 pnl=454516，推算应为 82408），会污染顶部 chip 数字。
   // chip 单独用 pct 推算（"当前浮盈"）加总，与 row 级 pct 自洽；flat.pnl 字段保留不动（用户数据真相）。
@@ -2930,8 +2930,8 @@ function recomputeAggregations(){
   const return_pct=cost_basis?Math.round(hold_pnl_cny/cost_basis*10000)/100:0;
   // 现金/债券/货币基金/银行理财按【子账户】精确汇总（与聚合页筛选口径一致，根除首页与聚合页不一致）
   // 关键：用本函数局部 flat（jBuildFlat 输出），不是 DATA.flat（DATA.flat 还在本函数末尾才赋值，会读到旧值）
-  const cash_cny_val=Math.round(flat.filter(r=>r.sec!=='cash' && (resolveCatName(r)==='现金'||resolveCatName(r)==='货币基金'||resolveCatName(r)==='银行理财')).reduce((s,r)=>s+(r.mv||0),0));
-  const bond_cny_val=Math.round(flat.filter(r=>r.sec!=='cash' && resolveCatName(r)==='债券').reduce((s,r)=>s+(r.mv||0),0));
+  const cash_cny_val=Math.round(cat_sum['现金']||0); // v129: 直接读 cat_sum（= baseCashCny 之和），不要 v45 那套 flat.filter(r=>r.mv||0) 的旧算法（v79 现金 mv=0 导致永远 = 0）
+  const bond_cny_val=Math.round(cat_sum['债券']||0); // v129: 同上，直接读 cat_sum
   // —— 写回 DATA ——
   DATA.allocation=alloc.map(d=>({name:d.name,value:Math.round(jHkdToCny(d.value)),pct:d.pct,color:d.color}));
   DATA.account_breakdown=ab.map(x=>({name:x.name.replace(/^[^·]*\s*·\s*/,''),value:Math.round(jHkdToCny(x.asset_hkd)),pct:x.pct}));
@@ -7244,7 +7244,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-09-01-v128';
+window.APP_VERSION='2026-09-01-v129';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
