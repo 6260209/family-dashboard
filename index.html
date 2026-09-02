@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0, Tue, 01 Jan 1980 1:00:00 GMT">
 <!-- v105：JS 启动检测远端版本号，不一致自动 reload 强制更新代码缓存 -->
-<meta name="app-version" content="2026-09-01-v134">
+<meta name="app-version" content="2026-09-01-v135">
 <title>家庭资产账户整合</title>
 <script>
 /* v107 客户端版本自检 v3 — 彻底修复"老 HTML 锁死"问题
@@ -1080,7 +1080,7 @@ function initMeta(){
     {k:'今年收入',v:(yearIncome>=0?'+':'')+fmtCny(yearIncome),c:yearIncome>=0?'pos':'neg'},
     {k:'本月收入',v:(monthIncome>=0?'+':'')+fmtCny(monthIncome),c:monthIncome>=0?'pos':'neg'},
     {k:'预期年收益',v:String(expectedAnnualYield),c:''},
-    {k:'现金/稳定币',v:fmtCny(mt.cash_cny||0),c:''}, // v131: hero 只读 mt.cash_cny（与核对说明/filter 同源 = baseCashCny 之和）
+    {k:'现金/稳定币',v:fmtCny((DATA.accounts||[]).reduce((s,a)=>s+baseCashCny(a),0)),c:''}, // v135: hero 直接调 baseCashCny 之和，不绕 DATA.metrics（避免 hero 在 initMeta 渲染时读到 stale metrics 导致 ¥99,874）
   ];
   document.getElementById('metrics').innerHTML=mcards.map(x=>
     `<div class="metric"><div class="k">${x.k}</div><div class="v ${x.c}">${x.v}</div></div>`).join('');
@@ -2955,7 +2955,6 @@ function recomputeAggregations(){
   DATA.meta.total_accounts=accounts.length;
   if(!DATA.metrics) DATA.metrics={};
   DATA.metrics.holding_pnl_cny=Math.round(hold_pnl_cny);DATA.metrics.return_pct=return_pct;DATA.metrics.today_pnl_cny=Math.round(today_pnl_cny);DATA.metrics.invested_cny=Math.round(invested_cny);DATA.metrics.cash_cny=cash_cny_val;DATA.metrics.bond_cny=bond_cny_val;
-  window.__DBG={cash_cny_val, bond_cny_val, accounts_n: accounts.length, baseCashSum: accounts.reduce((s,a)=>s+baseCashCny(a),0)}; // v134-DEBUG
   // 持有人筛选 tab 同步（新增账户带来的新持有人）
   HOLDERS=['全部'].concat(Array.from(new Set(flat.map(r=>r.holder))));
   return {total_cny:Math.round(total_cny),invested_cny:Math.round(invested_cny)};
@@ -7245,7 +7244,7 @@ function renderMine(){
 
 /* ============ 缓存版本号 / 强制刷新 ============ */
 /* v108: 必须用 window.APP_VERSION 挂到全局（const 不挂 window），自检脚本才能读到 */
-window.APP_VERSION='2026-09-01-v134';
+window.APP_VERSION='2026-09-01-v135';
 function checkCache(){
   const v=localStorage.getItem('famdash_app_version');
   if(v!==APP_VERSION){
